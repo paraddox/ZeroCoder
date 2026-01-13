@@ -13,6 +13,7 @@ import { SetupWizard } from './components/SetupWizard'
 import { AddFeatureForm } from './components/AddFeatureForm'
 import { FeatureModal } from './components/FeatureModal'
 import { FeatureEditModal } from './components/FeatureEditModal'
+import { ProjectSettingsModal } from './components/ProjectSettingsModal'
 import { AgentLogViewer } from './components/AgentLogViewer'
 import { AssistantFAB } from './components/AssistantFAB'
 import { AssistantPanel } from './components/AssistantPanel'
@@ -47,6 +48,9 @@ function App() {
 
   // Delete project modal state
   const [showDeleteModal, setShowDeleteModal] = useState(false)
+
+  // Settings modal state
+  const [showSettingsModal, setShowSettingsModal] = useState(false)
 
   // Edit feature modal state
   const [editingFeature, setEditingFeature] = useState<Feature | null>(null)
@@ -171,6 +175,8 @@ function App() {
       if (e.key === 'Escape') {
         if (assistantOpen) {
           setAssistantOpen(false)
+        } else if (showSettingsModal) {
+          setShowSettingsModal(false)
         } else if (editingFeature) {
           setEditingFeature(null)
         } else if (showAddFeature) {
@@ -185,7 +191,7 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [selectedProject, showAddFeature, selectedFeature, editingFeature, logViewerExpanded, assistantOpen])
+  }, [selectedProject, showAddFeature, selectedFeature, editingFeature, logViewerExpanded, assistantOpen, showSettingsModal])
 
   // Combine WebSocket progress with feature data
   const progress = wsState.progress.total > 0 ? wsState.progress : {
@@ -249,6 +255,7 @@ function App() {
           progress={progress}
           isConnected={wsState.isConnected}
           onAddFeature={() => setShowAddFeature(true)}
+          onSettings={() => setShowSettingsModal(true)}
           onDelete={() => setShowDeleteModal(true)}
         />
       )}
@@ -328,6 +335,14 @@ function App() {
           feature={editingFeature}
           projectName={selectedProject}
           onClose={() => setEditingFeature(null)}
+        />
+      )}
+
+      {/* Project Settings Modal */}
+      {showSettingsModal && selectedProject && (
+        <ProjectSettingsModal
+          project={projects?.find(p => p.name === selectedProject)!}
+          onClose={() => setShowSettingsModal(false)}
         />
       )}
 

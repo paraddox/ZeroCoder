@@ -1,4 +1,4 @@
-import { Plus, Trash2 } from 'lucide-react'
+import { Plus, Trash2, Settings } from 'lucide-react'
 import { AgentControl } from './AgentControl'
 import { CompactProgress } from './CompactProgress'
 import type { AgentStatus } from '../lib/types'
@@ -16,6 +16,7 @@ interface ControlBarProps {
   }
   isConnected: boolean
   onAddFeature: () => void
+  onSettings: () => void
   onDelete: () => void
 }
 
@@ -28,6 +29,7 @@ export function ControlBar({
   progress,
   isConnected,
   onAddFeature,
+  onSettings,
   onDelete,
 }: ControlBarProps) {
   return (
@@ -64,6 +66,13 @@ export function ControlBar({
               percentage={progress.percentage}
               isConnected={isConnected}
             />
+            <button
+              onClick={onSettings}
+              className="btn btn-ghost btn-icon text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]"
+              title="Project settings"
+            >
+              <Settings size={16} />
+            </button>
             <button
               onClick={onDelete}
               className="btn btn-ghost btn-icon text-[var(--color-text-secondary)] hover:text-[var(--color-danger)] hover:bg-[var(--color-danger-bg)]"

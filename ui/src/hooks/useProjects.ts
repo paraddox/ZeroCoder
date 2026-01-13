@@ -4,7 +4,7 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as api from '../lib/api'
-import type { FeatureCreate, AgentStatusResponse } from '../lib/types'
+import type { FeatureCreate, AgentStatusResponse, AgentModel } from '../lib/types'
 
 // ============================================================================
 // Projects
@@ -44,6 +44,29 @@ export function useDeleteProject() {
     mutationFn: (name: string) => api.deleteProject(name),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['projects'] })
+    },
+  })
+}
+
+export function useProjectSettings(name: string | null) {
+  return useQuery({
+    queryKey: ['project-settings', name],
+    queryFn: () => api.getProjectSettings(name!),
+    enabled: !!name,
+  })
+}
+
+export function useUpdateProjectSettings(projectName: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (settings: { agent_model: AgentModel }) =>
+      api.updateProjectSettings(projectName, settings),
+    onSuccess: () => {
+      // Invalidate both project list and settings
+      queryClient.invalidateQueries({ queryKey: ['projects'] })
+      queryClient.invalidateQueries({ queryKey: ['project-settings', projectName] })
+      queryClient.invalidateQueries({ queryKey: ['project', projectName] })
     },
   })
 }
