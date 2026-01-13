@@ -35,21 +35,101 @@ echo "Installing dependencies..."
 pip install -r requirements.txt --quiet
 
 PID_FILE="/tmp/zerocoder-ui.pid"
+PYTHON_PID=""
+
+# Cleanup function for graceful shutdown
+cleanup() {
+    echo ""
+    echo "Shutting down ZeroCoder UI..."
+
+    # Stop the Python process if running
+    if [ ! -z "$PYTHON_PID" ]; then
+        echo "Stopping Python process (PID: $PYTHON_PID)..."
+        kill -TERM "$PYTHON_PID" 2>/dev/null
+        # Wait a bit for graceful shutdown
+        sleep 2
+        # Force kill if still running
+        if kill -0 "$PYTHON_PID" 2>/dev/null; then
+            kill -9 "$PYTHON_PID" 2>/dev/null
+        fi
+    fi
+
+    # Stop all zerocoder containers
+    echo "Stopping zerocoder containers..."
+    ZEROCODER_CONTAINERS=$(docker ps -q --filter "name=zerocoder-" 2>/dev/null)
+    if [ ! -z "$ZEROCODER_CONTAINERS" ]; then
+        docker stop $ZEROCODER_CONTAINERS 2>/dev/null && echo "Containers stopped"
+    fi
+
+    # Stop any remaining uvicorn processes
+    UVICORN_PIDS=$(pgrep -f "uvicorn server.main:app")
+    if [ ! -z "$UVICORN_PIDS" ]; then
+        echo "Stopping uvicorn processes..."
+        for PID in $UVICORN_PIDS; do
+            kill -TERM "$PID" 2>/dev/null
+        done
+    fi
+
+    echo "Shutdown complete"
+    exit 0
+}
+
+# Set up signal traps for clean shutdown on Ctrl-C
+trap cleanup SIGINT SIGTERM
 
 # Check for --stop flag
 if [[ " $* " == *" --stop "* ]] || [[ " $* " == *" -s "* ]]; then
     echo "Stopping ZeroCoder UI..."
+
+    # Stop all zerocoder containers FIRST (before killing server)
+    echo "Stopping zerocoder containers..."
+    ZEROCODER_CONTAINERS=$(docker ps -q --filter "name=zerocoder-" 2>/dev/null)
+    if [ ! -z "$ZEROCODER_CONTAINERS" ]; then
+        docker stop $ZEROCODER_CONTAINERS 2>/dev/null && echo "Containers stopped"
+    fi
+
     # Kill by PID file if exists
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
         if kill -0 "$PID" 2>/dev/null; then
-            kill "$PID" 2>/dev/null
-            echo "Stopped process $PID"
+            echo "Sending SIGTERM to process $PID..."
+            kill -TERM "$PID" 2>/dev/null
+            # Wait up to 10 seconds for graceful shutdown
+            for i in {1..10}; do
+                if ! kill -0 "$PID" 2>/dev/null; then
+                    echo "Process $PID stopped gracefully"
+                    break
+                fi
+                sleep 1
+            done
+            # Force kill if still running
+            if kill -0 "$PID" 2>/dev/null; then
+                echo "Force killing process $PID"
+                kill -9 "$PID" 2>/dev/null
+            fi
         fi
         rm -f "$PID_FILE"
     fi
-    # Also kill any uvicorn processes on port 8000
-    pkill -f "uvicorn server.main:app" 2>/dev/null && echo "Stopped uvicorn processes"
+    # Also stop any remaining uvicorn processes
+    UVICORN_PIDS=$(pgrep -f "uvicorn server.main:app")
+    if [ ! -z "$UVICORN_PIDS" ]; then
+        echo "Stopping uvicorn processes: $UVICORN_PIDS"
+        for PID in $UVICORN_PIDS; do
+            kill -TERM "$PID" 2>/dev/null
+            # Wait up to 10 seconds
+            for i in {1..10}; do
+                if ! kill -0 "$PID" 2>/dev/null; then
+                    break
+                fi
+                sleep 1
+            done
+            # Force kill if still running
+            if kill -0 "$PID" 2>/dev/null; then
+                kill -9 "$PID" 2>/dev/null
+            fi
+        done
+        echo "Stopped uvicorn processes"
+    fi
     exit 0
 fi
 
@@ -71,6 +151,11 @@ if [[ " $* " == *" -bg "* ]] || [[ " $* " == *" --background "* ]]; then
     echo "UI available at: http://localhost:8000"
     echo "To stop: ./start-app.sh --stop"
 else
-    # Run in foreground
-    python start-app.py "$@"
+    # Run in foreground with signal handling
+    python start-app.py "$@" &
+    PYTHON_PID=$!
+    echo "Python PID: $PYTHON_PID"
+
+    # Wait for the Python process (will be interrupted by Ctrl-C)
+    wait $PYTHON_PID
 fi

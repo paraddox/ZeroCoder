@@ -117,6 +117,9 @@ async def list_projects():
     _init_imports()
     _, _, _, list_registered_projects, validate_project_path = _get_registry_functions()
 
+    # Import get_project_container for agent status
+    from .agent import get_project_container
+
     projects = list_registered_projects()
     result = []
 
@@ -132,12 +135,26 @@ async def list_projects():
         stats = get_project_stats(project_dir)
         wizard_incomplete = check_wizard_incomplete(project_dir, has_spec)
 
+        # Get agent status for this project
+        agent_status = None
+        agent_running = None
+        try:
+            manager = get_project_container(name)
+            status_dict = manager.get_status_dict()
+            agent_status = status_dict["status"]
+            agent_running = status_dict.get("agent_running", False)
+        except Exception:
+            # If container manager not found or error, leave as None
+            pass
+
         result.append(ProjectSummary(
             name=name,
             path=info["path"],
             has_spec=has_spec,
             wizard_incomplete=wizard_incomplete,
             stats=stats,
+            agent_status=agent_status,
+            agent_running=agent_running,
         ))
 
     return result

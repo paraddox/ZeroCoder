@@ -16,6 +16,8 @@ export interface ProjectSummary {
   has_spec: boolean
   wizard_incomplete: boolean
   stats: ProjectStats
+  agent_status?: AgentStatus
+  agent_running?: boolean
 }
 
 export interface ProjectDetail extends ProjectSummary {
@@ -111,6 +113,7 @@ export interface AgentStatusResponse {
   idle_seconds: number
   yolo_mode: boolean
   agent_running: boolean
+  graceful_stop_requested?: boolean
 }
 
 export interface AgentActionResponse {
@@ -128,7 +131,7 @@ export interface SetupStatus {
 }
 
 // WebSocket message types
-export type WSMessageType = 'progress' | 'feature_update' | 'log' | 'agent_status' | 'pong'
+export type WSMessageType = 'progress' | 'feature_update' | 'log' | 'agent_status' | 'pong' | 'graceful_stop_requested'
 
 export interface WSProgressMessage {
   type: 'progress'
@@ -155,6 +158,11 @@ export interface WSAgentStatusMessage {
   status: AgentStatus
 }
 
+export interface WSGracefulStopRequestedMessage {
+  type: 'graceful_stop_requested'
+  graceful_stop_requested: boolean
+}
+
 export interface WSPongMessage {
   type: 'pong'
 }
@@ -164,6 +172,7 @@ export type WSMessage =
   | WSFeatureUpdateMessage
   | WSLogMessage
   | WSAgentStatusMessage
+  | WSGracefulStopRequestedMessage
   | WSPongMessage
 
 // ============================================================================

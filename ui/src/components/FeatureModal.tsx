@@ -6,10 +6,11 @@ import type { Feature } from '../lib/types'
 interface FeatureModalProps {
   feature: Feature
   projectName: string
+  agentRunning?: boolean
   onClose: () => void
 }
 
-export function FeatureModal({ feature, projectName, onClose }: FeatureModalProps) {
+export function FeatureModal({ feature, projectName, agentRunning, onClose }: FeatureModalProps) {
   const [error, setError] = useState<string | null>(null)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
@@ -48,6 +49,27 @@ export function FeatureModal({ feature, projectName, onClose }: FeatureModalProp
             <span className="badge bg-[var(--color-accent)] text-[var(--color-text-inverse)] mb-2">
               {feature.category}
             </span>
+            {/* Status and Priority - Compact */}
+            <div className="flex items-center gap-3 mb-2">
+              {feature.passes ? (
+                <>
+                  <CheckCircle2 size={16} className="text-[var(--color-done)]" />
+                  <span className="font-display text-sm font-medium text-[var(--color-done)]">
+                    Complete
+                  </span>
+                </>
+              ) : (
+                <>
+                  <Circle size={16} className="text-[var(--color-text-secondary)]" />
+                  <span className="font-display text-sm font-medium text-[var(--color-text-secondary)]">
+                    Pending
+                  </span>
+                </>
+              )}
+              <span className="font-mono text-xs text-[var(--color-text-secondary)]">
+                Priority: #{feature.priority}
+              </span>
+            </div>
             <h2 className="font-display text-2xl font-medium">
               {feature.name}
             </h2>
@@ -75,28 +97,6 @@ export function FeatureModal({ feature, projectName, onClose }: FeatureModalProp
               </button>
             </div>
           )}
-
-          {/* Status */}
-          <div className="flex items-center gap-3 p-4 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg">
-            {feature.passes ? (
-              <>
-                <CheckCircle2 size={24} className="text-[var(--color-done)]" />
-                <span className="font-display font-medium text-[var(--color-done)]">
-                  Complete
-                </span>
-              </>
-            ) : (
-              <>
-                <Circle size={24} className="text-[var(--color-text-secondary)]" />
-                <span className="font-display font-medium text-[var(--color-text-secondary)]">
-                  Pending
-                </span>
-              </>
-            )}
-            <span className="ml-auto font-mono text-sm">
-              Priority: #{feature.priority}
-            </span>
-          </div>
 
           {/* Description */}
           <div>
@@ -129,7 +129,7 @@ export function FeatureModal({ feature, projectName, onClose }: FeatureModalProp
         </div>
 
         {/* Actions */}
-        {!feature.passes && (
+        {!feature.passes && !agentRunning && (
           <div className="p-6 border-t border-[var(--color-border)] bg-[var(--color-bg)]">
             {showDeleteConfirm ? (
               <div className="space-y-4">

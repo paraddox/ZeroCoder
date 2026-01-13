@@ -18,6 +18,7 @@ from ..services.container_manager import (
     check_docker_available,
     check_image_exists,
 )
+from ..websocket import manager as websocket_manager
 
 # Add root to path for imports
 _root = Path(__file__).parent.parent.parent
@@ -79,6 +80,7 @@ async def get_agent_status(project_name: str):
         started_at=manager.started_at,
         idle_seconds=status_dict["idle_seconds"],
         agent_running=status_dict.get("agent_running", False),
+        graceful_stop_requested=status_dict.get("graceful_stop_requested", False),
     )
 
 
@@ -201,6 +203,31 @@ async def stop_agent(project_name: str):
     """Stop the container for a project (does not remove it)."""
     manager = get_project_container(project_name)
     success, message = await manager.stop()
+
+    return AgentActionResponse(
+        success=success,
+        status=manager.status,
+        message=message,
+    )
+
+
+@router.post("/graceful-stop", response_model=AgentActionResponse)
+async def graceful_stop_agent(project_name: str):
+    """
+    Request graceful shutdown of agent after current session.
+
+    The agent will complete its current work before stopping.
+    Falls back to force stop after 10 minutes.
+    """
+    manager = get_project_container(project_name)
+    success, message = await manager.graceful_stop()
+
+    # Broadcast status update to WebSocket clients immediately
+    if success:
+        await websocket_manager.broadcast_to_project(project_name, {
+            "type": "graceful_stop_requested",
+            "graceful_stop_requested": True,
+        })
 
     return AgentActionResponse(
         success=success,
