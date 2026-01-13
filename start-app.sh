@@ -54,11 +54,11 @@ cleanup() {
         fi
     fi
 
-    # Stop all zerocoder containers
-    echo "Stopping zerocoder containers..."
-    ZEROCODER_CONTAINERS=$(docker ps -q --filter "name=zerocoder-" 2>/dev/null)
+    # Remove all zerocoder containers
+    echo "Removing zerocoder containers..."
+    ZEROCODER_CONTAINERS=$(docker ps -aq --filter "name=zerocoder-" 2>/dev/null)
     if [ ! -z "$ZEROCODER_CONTAINERS" ]; then
-        docker stop $ZEROCODER_CONTAINERS 2>/dev/null && echo "Containers stopped"
+        docker rm -f $ZEROCODER_CONTAINERS 2>/dev/null && echo "Containers removed"
     fi
 
     # Stop any remaining uvicorn processes
@@ -81,11 +81,11 @@ trap cleanup SIGINT SIGTERM
 if [[ " $* " == *" --stop "* ]] || [[ " $* " == *" -s "* ]]; then
     echo "Stopping ZeroCoder UI..."
 
-    # Stop all zerocoder containers FIRST (before killing server)
-    echo "Stopping zerocoder containers..."
-    ZEROCODER_CONTAINERS=$(docker ps -q --filter "name=zerocoder-" 2>/dev/null)
+    # Remove all zerocoder containers FIRST (before killing server)
+    echo "Removing zerocoder containers..."
+    ZEROCODER_CONTAINERS=$(docker ps -aq --filter "name=zerocoder-" 2>/dev/null)
     if [ ! -z "$ZEROCODER_CONTAINERS" ]; then
-        docker stop $ZEROCODER_CONTAINERS 2>/dev/null && echo "Containers stopped"
+        docker rm -f $ZEROCODER_CONTAINERS 2>/dev/null && echo "Containers removed"
     fi
 
     # Kill by PID file if exists
