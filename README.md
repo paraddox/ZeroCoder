@@ -41,6 +41,23 @@ This launches the React-based web UI at `http://localhost:8888` (or next availab
 - Real-time agent output streaming
 - Start/stop controls for per-project Docker containers
 
+### Autostart on Boot (Linux)
+
+To have ZeroCoder start automatically when your system boots:
+
+```bash
+./autostart.sh          # Enable autostart
+./autostart.sh --remove # Disable autostart
+```
+
+Once enabled, you can manage the service with:
+```bash
+systemctl --user start zerocoder   # Start now
+systemctl --user stop zerocoder    # Stop
+systemctl --user status zerocoder  # Check status
+journalctl --user -u zerocoder -f  # View logs
+```
+
 ### Creating or Continuing a Project
 
 In the web UI you can:
@@ -164,6 +181,7 @@ Features are tracked using **beads** (git-backed issue tracking). Each project h
 ZeroCoder/
 ├── start-app.sh              # Start script (macOS/Linux)
 ├── start-app.py              # Web UI backend (FastAPI server launcher)
+├── autostart.sh              # Enable/disable autostart on system boot
 ├── Dockerfile.project        # Per-project container image
 ├── docker-test.sh            # Build and test Docker containers
 ├── agent_app.py              # Agent SDK app (runs inside containers)
@@ -289,7 +307,7 @@ cd ui
 npm run build    # Builds to ui/dist/
 ```
 
-**Note:** The `start-app.sh`/`start-app.sh` scripts serve the pre-built UI from `ui/dist/`. After making UI changes, run `npm run build` to see them when using the start scripts.
+**Note:** The `start-app.sh` script serves the pre-built UI from `ui/dist/`. After making UI changes, run `npm run build` to see them when using the start scripts.
 
 ### Tech Stack
 
