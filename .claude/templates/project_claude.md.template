@@ -1,0 +1,89 @@
+# {project_name}
+
+This project uses **beads** for feature/issue tracking. All features are stored in `.beads/` directory.
+
+## ⚠️ MANDATORY WORKFLOW - NEVER SKIP
+
+**You MUST follow this workflow. It is NOT optional.**
+
+The beads commands below are your **PRIMARY communication channel** with the monitoring UI. If you skip these steps, users cannot see your progress.
+
+```
+bd ready                              # 1. Get next feature
+bd update <id> --status=in_progress   # 2. MUST run BEFORE coding
+# ... do the work ...
+bd close <id>                         # 3. Only after verification
+bd sync                               # 4. At session end
+```
+
+**Skipping `--status=in_progress` breaks the UI monitoring. NEVER skip it.**
+
+## Workflow
+
+### Starting Work
+
+1. Check what's ready to work on:
+   ```bash
+   bd ready
+   ```
+
+2. Pick a feature and view details:
+   ```bash
+   bd show <feature-id>
+   ```
+
+3. **REQUIRED: Mark the feature as in_progress BEFORE starting any work:**
+   ```bash
+   bd update <feature-id> --status=in_progress
+   ```
+   This step is MANDATORY. It allows the UI to show what you're currently working on.
+
+### Implementing Features
+
+**After marking in_progress:**
+1. Read the feature description and requirements
+2. Implement the feature following project conventions
+3. Run linting/type-checking to verify code quality
+4. Test the implementation
+
+### Completing Features
+
+When a feature is fully implemented and tested:
+```bash
+bd close <feature-id>
+```
+
+Check overall progress:
+```bash
+bd stats
+```
+
+### If Blocked
+
+If you encounter a blocker:
+```bash
+bd update <feature-id> --status=blocked
+bd comments <feature-id> add "Blocked because: <reason>"
+```
+
+Then move to the next available feature with `bd ready`.
+
+## Beads Quick Reference
+
+| Command | Description |
+|---------|-------------|
+| `bd ready` | List features ready to work on |
+| `bd show <id>` | View feature details |
+| `bd list --status=open` | List all open features |
+| `bd list --status=in_progress` | List features being worked on |
+| `bd update <id> --status=in_progress` | Claim a feature |
+| `bd close <id>` | Mark feature as complete |
+| `bd stats` | Show progress statistics |
+| `bd comments <id> add "..."` | Add a comment to a feature |
+
+## Project Guidelines
+
+- Follow existing code patterns and conventions
+- Run `npm run lint` or equivalent before marking features complete
+- Commit changes with descriptive messages
+- One feature at a time - complete or skip before moving on

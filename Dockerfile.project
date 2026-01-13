@@ -1,0 +1,105 @@
+# =============================================================================
+# Project Container Dockerfile
+# =============================================================================
+# Container for running Claude Agent SDK on a single project.
+# Uses Python-based agent_app.py with retry logic and error recovery.
+#
+# Usage:
+#   docker build -f Dockerfile.project -t zerocoder-project .
+#   docker run -d --name zerocoder-{project} -v /path/to/project:/project zerocoder-project
+
+FROM python:3.11-slim-bookworm
+
+# Prevent interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Disable beads daemon in containers (avoids stale lock file issues)
+ENV BD_NO_DAEMON=true
+
+# Install essentials (including procps for pgrep health checks)
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    wget \
+    ca-certificates \
+    nodejs \
+    npm \
+    sudo \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user (required for Claude Code --dangerously-skip-permissions)
+# Use a different UID to avoid conflicts with existing ubuntu user
+# The coder user has passwordless sudo for installing packages
+RUN useradd --uid 1001 -m coder \
+    && echo "coder ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# Install Claude Code CLI globally (required by Agent SDK)
+RUN npm install -g @anthropic-ai/claude-code
+
+# Install Claude Agent SDK
+RUN pip install --no-cache-dir claude-agent-sdk
+
+# Install beads CLI
+RUN curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash \
+    && mv /root/.local/bin/bd /usr/local/bin/bd 2>/dev/null || true
+
+# Copy agent application and container scripts
+COPY agent_app.py /app/agent_app.py
+COPY container_scripts/feature_status.py /app/feature_status.py
+COPY container_scripts/beads_commands.py /app/beads_commands.py
+
+# Configure git for beads operations (for root, during build)
+RUN git config --global user.email "docker@zerocoder.local" \
+    && git config --global user.name "ZeroCoder Docker" \
+    && git config --global init.defaultBranch main
+
+# Create directories for coder user
+RUN mkdir -p /home/coder/.claude \
+    && chown -R coder:coder /home/coder
+
+# Configure git for coder user and set permissive umask
+USER coder
+RUN git config --global user.email "docker@zerocoder.local" \
+    && git config --global user.name "ZeroCoder Docker" \
+    && git config --global init.defaultBranch main \
+    && echo "umask 002" >> ~/.bashrc \
+    && echo "umask 002" >> ~/.profile
+
+# Switch back to root for runtime volume mounting
+USER root
+
+# Working directory is the mounted project
+WORKDIR /project
+
+# Create entrypoint script
+RUN cat > /entrypoint.sh << 'EOF'
+#!/bin/bash
+# Set fully permissive umask so ALL new files are world readable/writable
+# This ensures both host user and container user can access files
+# 000 = files 666, dirs 777
+umask 000
+
+# Update Claude Code to latest version at startup
+echo "Updating Claude Code to latest version..."
+npm update -g @anthropic-ai/claude-code 2>/dev/null || true
+
+# Clean up stale beads daemon lock files (prevents stack overflow bug)
+if [ -f "/project/.beads/daemon.lock" ]; then
+    rm -f /project/.beads/daemon.lock
+    echo "Removed stale beads daemon.lock"
+fi
+
+# Fix .beads directory permissions at startup (make world-writable)
+# Don't chown - keep host ownership but make accessible to container
+if [ -d "/project/.beads" ]; then
+    chmod -R a+rwX /project/.beads 2>/dev/null || true
+fi
+
+# Keep container running
+exec tail -f /dev/null
+EOF
+RUN chmod +x /entrypoint.sh
+
+# Default command - entrypoint keeps container alive
+CMD ["/entrypoint.sh"]

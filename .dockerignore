@@ -1,0 +1,29 @@
+# Python artifacts
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+
+# Node artifacts (rebuilt in container)
+node_modules/
+ui/node_modules/
+ui/dist/
+
+# Local environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
