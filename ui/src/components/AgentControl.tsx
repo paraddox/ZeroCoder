@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { Play, Square, Loader2, Zap, Edit3 } from 'lucide-react'
+import { Play, Square, Loader2, Zap, Edit3, CircleStop } from 'lucide-react'
 import {
   useStartAgent,
   useStopAgent,
+  useGracefulStopAgent,
   useStartContainerOnly,
 } from '../hooks/useProjects'
 import type { AgentStatus } from '../lib/types'
@@ -12,22 +13,26 @@ interface AgentControlProps {
   status: AgentStatus
   yoloMode?: boolean
   agentRunning?: boolean
+  gracefulStopRequested?: boolean
 }
 
-export function AgentControl({ projectName, status, yoloMode = false, agentRunning = false }: AgentControlProps) {
+export function AgentControl({ projectName, status, yoloMode = false, agentRunning = false, gracefulStopRequested = false }: AgentControlProps) {
   const [yoloEnabled, setYoloEnabled] = useState(false)
 
   const startAgent = useStartAgent(projectName)
   const stopAgent = useStopAgent(projectName)
+  const gracefulStopAgent = useGracefulStopAgent(projectName)
   const startContainerOnly = useStartContainerOnly(projectName)
 
   const isLoading =
     startAgent.isPending ||
     stopAgent.isPending ||
+    gracefulStopAgent.isPending ||
     startContainerOnly.isPending
 
   const handleStart = () => startAgent.mutate(yoloEnabled)
   const handleStop = () => stopAgent.mutate()
+  const handleGracefulStop = () => gracefulStopAgent.mutate()
   const handleStartContainer = () => startContainerOnly.mutate()
 
   // Container running but agent not running = "idle" mode
@@ -125,19 +130,36 @@ export function AgentControl({ projectName, status, yoloMode = false, agentRunni
               )}
             </button>
           </>
-        ) : status === 'running' ? (
-          <button
-            onClick={handleStop}
-            disabled={isLoading}
-            className="btn btn-danger btn-icon"
-            title="Stop Agent"
-          >
-            {isLoading ? (
-              <Loader2 size={16} className="animate-spin" />
-            ) : (
-              <Square size={16} />
-            )}
-          </button>
+        ) : status === 'running' && agentRunning ? (
+          <>
+            {/* Graceful Stop Button */}
+            <button
+              onClick={handleGracefulStop}
+              disabled={isLoading || gracefulStopRequested}
+              className={`btn btn-icon ${gracefulStopRequested ? 'btn-secondary' : 'btn-warning'}`}
+              title={gracefulStopRequested ? "Stopping after current session..." : "Complete current session then stop"}
+            >
+              {gracefulStopRequested || (isLoading && gracefulStopAgent.isPending) ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <CircleStop size={16} />
+              )}
+            </button>
+
+            {/* Immediate Stop Button */}
+            <button
+              onClick={handleStop}
+              disabled={isLoading}
+              className="btn btn-danger btn-icon"
+              title="Stop immediately"
+            >
+              {isLoading && stopAgent.isPending ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <Square size={16} />
+              )}
+            </button>
+          </>
         ) : null}
       </div>
     </div>

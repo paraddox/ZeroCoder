@@ -209,6 +209,24 @@ async def stop_agent(project_name: str):
     )
 
 
+@router.post("/graceful-stop", response_model=AgentActionResponse)
+async def graceful_stop_agent(project_name: str):
+    """
+    Request graceful shutdown of agent after current session.
+
+    The agent will complete its current work before stopping.
+    Falls back to force stop after 10 minutes.
+    """
+    manager = get_project_container(project_name)
+    success, message = await manager.graceful_stop()
+
+    return AgentActionResponse(
+        success=success,
+        status=manager.status,
+        message=message,
+    )
+
+
 @router.post("/instruction", response_model=AgentActionResponse)
 async def send_instruction(project_name: str, request: AgentStartRequest):
     """

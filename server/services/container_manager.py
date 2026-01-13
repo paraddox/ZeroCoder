@@ -85,6 +85,8 @@ class ContainerManager:
         self._restarting: bool = False
         # Track if the last agent was overseer (for completion detection)
         self._last_agent_was_overseer: bool = False
+        # Track if graceful stop was requested
+        self._graceful_stop_requested: bool = False
 
         # Callbacks for WebSocket notifications
         self._output_callbacks: Set[Callable[[str], Awaitable[None]]] = set()
@@ -366,11 +368,14 @@ class ContainerManager:
         Returns:
             Tuple of (success, message)
         """
+        logger.info(f"[STOP] Attempting to stop container {self.container_name}")
         self._sync_status()
 
         if self._status != "running":
+            logger.warning(f"[STOP] Container {self.container_name} is not running, status: {self._status}")
             return False, "Container is not running"
 
+        logger.info(f"[STOP] Container {self.container_name} status confirmed as running")
         try:
             # Cancel log streaming
             if self._log_task:
@@ -380,6 +385,24 @@ class ContainerManager:
                 except asyncio.CancelledError:
                     pass
 
+            # Clean up graceful stop flag if exists
+            try:
+                flag_file = Path(self.project_dir) / ".graceful_stop"
+                if flag_file.exists():
+                    flag_file.unlink()
+                    logger.info(f"Cleaned up graceful stop flag for {self.container_name}")
+            except Exception as e:
+                logger.warning(f"Failed to clean up graceful stop flag: {e}")
+
+            # Reset graceful stop flag in memory
+            self._graceful_stop_requested = False
+
+            # Reset user_started flag to prevent auto-restart
+            # User explicitly stopped, so we shouldn't auto-restart
+            logger.info(f"[STOP] Resetting _user_started flag for {self.container_name}")
+            self._user_started = False
+
+            logger.info(f"[STOP] Executing docker stop for {self.container_name}")
             result = subprocess.run(
                 ["docker", "stop", self.container_name],
                 capture_output=True,
@@ -388,8 +411,10 @@ class ContainerManager:
             )
 
             if result.returncode != 0:
+                logger.error(f"[STOP] Failed to stop {self.container_name}: {result.stderr}")
                 return False, f"Failed to stop container: {result.stderr}"
 
+            logger.info(f"[STOP] Successfully stopped {self.container_name}")
             self.status = "stopped"
             return True, f"Container {self.container_name} stopped"
 
@@ -404,6 +429,75 @@ class ContainerManager:
         except Exception as e:
             logger.exception("Failed to stop container")
             return False, f"Failed to stop container: {e}"
+
+    async def graceful_stop(self) -> tuple[bool, str]:
+        """
+        Request graceful shutdown of agent after current session completes.
+
+        Sets a flag file that the agent checks periodically. Falls back to
+        force stop after 10 minutes if agent doesn't exit.
+
+        Returns:
+            Tuple of (success, message)
+        """
+        self._sync_status()
+
+        if self._status != "running":
+            return False, "Container is not running"
+
+        # Check if already requested
+        if self._graceful_stop_requested:
+            return True, "Graceful stop already requested"
+
+        try:
+            # Set flag in memory
+            self._graceful_stop_requested = True
+
+            # Create flag file in project directory
+            flag_file = Path(self.project_dir) / ".graceful_stop"
+            flag_file.touch(mode=0o666)  # World-writable for container access
+
+            logger.info(f"Graceful stop requested for {self.container_name}")
+            await self._broadcast_output("[System] Graceful stop requested, completing current session...")
+
+            # Start background task to monitor completion with timeout
+            asyncio.create_task(self._monitor_graceful_stop())
+
+            return True, "Graceful stop requested"
+
+        except Exception as e:
+            logger.exception("Failed to request graceful stop")
+            self._graceful_stop_requested = False
+            return False, f"Failed to request graceful stop: {e}"
+
+    async def _monitor_graceful_stop(self) -> None:
+        """
+        Monitor graceful stop with 10-minute timeout.
+        Falls back to force stop if timeout exceeded.
+        """
+        timeout_seconds = 10 * 60  # 10 minutes
+        poll_interval = 5  # Check every 5 seconds
+
+        try:
+            elapsed = 0
+            while elapsed < timeout_seconds:
+                await asyncio.sleep(poll_interval)
+                elapsed += poll_interval
+
+                # Check if agent has stopped
+                if not self.is_agent_running() or self._status != "running":
+                    logger.info(f"Agent stopped gracefully in {self.container_name}")
+                    return
+
+            # Timeout exceeded - force stop
+            logger.warning(f"Graceful stop timeout for {self.container_name}, forcing shutdown")
+            await self._broadcast_output("[System] Graceful stop timeout, forcing shutdown...")
+            await self.stop()
+
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.exception(f"Error monitoring graceful stop: {e}")
 
     async def send_instruction(self, instruction: str) -> tuple[bool, str]:
         """
@@ -479,6 +573,7 @@ class ContainerManager:
         Exit codes:
         - 0: Success
         - 1: Failure (all retries exhausted)
+        - 129: Graceful stop requested
         - 130: User interrupt (Ctrl+C)
 
         Agent flow:
@@ -493,11 +588,30 @@ class ContainerManager:
         Returns:
             Tuple of (success, message)
         """
+        # Handle graceful stop - exit code 129 or flag is set
+        if exit_code == 129 or self._graceful_stop_requested:
+            logger.info(f"Graceful stop completed for {self.container_name}")
+            await self._broadcast_output("[System] Graceful stop completed")
+
+            # Clean up flag file
+            try:
+                flag_file = Path(self.project_dir) / ".graceful_stop"
+                if flag_file.exists():
+                    flag_file.unlink()
+            except Exception as e:
+                logger.warning(f"Failed to clean up graceful stop flag: {e}")
+
+            # Reset flag and stop container
+            self._graceful_stop_requested = False
+            await self.stop()
+            return True, "Graceful stop completed"
+
         if exit_code == 0:
             # Success - determine next action
+            logger.info(f"[EXIT] Agent exited successfully (code 0) in {self.container_name}, _user_started={self._user_started}")
             if self._user_started and self.has_open_features():
                 # Features remain - restart coding agent
-                logger.info(f"Features remain in {self.container_name}, restarting coding agent...")
+                logger.info(f"[EXIT] Features remain in {self.container_name}, restarting coding agent...")
                 await self._broadcast_output("[System] Session complete. Starting fresh context for next task...")
                 self._last_agent_was_overseer = False
                 return await self.restart_agent()
@@ -515,6 +629,8 @@ class ContainerManager:
                     logger.info(f"All features closed in {self.container_name}, running overseer verification...")
                     await self._broadcast_output("[System] All features complete. Running verification...")
                     return await self.restart_with_overseer()
+            else:
+                logger.info(f"[EXIT] Not restarting: _user_started={self._user_started}, has_open_features={self.has_open_features()}")
             return True, "Instruction completed"
 
         elif exit_code == 130:
@@ -728,6 +844,7 @@ class ContainerManager:
             "idle_seconds": self.get_idle_seconds(),
             "agent_running": self.is_agent_running(),
             "user_started": self._user_started,
+            "graceful_stop_requested": self._graceful_stop_requested,
         }
 
 

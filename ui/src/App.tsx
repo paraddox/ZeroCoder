@@ -245,6 +245,7 @@ function App() {
           agentStatus={wsState.agentStatus}
           yoloMode={agentStatusData?.yolo_mode ?? false}
           agentRunning={agentStatusData?.agent_running ?? false}
+          gracefulStopRequested={agentStatusData?.graceful_stop_requested ?? false}
           progress={progress}
           isConnected={wsState.isConnected}
           onAddFeature={() => setShowAddFeature(true)}

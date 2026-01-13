@@ -68,10 +68,40 @@ async def idle_container_monitor():
             logging.getLogger(__name__).warning(f"Idle monitor error: {e}")
 
 
+def cleanup_on_exit():
+    """Fallback cleanup function called on exit."""
+    try:
+        logger.info("atexit cleanup triggered, stopping containers...")
+        # Run async cleanup in sync context
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(cleanup_all_containers())
+        loop.close()
+        logger.info("atexit cleanup complete")
+    except Exception as e:
+        logger.error(f"Error in atexit cleanup: {e}")
+
+
+def setup_signal_handlers():
+    """Setup signal handlers for graceful shutdown."""
+    def signal_handler(signum, frame):
+        logger.info(f"Received signal {signum}, initiating shutdown...")
+        # The lifespan cleanup will be triggered by FastAPI
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    # Register atexit handler as fallback
+    atexit.register(cleanup_on_exit)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown."""
     logger.info("Starting Autonomous Coding UI server...")
+
+    # Setup signal handlers
+    setup_signal_handlers()
 
     # Startup - start background monitors
     idle_monitor_task = asyncio.create_task(idle_container_monitor())
@@ -99,6 +129,7 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
 
+    logger.info("Stopping all containers...")
     await cleanup_all_containers()
     await cleanup_assistant_sessions()
 

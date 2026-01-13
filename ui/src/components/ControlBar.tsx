@@ -8,6 +8,7 @@ interface ControlBarProps {
   agentStatus: AgentStatus
   yoloMode: boolean
   agentRunning: boolean
+  gracefulStopRequested?: boolean
   progress: {
     passing: number
     total: number
@@ -23,6 +24,7 @@ export function ControlBar({
   agentStatus,
   yoloMode,
   agentRunning,
+  gracefulStopRequested = false,
   progress,
   isConnected,
   onAddFeature,
@@ -38,6 +40,7 @@ export function ControlBar({
             status={agentStatus}
             yoloMode={yoloMode}
             agentRunning={agentRunning}
+            gracefulStopRequested={gracefulStopRequested}
           />
 
           {/* Right: Actions + Progress */}

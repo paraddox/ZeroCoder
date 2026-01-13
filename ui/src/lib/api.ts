@@ -188,6 +188,12 @@ export async function stopAgent(projectName: string): Promise<AgentActionRespons
   })
 }
 
+export async function gracefulStopAgent(projectName: string): Promise<AgentActionResponse> {
+  return fetchJSON(`/projects/${encodeURIComponent(projectName)}/agent/graceful-stop`, {
+    method: 'POST',
+  })
+}
+
 export async function startContainerOnly(projectName: string): Promise<AgentActionResponse> {
   return fetchJSON(`/projects/${encodeURIComponent(projectName)}/agent/container/start`, {
     method: 'POST',

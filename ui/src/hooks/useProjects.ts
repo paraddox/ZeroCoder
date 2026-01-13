@@ -152,6 +152,17 @@ export function useStopAgent(projectName: string) {
   })
 }
 
+export function useGracefulStopAgent(projectName: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: () => api.gracefulStopAgent(projectName),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['agent-status', projectName] })
+    },
+  })
+}
+
 export function useStartContainerOnly(projectName: string) {
   const queryClient = useQueryClient()
 

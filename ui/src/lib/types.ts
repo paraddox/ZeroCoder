@@ -113,6 +113,7 @@ export interface AgentStatusResponse {
   idle_seconds: number
   yolo_mode: boolean
   agent_running: boolean
+  graceful_stop_requested?: boolean
 }
 
 export interface AgentActionResponse {

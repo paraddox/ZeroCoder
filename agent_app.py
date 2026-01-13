@@ -59,6 +59,12 @@ def clear_state() -> None:
         STATE_FILE.unlink()
 
 
+def check_graceful_stop(project_dir: str) -> bool:
+    """Check if graceful stop was requested via flag file."""
+    flag_file = Path(project_dir) / ".graceful_stop"
+    return flag_file.exists()
+
+
 async def run_agent(prompt: str, project_dir: str, max_retries: int = 3) -> int:
     """
     Run agent with retry logic and error recovery.
@@ -69,7 +75,7 @@ async def run_agent(prompt: str, project_dir: str, max_retries: int = 3) -> int:
         max_retries: Maximum number of retry attempts
 
     Returns:
-        Exit code (0=success, 1=failure, 130=interrupted)
+        Exit code (0=success, 1=failure, 129=graceful_stop, 130=interrupted)
     """
     options = ClaudeAgentOptions(
         cwd=project_dir,
@@ -109,6 +115,12 @@ async def run_agent(prompt: str, project_dir: str, max_retries: int = 3) -> int:
                         elif isinstance(block, ToolUseBlock):
                             # Tool use events - log for debugging
                             print(f"[TOOL] Using: {block.name}", flush=True)
+
+                # Check for graceful stop after processing each message
+                if check_graceful_stop(project_dir):
+                    print("[AGENT] Graceful stop requested, completing current session...", flush=True)
+                    clear_state()
+                    return 129
 
             # Success - clear state and exit
             clear_state()
