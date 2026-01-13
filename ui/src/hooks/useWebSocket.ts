@@ -32,6 +32,7 @@ export function useProjectWebSocket(projectName: string | null) {
   const reconnectAttempts = useRef(0)
   const hasConnectedRef = useRef(false) // Track if we've ever successfully connected
   const shouldReconnectRef = useRef(true) // Whether to auto-reconnect
+  const logCacheRef = useRef<Record<string, Array<{ line: string; timestamp: string }>>>({}) // Cache logs per project
 
   const connect = useCallback(() => {
     if (!projectName || !shouldReconnectRef.current) return
@@ -75,15 +76,22 @@ export function useProjectWebSocket(projectName: string | null) {
               }))
               break
 
-            case 'log':
-              setState(prev => ({
-                ...prev,
-                logs: [
-                  ...prev.logs.slice(-MAX_LOGS + 1),
-                  { line: message.line, timestamp: message.timestamp },
-                ],
-              }))
+            case 'log': {
+              const logEntry = { line: message.line, timestamp: message.timestamp }
+              setState(prev => {
+                const newLogs = [...prev.logs, logEntry]
+                // Keep last 100 logs
+                const trimmedLogs = newLogs.slice(-MAX_LOGS)
+
+                // Update cache for current project
+                if (projectName) {
+                  logCacheRef.current[projectName] = trimmedLogs
+                }
+
+                return { ...prev, logs: trimmedLogs }
+              })
               break
+            }
 
             case 'feature_update':
               // Feature updates will trigger a refetch via React Query
@@ -149,13 +157,20 @@ export function useProjectWebSocket(projectName: string | null) {
     reconnectAttempts.current = 0
 
     if (!projectName) {
-      // Disconnect if no project
+      // No project selected - clear logs
+      setState(prev => ({ ...prev, logs: [] }))
       if (wsRef.current) {
         wsRef.current.close()
         wsRef.current = null
       }
       return
     }
+
+    // Restore cached logs for this project (or empty array)
+    setState(prev => ({
+      ...prev,
+      logs: logCacheRef.current[projectName] || [],
+    }))
 
     connect()
 
@@ -178,7 +193,11 @@ export function useProjectWebSocket(projectName: string | null) {
   // Clear logs function
   const clearLogs = useCallback(() => {
     setState(prev => ({ ...prev, logs: [] }))
-  }, [])
+    // Also clear from cache
+    if (projectName) {
+      logCacheRef.current[projectName] = []
+    }
+  }, [projectName])
 
   return {
     ...state,

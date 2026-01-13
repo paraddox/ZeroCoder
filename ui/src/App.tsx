@@ -6,22 +6,20 @@ import { useCelebration } from './hooks/useCelebration'
 import { useTheme } from './hooks/useTheme'
 
 const STORAGE_KEY = 'zerocoder-selected-project'
-import { ProjectSelector } from './components/ProjectSelector'
+import { ProjectTabs } from './components/ProjectTabs'
 import { KanbanBoard } from './components/KanbanBoard'
-import { AgentControl } from './components/AgentControl'
-import { ProgressDashboard } from './components/ProgressDashboard'
+import { ControlBar } from './components/ControlBar'
 import { SetupWizard } from './components/SetupWizard'
 import { AddFeatureForm } from './components/AddFeatureForm'
 import { FeatureModal } from './components/FeatureModal'
 import { FeatureEditModal } from './components/FeatureEditModal'
-import { DebugLogViewer } from './components/DebugLogViewer'
-import { AgentThought } from './components/AgentThought'
+import { AgentLogViewer } from './components/AgentLogViewer'
 import { AssistantFAB } from './components/AssistantFAB'
 import { AssistantPanel } from './components/AssistantPanel'
 import { IncompleteProjectModal } from './components/IncompleteProjectModal'
 import { NewProjectModal } from './components/NewProjectModal'
 import { DeleteProjectModal } from './components/DeleteProjectModal'
-import { Plus, Loader2, Trash2, Sun, Moon } from 'lucide-react'
+import { Loader2, Sun, Moon } from 'lucide-react'
 import type { Feature, ProjectSummary, WizardStatus } from './lib/types'
 
 function App() {
@@ -36,8 +34,7 @@ function App() {
   const [showAddFeature, setShowAddFeature] = useState(false)
   const [selectedFeature, setSelectedFeature] = useState<Feature | null>(null)
   const [setupComplete, setSetupComplete] = useState(true) // Start optimistic
-  const [debugOpen, setDebugOpen] = useState(false)
-  const [debugPanelHeight, setDebugPanelHeight] = useState(288) // Default height
+  const [logViewerExpanded, setLogViewerExpanded] = useState(false)
   const [assistantOpen, setAssistantOpen] = useState(false)
 
   // Incomplete project wizard resume state
@@ -152,10 +149,10 @@ function App() {
         return
       }
 
-      // D : Toggle debug window
+      // D : Toggle log viewer
       if (e.key === 'd' || e.key === 'D') {
         e.preventDefault()
-        setDebugOpen(prev => !prev)
+        setLogViewerExpanded(prev => !prev)
       }
 
       // N : Add new feature (when project selected)
@@ -180,15 +177,15 @@ function App() {
           setShowAddFeature(false)
         } else if (selectedFeature) {
           setSelectedFeature(null)
-        } else if (debugOpen) {
-          setDebugOpen(false)
+        } else if (logViewerExpanded) {
+          setLogViewerExpanded(false)
         }
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [selectedProject, showAddFeature, selectedFeature, editingFeature, debugOpen, assistantOpen])
+  }, [selectedProject, showAddFeature, selectedFeature, editingFeature, logViewerExpanded, assistantOpen])
 
   // Combine WebSocket progress with feature data
   const progress = wsState.progress.total > 0 ? wsState.progress : {
@@ -211,7 +208,7 @@ function App() {
       <header className="bg-[var(--color-bg-elevated)] border-b border-[var(--color-border)]">
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
-            {/* Logo and Title */}
+            {/* Logo and Theme */}
             <div className="flex items-center gap-3">
               <h1 className="font-display text-xl font-medium tracking-tight text-[var(--color-text)]">
                 ZeroCoder
@@ -229,59 +226,34 @@ function App() {
               </button>
             </div>
 
-            {/* Controls */}
-            <div className="flex items-center gap-3">
-              <ProjectSelector
-                projects={projects ?? []}
-                selectedProject={selectedProject}
-                onSelectProject={handleSelectProject}
-                onIncompleteProjectClick={handleIncompleteProjectClick}
-                isLoading={projectsLoading}
-              />
-
-              {selectedProject && (
-                <>
-                  {/* Only show Add Feature when agent not running */}
-                  {!agentStatusData?.agent_running && (
-                    <button
-                      onClick={() => setShowAddFeature(true)}
-                      className="btn btn-primary text-sm"
-                      title="Press N"
-                    >
-                      <Plus size={16} />
-                      Add Feature
-                      <kbd className="ml-1.5 px-1.5 py-0.5 text-xs bg-white/20 rounded-sm font-mono">
-                        N
-                      </kbd>
-                    </button>
-                  )}
-
-                  <AgentControl
-                    projectName={selectedProject}
-                    status={wsState.agentStatus}
-                    yoloMode={agentStatusData?.yolo_mode ?? false}
-                    agentRunning={agentStatusData?.agent_running ?? false}
-                  />
-
-                  <button
-                    onClick={() => setShowDeleteModal(true)}
-                    className="btn btn-ghost text-[var(--color-text-secondary)] hover:text-[var(--color-danger)] hover:bg-[var(--color-danger-bg)]"
-                    title="Delete project"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </>
-              )}
-            </div>
+            {/* Project Tabs */}
+            <ProjectTabs
+              projects={projects ?? []}
+              selectedProject={selectedProject}
+              onSelectProject={handleSelectProject}
+              onIncompleteProjectClick={handleIncompleteProjectClick}
+              isLoading={projectsLoading}
+            />
           </div>
         </div>
       </header>
 
+      {/* Control Bar */}
+      {selectedProject && (
+        <ControlBar
+          projectName={selectedProject}
+          agentStatus={wsState.agentStatus}
+          yoloMode={agentStatusData?.yolo_mode ?? false}
+          agentRunning={agentStatusData?.agent_running ?? false}
+          progress={progress}
+          isConnected={wsState.isConnected}
+          onAddFeature={() => setShowAddFeature(true)}
+          onDelete={() => setShowDeleteModal(true)}
+        />
+      )}
+
       {/* Main Content */}
-      <main
-        className="max-w-7xl mx-auto px-6 py-8"
-        style={{ paddingBottom: debugOpen ? debugPanelHeight + 32 : undefined }}
-      >
+      <main className="max-w-7xl mx-auto px-6 py-8">
         {!selectedProject ? (
           <div className="empty-state mt-12">
             <h2 className="font-display text-2xl font-medium mb-3 text-[var(--color-text)]">
@@ -293,18 +265,13 @@ function App() {
           </div>
         ) : (
           <div className="space-y-6">
-            {/* Progress Dashboard */}
-            <ProgressDashboard
-              passing={progress.passing}
-              total={progress.total}
-              percentage={progress.percentage}
-              isConnected={wsState.isConnected}
-            />
-
-            {/* Agent Thought - shows latest agent narrative */}
-            <AgentThought
+            {/* Agent Log Viewer - replaces both AgentThought and DebugLogViewer */}
+            <AgentLogViewer
               logs={wsState.logs}
               agentStatus={wsState.agentStatus}
+              isExpanded={logViewerExpanded}
+              onToggleExpanded={() => setLogViewerExpanded(!logViewerExpanded)}
+              onClearLogs={wsState.clearLogs}
             />
 
             {/* Initializing Features State - show when agent is running but no features yet */}
@@ -359,17 +326,6 @@ function App() {
           feature={editingFeature}
           projectName={selectedProject}
           onClose={() => setEditingFeature(null)}
-        />
-      )}
-
-      {/* Debug Log Viewer - fixed to bottom */}
-      {selectedProject && (
-        <DebugLogViewer
-          logs={wsState.logs}
-          isOpen={debugOpen}
-          onToggle={() => setDebugOpen(!debugOpen)}
-          onClear={wsState.clearLogs}
-          onHeightChange={setDebugPanelHeight}
         />
       )}
 
