@@ -236,11 +236,13 @@ bd list --status=open
 - Placeholder text in the UI
 - API endpoints that return static data
 
-### Probably OK (Don't Flag):
-- Clean, functional code even if simple
-- Real database queries even if basic
-- Actual working UI even if minimal styling
-- Proper error handling even if simple
+
+### Likely Incomplete:
+- Components that render but don't interact with state
+- Functions that don't call other functions
+- Missing error handling
+- Unused imports
+
 
 ### When In Doubt:
 - Try to trace the feature flow from UI to database

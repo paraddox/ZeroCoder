@@ -209,7 +209,7 @@ After gathering all features, **you** (the agent) should tally up the testable f
 
 - **Simple apps** (todo list, calculator, notes): ~20-50 features
 - **Medium apps** (blog, task manager with auth): ~100 features
-- **Advanced apps** (e-commerce, CRM, full SaaS): ~150-200 features
+- **Advanced apps** (e-commerce, CRM, full SaaS): ~150-300 features
 
 These are just reference points - your actual count should come from the requirements discussed.
 
@@ -220,6 +220,9 @@ For each feature area discussed, estimate the number of discrete, testable behav
 - Each UI interaction = 1 feature (click, drag, hover effect)
 - Each validation/error case = 1 feature
 - Each visual requirement = 1 feature (styling, animation, responsive behavior)
+
+**Important**
+Each feature should be small enough that an agent canimplement it in a single session.
 
 **Present your estimate to the user:**
 
