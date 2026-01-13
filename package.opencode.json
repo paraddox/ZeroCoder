@@ -1,0 +1,19 @@
+{
+  "name": "zerocoder-opencode-agent",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "OpenCode SDK agent for ZeroCoder",
+  "main": "opencode_agent_app.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.opencode.json",
+    "start": "node dist/opencode_agent_app.js"
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "^1.0.0",
+    "@ai-sdk/openai-compatible": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}

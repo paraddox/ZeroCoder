@@ -152,6 +152,8 @@ class ContainerManager:
         self._last_agent_was_hound: bool = False
         # Track if graceful stop was requested
         self._graceful_stop_requested: bool = False
+        # Track current agent type for OpenCode SDK routing
+        self._current_agent_type: Literal["coder", "overseer", "hound"] = "coder"
 
         # Callbacks for WebSocket notifications
         self._output_callbacks: Set[Callable[[str], Awaitable[None]]] = set()
@@ -184,6 +186,28 @@ class ContainerManager:
         except Exception as e:
             logger.warning(f"Failed to check container status: {e}")
             self._status = "not_created"
+
+    def _get_agent_model(self) -> str:
+        """
+        Read agent model from project config file.
+
+        Returns:
+            Model ID string (e.g., 'claude-sonnet-4-5-20250514' or 'glm-4-7')
+        """
+        config_path = self.project_dir / "prompts" / ".agent_config.json"
+        default_model = "claude-sonnet-4-5-20250514"
+        if config_path.exists():
+            try:
+                config = json.loads(config_path.read_text())
+                return config.get("agent_model", default_model)
+            except Exception as e:
+                logger.warning(f"Failed to read agent config: {e}")
+        return default_model
+
+    def _is_opencode_model(self) -> bool:
+        """Check if the current model requires OpenCode SDK."""
+        model = self._get_agent_model()
+        return model == "glm-4-7"
 
     @property
     def status(self) -> Literal["not_created", "running", "stopped", "completed"]:
@@ -400,6 +424,10 @@ class ContainerManager:
                 api_key = os.getenv("ANTHROPIC_API_KEY")
                 if api_key:
                     cmd.extend(["-e", f"ANTHROPIC_API_KEY={api_key}"])
+                # Pass Z.ai API key for OpenCode SDK (GLM-4.7 model)
+                zhipu_key = os.getenv("ZHIPU_API_KEY")
+                if zhipu_key:
+                    cmd.extend(["-e", f"ZHIPU_API_KEY={zhipu_key}"])
                 cmd.append(CONTAINER_IMAGE)
 
                 result = subprocess.run(cmd, capture_output=True, text=True)
@@ -581,7 +609,8 @@ class ContainerManager:
         """
         Send an instruction to the Agent SDK app running in the container.
 
-        Uses stdin to pass the prompt to agent_app.py, avoiding shell escaping issues.
+        Uses stdin to pass the prompt to agent_app.py (Claude) or
+        opencode_agent_app.js (GLM-4.7), avoiding shell escaping issues.
 
         Args:
             instruction: The instruction/prompt to send
@@ -606,32 +635,52 @@ class ContainerManager:
                 prompt_file = f.name
 
             try:
-                # Use docker exec with stdin to run the Python agent app
-                # Run as 'coder' user (non-root) for proper permissions
-                # Note: Using create_subprocess_exec (not shell) for security
-                with open(prompt_file, "r", encoding="utf-8") as stdin_file:
-                    process = await asyncio.create_subprocess_exec(
-                        "docker", "exec", "-i", "-u", "coder", self.container_name,
-                        "python", "/app/agent_app.py",
-                        stdin=stdin_file,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.STDOUT,
-                    )
+                # Determine which agent app to use based on model
+                use_opencode = self._is_opencode_model()
 
-                    # Stream output to callbacks
-                    while True:
-                        if process.stdout is None:
-                            break
-                        line = await process.stdout.readline()
-                        if not line:
-                            break
-                        decoded = line.decode("utf-8", errors="replace").rstrip()
-                        sanitized = sanitize_output(decoded)
-                        self._update_activity()
-                        await self._broadcast_output(sanitized)
+                if use_opencode:
+                    # OpenCode SDK agent (GLM-4.7)
+                    # Pass agent type via environment variable
+                    agent_type = self._current_agent_type
+                    logger.info(f"Using OpenCode agent ({agent_type}) for {self.container_name}")
 
-                    await process.wait()
-                    exit_code = process.returncode or 0
+                    with open(prompt_file, "r", encoding="utf-8") as stdin_file:
+                        process = await asyncio.create_subprocess_exec(
+                            "docker", "exec", "-i", "-u", "coder",
+                            "-e", f"OPENCODE_AGENT_TYPE={agent_type}",
+                            self.container_name,
+                            "node", "/app/dist/opencode_agent_app.js",
+                            stdin=stdin_file,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.STDOUT,
+                        )
+                else:
+                    # Claude Agent SDK (Python)
+                    logger.info(f"Using Claude agent for {self.container_name}")
+
+                    with open(prompt_file, "r", encoding="utf-8") as stdin_file:
+                        process = await asyncio.create_subprocess_exec(
+                            "docker", "exec", "-i", "-u", "coder", self.container_name,
+                            "python", "/app/agent_app.py",
+                            stdin=stdin_file,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.STDOUT,
+                        )
+
+                # Stream output to callbacks (common to both OpenCode and Claude)
+                while True:
+                    if process.stdout is None:
+                        break
+                    line = await process.stdout.readline()
+                    if not line:
+                        break
+                    decoded = line.decode("utf-8", errors="replace").rstrip()
+                    sanitized = sanitize_output(decoded)
+                    self._update_activity()
+                    await self._broadcast_output(sanitized)
+
+                await process.wait()
+                exit_code = process.returncode or 0
 
             finally:
                 # Clean up temp file
@@ -817,6 +866,8 @@ class ContainerManager:
 
             # Mark that we're running coding agent (not overseer)
             self._last_agent_was_overseer = False
+            # Set agent type for OpenCode routing
+            self._current_agent_type = "coder"
 
             # Start container with instruction
             return await self.start(instruction)
@@ -862,6 +913,8 @@ class ContainerManager:
 
             # Mark that we're running overseer
             self._last_agent_was_overseer = True
+            # Set agent type for OpenCode routing
+            self._current_agent_type = "overseer"
 
             # Start container with instruction
             return await self.start(instruction)
@@ -982,6 +1035,8 @@ class ContainerManager:
             # Mark that we're running hound
             self._last_agent_was_hound = True
             self._last_agent_was_overseer = False
+            # Set agent type for OpenCode routing
+            self._current_agent_type = "hound"
 
             # Save current closed count for next hound trigger check
             current_count = self._get_closed_count()
@@ -1037,6 +1092,10 @@ class ContainerManager:
                 api_key = os.getenv("ANTHROPIC_API_KEY")
                 if api_key:
                     cmd.extend(["-e", f"ANTHROPIC_API_KEY={api_key}"])
+                # Pass Z.ai API key for OpenCode SDK (GLM-4.7 model)
+                zhipu_key = os.getenv("ZHIPU_API_KEY")
+                if zhipu_key:
+                    cmd.extend(["-e", f"ZHIPU_API_KEY={zhipu_key}"])
                 cmd.append(CONTAINER_IMAGE)
 
                 result = subprocess.run(cmd, capture_output=True, text=True)

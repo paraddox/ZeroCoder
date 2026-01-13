@@ -88,7 +88,7 @@ export function ProjectSettingsModal({ project, onClose, onSaved }: ProjectSetti
               Agent Model
             </label>
             <p className="text-xs text-[var(--color-text-secondary)] mb-3">
-              Select the Claude model for coder and overseer agents. Changes apply to the next agent session.
+              Select the model for coder and overseer agents. Changes apply to the next agent session.
             </p>
             <div className="space-y-2">
               {AGENT_MODELS.map((model) => (
@@ -118,6 +118,11 @@ export function ProjectSettingsModal({ project, onClose, onSaved }: ProjectSetti
                     {model.id === 'claude-sonnet-4-5-20250514' && (
                       <span className="ml-2 text-xs px-2 py-0.5 rounded bg-[var(--color-success)]/10 text-[var(--color-success)]">
                         Cost effective
+                      </span>
+                    )}
+                    {model.badge && (
+                      <span className={`ml-2 text-xs px-2 py-0.5 rounded bg-[var(--color-${model.badgeColor || 'primary'})]/10 text-[var(--color-${model.badgeColor || 'primary'})]`}>
+                        {model.badge}
                       </span>
                     )}
                   </div>

@@ -1,8 +1,9 @@
 # =============================================================================
 # Project Container Dockerfile
 # =============================================================================
-# Container for running Claude Agent SDK on a single project.
-# Uses Python-based agent_app.py with retry logic and error recovery.
+# Container for running Claude Agent SDK or OpenCode SDK on a single project.
+# - Claude models: Uses Python-based agent_app.py
+# - GLM-4.7 model: Uses TypeScript-based opencode_agent_app.ts
 #
 # Usage:
 #   docker build -f Dockerfile.project -t zerocoder-project .
@@ -22,10 +23,13 @@ RUN apt-get update && apt-get install -y \
     curl \
     wget \
     ca-certificates \
-    nodejs \
-    npm \
     sudo \
     procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js v22 (required for Vision MCP Server)
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user (required for Claude Code --dangerously-skip-permissions)
@@ -43,6 +47,32 @@ RUN pip install --no-cache-dir claude-agent-sdk
 # Install beads CLI
 RUN curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash \
     && mv /root/.local/bin/bd /usr/local/bin/bd 2>/dev/null || true
+
+# =============================================================================
+# OpenCode SDK Setup (for GLM-4.7 model)
+# =============================================================================
+
+# Install OpenCode CLI
+RUN curl -fsSL https://opencode.ai/install | bash \
+    && mv /root/.opencode/bin/opencode /usr/local/bin/opencode 2>/dev/null || true
+ENV PATH="/root/.opencode/bin:${PATH}"
+
+# Copy OpenCode configuration and agent definitions
+COPY opencode_config/ /app/opencode_config/
+COPY opencode_agent_app.ts /app/opencode_agent_app.ts
+COPY package.opencode.json /app/package.json
+COPY tsconfig.opencode.json /app/tsconfig.opencode.json
+
+# Install OpenCode SDK dependencies and build TypeScript
+WORKDIR /app
+RUN npm install && npm run build
+
+# Reset working directory
+WORKDIR /project
+
+# =============================================================================
+# Claude Agent SDK Setup (for Claude models)
+# =============================================================================
 
 # Copy agent application and container scripts
 COPY agent_app.py /app/agent_app.py
@@ -73,7 +103,7 @@ USER root
 WORKDIR /project
 
 # Create entrypoint script
-RUN cat > /entrypoint.sh << 'EOF'
+COPY <<EOF /entrypoint.sh
 #!/bin/bash
 # Set fully permissive umask so ALL new files are world readable/writable
 # This ensures both host user and container user can access files

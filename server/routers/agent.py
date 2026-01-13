@@ -154,6 +154,7 @@ async def start_agent(
 
     # Determine the instruction to send
     instruction = request.instruction
+    agent_type = "coder"  # Default agent type
     if not instruction:
         # Auto-determine based on project state
         try:
@@ -162,16 +163,22 @@ async def start_agent(
             is_existing = is_existing_repo_project(project_dir)
             if not has_features(project_dir, project_name):
                 prompt_type = "coding (existing repo)" if is_existing else "initializer"
+                agent_type = "coder"  # Initializer uses coder agent type
             elif has_open_features(project_dir, project_name):
                 prompt_type = "coding"
+                agent_type = "coder"
             else:
                 prompt_type = "overseer"
+                agent_type = "overseer"
             print(f"[Agent] Auto-selected {prompt_type} prompt for {project_name}")
         except FileNotFoundError as e:
             raise HTTPException(
                 status_code=400,
                 detail=f"Could not load prompt: {e}"
             )
+
+    # Set agent type for OpenCode SDK routing
+    manager._current_agent_type = agent_type
 
     success, message = await manager.start(instruction=instruction)
 
