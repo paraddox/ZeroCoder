@@ -355,6 +355,14 @@ def refresh_project_prompts(project_dir: Path) -> list[str]:
             continue
 
         try:
+            # Delete existing file first to handle permission issues
+            # (container may have created files with different ownership)
+            if dest_path.exists():
+                try:
+                    dest_path.unlink()
+                except (OSError, PermissionError):
+                    # If unlink fails, try to overwrite anyway
+                    pass
             shutil.copy(template_path, dest_path)
             updated_files.append(dest_name)
         except (OSError, PermissionError) as e:
