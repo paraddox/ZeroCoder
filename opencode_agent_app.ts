@@ -12,12 +12,9 @@
  * - Handles exit codes matching Python agent (0=success, 1=failure, 129=graceful_stop, 130=interrupted)
  */
 
-import * as OpencodeSDK from "@opencode-ai/sdk";
+import { createOpencode } from "@opencode-ai/sdk";
 import * as fs from "fs";
 import * as path from "path";
-
-// SDK may export either Opencode or default - try to get the client class
-const Opencode = (OpencodeSDK as any).default || (OpencodeSDK as any).Opencode || OpencodeSDK;
 
 // Exit codes matching agent_app.py
 const EXIT_SUCCESS = 0;
@@ -73,42 +70,48 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
   log("AGENT", `Starting OpenCode agent: ${agentType}`);
   log("AGENT", `Prompt length: ${prompt.length} chars`);
 
-  let client: any = null;
+  let opencode: { client: any; server: { url: string; close(): void } } | null = null;
 
   try {
-    // Initialize OpenCode client
-    // The server should be started separately or via autoStartServer
-    client = new Opencode({
-      maxRetries: 3,
-      timeout: 600000, // 10 minute timeout
-    });
+    // Initialize OpenCode - this starts both the server and client
+    log("AGENT", "Starting OpenCode server...");
+    opencode = await createOpencode();
+    log("AGENT", `OpenCode server started at ${opencode.server.url}`);
+
+    const client = opencode.client;
 
     // Create a new session
     log("AGENT", "Creating session...");
-    const session = await client.session.create();
-    log("AGENT", `Session created: ${session.id}`);
+    const sessionResult = await client.session.create();
+    const sessionId = sessionResult.data?.id;
+    if (!sessionId) {
+      log("ERROR", "Failed to create session - no session ID returned");
+      return EXIT_FAILURE;
+    }
+    log("AGENT", `Session created: ${sessionId}`);
 
-    // Send the prompt to the agent
+    // Send the prompt to the agent using session.prompt()
     log("AGENT", `Sending prompt to ${agentType} agent...`);
-    const response = await client.session.chat(session.id, {
-      parts: [
-        {
-          type: "text",
-          text: prompt,
-        },
-      ],
+    const response = await client.session.prompt({
+      path: { id: sessionId },
+      body: {
+        parts: [{ type: "text", text: prompt }],
+      },
     });
 
     // Process response parts
-    if (response.parts) {
-      for (const part of response.parts) {
+    if (response.data?.parts) {
+      for (const part of response.data.parts) {
         if (part.type === "text") {
           // Output text content
           console.log(part.text);
-        } else if (part.type === "tool_use") {
-          log("TOOL", `Using: ${(part as any).name || "unknown"}`);
+        } else if (part.type === "tool-invocation" || part.type === "tool_use") {
+          log("TOOL", `Using: ${(part as any).name || (part as any).toolName || "unknown"}`);
         }
       }
+    } else if (response.error) {
+      log("ERROR", `API returned error: ${JSON.stringify(response.error)}`);
+      return EXIT_FAILURE;
     }
 
     // Check for graceful stop after processing
@@ -142,6 +145,12 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
     }
 
     return EXIT_FAILURE;
+  } finally {
+    // Clean up - close the server
+    if (opencode?.server) {
+      log("AGENT", "Closing OpenCode server...");
+      opencode.server.close();
+    }
   }
 }
 
