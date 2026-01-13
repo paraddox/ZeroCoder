@@ -35,11 +35,24 @@ echo "Installing dependencies..."
 pip install -r requirements.txt --quiet
 
 PID_FILE="/tmp/zerocoder-ui.pid"
+PYTHON_PID=""
 
 # Cleanup function for graceful shutdown
 cleanup() {
     echo ""
     echo "Shutting down ZeroCoder UI..."
+
+    # Stop the Python process if running
+    if [ ! -z "$PYTHON_PID" ]; then
+        echo "Stopping Python process (PID: $PYTHON_PID)..."
+        kill -TERM "$PYTHON_PID" 2>/dev/null
+        # Wait a bit for graceful shutdown
+        sleep 2
+        # Force kill if still running
+        if kill -0 "$PYTHON_PID" 2>/dev/null; then
+            kill -9 "$PYTHON_PID" 2>/dev/null
+        fi
+    fi
 
     # Stop all zerocoder containers
     echo "Stopping zerocoder containers..."
@@ -48,7 +61,7 @@ cleanup() {
         docker stop $ZEROCODER_CONTAINERS 2>/dev/null && echo "Containers stopped"
     fi
 
-    # Stop uvicorn if running
+    # Stop any remaining uvicorn processes
     UVICORN_PIDS=$(pgrep -f "uvicorn server.main:app")
     if [ ! -z "$UVICORN_PIDS" ]; then
         echo "Stopping uvicorn processes..."
@@ -138,6 +151,11 @@ if [[ " $* " == *" -bg "* ]] || [[ " $* " == *" --background "* ]]; then
     echo "UI available at: http://localhost:8000"
     echo "To stop: ./start-app.sh --stop"
 else
-    # Run in foreground
-    python start-app.py "$@"
+    # Run in foreground with signal handling
+    python start-app.py "$@" &
+    PYTHON_PID=$!
+    echo "Python PID: $PYTHON_PID"
+
+    # Wait for the Python process (will be interrupted by Ctrl-C)
+    wait $PYTHON_PID
 fi
