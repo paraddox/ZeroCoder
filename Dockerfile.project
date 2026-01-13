@@ -67,6 +67,12 @@ COPY tsconfig.opencode.json /app/tsconfig.opencode.json
 WORKDIR /app
 RUN npm install && npm run build
 
+# Copy OpenCode config to the location where OpenCode CLI expects it
+# This is needed for the server to find the Z.ai provider configuration
+RUN mkdir -p /home/coder/.config/opencode \
+    && cp /app/opencode_config/config.json /home/coder/.config/opencode/config.json \
+    && chown -R coder:coder /home/coder/.config
+
 # Reset working directory
 WORKDIR /project
 

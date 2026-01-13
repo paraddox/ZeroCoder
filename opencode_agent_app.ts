@@ -74,8 +74,9 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
 
   try {
     // Initialize OpenCode - this starts both the server and client
+    // Use port 5001 to avoid conflicts with default port 4096
     log("AGENT", "Starting OpenCode server...");
-    opencode = await createOpencode();
+    opencode = await createOpencode({ port: 5001 });
     log("AGENT", `OpenCode server started at ${opencode.server.url}`);
 
     const client = opencode.client;
