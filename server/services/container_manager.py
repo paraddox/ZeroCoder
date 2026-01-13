@@ -23,8 +23,63 @@ logger = logging.getLogger(__name__)
 # Container image name
 CONTAINER_IMAGE = "zerocoder-project"
 
+# Path to Dockerfile for building the image
+DOCKERFILE_PATH = Path(__file__).parent.parent.parent / "Dockerfile.project"
+
 # Idle timeout in minutes
 IDLE_TIMEOUT_MINUTES = 60
+
+
+def image_exists(image_name: str = CONTAINER_IMAGE) -> bool:
+    """Check if a Docker image exists."""
+    result = subprocess.run(
+        ["docker", "image", "inspect", image_name],
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
+def build_image(image_name: str = CONTAINER_IMAGE) -> tuple[bool, str]:
+    """
+    Build the Docker image from Dockerfile.project.
+
+    Returns:
+        Tuple of (success, message)
+    """
+    if not DOCKERFILE_PATH.exists():
+        return False, f"Dockerfile not found at {DOCKERFILE_PATH}"
+
+    logger.info(f"Building Docker image {image_name}...")
+    build_context = DOCKERFILE_PATH.parent
+
+    result = subprocess.run(
+        ["docker", "build", "-f", str(DOCKERFILE_PATH), "-t", image_name, str(build_context)],
+        capture_output=True,
+        text=True,
+        timeout=600,  # 10 minute timeout for build
+    )
+
+    if result.returncode != 0:
+        logger.error(f"Docker build failed: {result.stderr}")
+        return False, f"Failed to build image: {result.stderr}"
+
+    logger.info(f"Docker image {image_name} built successfully")
+    return True, f"Image {image_name} built successfully"
+
+
+def ensure_image_exists(image_name: str = CONTAINER_IMAGE) -> tuple[bool, str]:
+    """
+    Ensure the Docker image exists, building it if necessary.
+
+    Returns:
+        Tuple of (success, message)
+    """
+    if image_exists(image_name):
+        return True, "Image exists"
+
+    logger.info(f"Image {image_name} not found, building...")
+    return build_image(image_name)
 
 # Agent health check interval in seconds (10 minutes)
 AGENT_HEALTH_CHECK_INTERVAL = 600
@@ -308,6 +363,11 @@ class ContainerManager:
                 if result.returncode != 0:
                     return False, f"Failed to start container: {result.stderr}"
             else:
+                # Ensure Docker image exists (build if necessary)
+                image_ok, image_msg = ensure_image_exists()
+                if not image_ok:
+                    return False, image_msg
+
                 # Create new container with auth tokens from environment
                 cmd = [
                     "docker", "run", "-d",
@@ -800,6 +860,11 @@ class ContainerManager:
                 if result.returncode != 0:
                     return False, f"Failed to start container: {result.stderr}"
             else:
+                # Ensure Docker image exists (build if necessary)
+                image_ok, image_msg = ensure_image_exists()
+                if not image_ok:
+                    return False, image_msg
+
                 # Create new container with auth tokens from environment
                 cmd = [
                     "docker", "run", "-d",
