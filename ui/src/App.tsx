@@ -316,6 +316,7 @@ function App() {
         <FeatureModal
           feature={selectedFeature}
           projectName={selectedProject}
+          agentRunning={agentStatusData?.agent_running}
           onClose={() => setSelectedFeature(null)}
         />
       )}
