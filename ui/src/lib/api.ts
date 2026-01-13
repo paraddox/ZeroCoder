@@ -6,6 +6,7 @@ import type {
   ProjectSummary,
   ProjectDetail,
   ProjectPrompts,
+  ProjectSettings,
   FeatureListResponse,
   Feature,
   FeatureCreate,
@@ -17,6 +18,7 @@ import type {
   AssistantConversation,
   AssistantConversationDetail,
   WizardStatus,
+  AgentModel,
 } from './types'
 
 const API_BASE = '/api'
@@ -99,6 +101,20 @@ export async function updateWizardStatus(
 export async function deleteWizardStatus(name: string): Promise<void> {
   await fetchJSON(`/projects/${encodeURIComponent(name)}/wizard-status`, {
     method: 'DELETE',
+  })
+}
+
+export async function getProjectSettings(name: string): Promise<ProjectSettings> {
+  return fetchJSON(`/projects/${encodeURIComponent(name)}/settings`)
+}
+
+export async function updateProjectSettings(
+  name: string,
+  settings: { agent_model: AgentModel }
+): Promise<{ success: boolean; message: string; agent_model: AgentModel }> {
+  return fetchJSON(`/projects/${encodeURIComponent(name)}/settings`, {
+    method: 'PATCH',
+    body: JSON.stringify(settings),
   })
 }
 

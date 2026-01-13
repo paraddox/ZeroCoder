@@ -39,6 +39,7 @@ class ProjectSummary(BaseModel):
     stats: ProjectStats
     agent_status: str | None = None
     agent_running: bool | None = None
+    agent_model: str | None = None  # Model for coder/overseer agents
 
 
 class ProjectDetail(BaseModel):
@@ -48,6 +49,12 @@ class ProjectDetail(BaseModel):
     has_spec: bool
     stats: ProjectStats
     prompts_dir: str
+    agent_model: str | None = None  # Model for coder/overseer agents
+
+
+class ProjectSettingsUpdate(BaseModel):
+    """Request schema for updating project settings."""
+    agent_model: str = Field(..., description="Model ID for coder/overseer agents")
 
 
 class ProjectPrompts(BaseModel):

@@ -487,6 +487,67 @@ Set up the basic project structure based on what's specified in `prompts/app_spe
 This typically includes directories for frontend, backend, and any other
 components mentioned in the spec.
 
+### FIFTH TASK: Create AGENTS.md (Operational Guide)
+
+Create `AGENTS.md` at the project root. This file persists operational knowledge for all future coding sessions, preventing them from rediscovering commands and patterns.
+
+**AGENTS.md must include:**
+
+```markdown
+# AGENTS.md - Operational Guide
+
+## Commands
+
+| Action | Command |
+|--------|---------|
+| Install dependencies | `[from init.sh]` |
+| Start dev server | `[from init.sh]` |
+| Run all tests | `[detect from package.json or setup]` |
+| Run specific test | `[detect pattern]` |
+| Lint code | `[detect from package.json]` |
+| Type check | `[detect from package.json]` |
+| Build for production | `[detect from package.json]` |
+| Database migrations | `[if applicable]` |
+
+## Project Structure
+
+[Document the structure you created in FOURTH TASK]
+
+- `src/` - Source code
+- `src/components/` - UI components
+- `src/api/` or `src/app/api/` - API routes
+- `src/lib/` - Utilities and helpers
+- `[other key directories]`
+
+## Patterns
+
+[Document any patterns you established during setup]
+
+- Component naming: `[pattern]`
+- API response format: `{ success: boolean, data?: T, error?: string }`
+- State management: `[library if any]`
+- Form handling: `[approach]`
+- Error handling: `[approach]`
+
+## Gotchas
+
+[Note any quirks or important details discovered during setup]
+
+- [Important configuration detail]
+- [Any known issues or workarounds]
+
+## Tech Stack
+
+- Frontend: [framework + version]
+- Backend: [framework + version]
+- Database: [type + setup]
+- Styling: [approach]
+```
+
+**Why this matters:** Every future coding session will read this file FIRST to understand how to work with the project without wasting time rediscovering basic commands and patterns.
+
+**Size limit:** Keep AGENTS.md under 100 lines. Focus on the most essential information. If it grows too large, consolidate or remove outdated entries.
+
 ### OPTIONAL: Start Implementation
 
 If you have time remaining in this session, you may begin implementing

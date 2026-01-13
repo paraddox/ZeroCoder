@@ -85,6 +85,11 @@ def get_overseer_prompt(project_dir: Path | None = None) -> str:
     return load_prompt("overseer_prompt", project_dir)
 
 
+def get_hound_prompt(project_dir: Path | None = None) -> str:
+    """Load the hound agent prompt (project-specific if available)."""
+    return load_prompt("hound_prompt", project_dir)
+
+
 def get_app_spec(project_dir: Path) -> str:
     """
     Load the app spec from the project.
@@ -277,6 +282,94 @@ def copy_spec_to_project(project_dir: Path) -> None:
 # ============================================================================
 # Existing Repo Support
 # ============================================================================
+
+
+def is_existing_repo_project(project_dir: Path) -> bool:
+    """
+    Check if this is an existing repo project (no valid app_spec).
+
+    Existing repo projects:
+    - Do NOT have prompts/app_spec.txt with <project_specification> tag
+    - These skip the initializer and go directly to coding
+
+    Returns:
+        True if this is an existing repo (no app_spec), False if new project with spec
+    """
+    app_spec = project_dir / "prompts" / "app_spec.txt"
+    if not app_spec.exists():
+        return True
+
+    try:
+        content = app_spec.read_text(encoding="utf-8")
+        return "<project_specification>" not in content
+    except (OSError, PermissionError):
+        return True
+
+
+def refresh_project_prompts(project_dir: Path) -> list[str]:
+    """
+    Refresh agent prompts from base templates (overwrites existing).
+
+    Called on container start to ensure latest templates are used.
+    Does NOT touch app_spec.txt or CLAUDE.md (user content).
+
+    For existing repos (no valid app_spec), uses the *_existing.template.md variants.
+
+    Args:
+        project_dir: The project directory
+
+    Returns:
+        List of updated file names
+    """
+    project_prompts = get_project_prompts_dir(project_dir)
+    project_prompts.mkdir(parents=True, exist_ok=True)
+
+    is_existing = is_existing_repo_project(project_dir)
+
+    # Define template mappings based on project type
+    # Note: hound_prompt is the same for both project types
+    if is_existing:
+        # Existing repos use different template variants
+        templates = [
+            ("coding_prompt_existing.template.md", "coding_prompt.md"),
+            ("overseer_prompt_existing.template.md", "overseer_prompt.md"),
+            ("hound_prompt.template.md", "hound_prompt.md"),
+        ]
+    else:
+        # New projects with app_spec
+        templates = [
+            ("coding_prompt.template.md", "coding_prompt.md"),
+            ("coding_prompt_yolo.template.md", "coding_prompt_yolo.md"),
+            ("initializer_prompt.template.md", "initializer_prompt.md"),
+            ("overseer_prompt.template.md", "overseer_prompt.md"),
+            ("hound_prompt.template.md", "hound_prompt.md"),
+        ]
+
+    updated_files = []
+    for template_name, dest_name in templates:
+        template_path = TEMPLATES_DIR / template_name
+        dest_path = project_prompts / dest_name
+
+        if not template_path.exists():
+            print(f"  Warning: Template not found: {template_name}")
+            continue
+
+        try:
+            # Delete existing file first to handle permission issues
+            # (container may have created files with different ownership)
+            if dest_path.exists():
+                try:
+                    dest_path.unlink()
+                except (OSError, PermissionError):
+                    # If unlink fails, try to overwrite anyway
+                    pass
+            shutil.copy(template_path, dest_path)
+            updated_files.append(dest_name)
+        except (OSError, PermissionError) as e:
+            print(f"  Warning: Could not update {dest_name}: {e}")
+
+    return updated_files
+
 
 BEADS_WORKFLOW_MARKER = "## BEADS WORKFLOW"
 BEADS_WORKFLOW_SECTION = """

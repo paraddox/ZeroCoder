@@ -40,7 +40,8 @@ Split the verification work across subagents for efficiency.
 
 1. Get all recently closed issues (past 4 days)
 2. Divide them into groups of 5-10 issues each
-3. Launch subagents to verify each group in parallel
+3. Launch up to 5 subagents at once to verify each group in parallel
+4. Do that until allissues are verified
 
 ### Launch Subagents in Parallel
 
@@ -180,11 +181,11 @@ bd list --status=open
 - API endpoints that return static data
 - Buttons that do nothing when clicked
 
-### Probably OK (Don't Flag):
-- Clean, functional code even if simple
-- Real database queries even if basic
-- Actual working UI even if minimal styling
-- Proper error handling even if simple
+### Likely Incomplete:
+- Components that render but don't interact with state
+- Functions that don't call other functions
+- Missing error handling
+- Unused imports
 
 ### When In Doubt:
 - Try to trace the feature flow from UI to backend

@@ -5,14 +5,15 @@ Your job is to verify that all features from the app specification have been pro
 
 You run AFTER all features have been marked as closed. Your task is to:
 1. Read the original app specification
-2. Check that every feature in the spec has a corresponding bead issue
-3. Check that every closed bead issue has actual working implementation (not placeholders)
-4. Create new beads for missing features
-5. Reopen beads for incomplete/placeholder implementations
+2. Verify Ralph artifacts exist and are properly maintained
+3. Check that every feature in the spec has a corresponding bead issue
+4. Check that every closed bead issue has actual working implementation (not placeholders)
+5. Create new beads for missing features
+6. Reopen beads for incomplete/placeholder implementations
 
 ---
 
-## PHASE 1: ORIENTATION (2 minutes max)
+## PHASE 1: ORIENTATION + ARTIFACT CHECK (3 minutes max)
 
 Quick setup to understand current state:
 
@@ -25,7 +26,38 @@ bd list --status=closed
 
 # Read the app specification
 cat prompts/app_spec.txt
+
+# Check Ralph artifacts
+cat AGENTS.md 2>/dev/null || echo "WARNING: AGENTS.md missing!"
+
+# Check recent history (last 100 lines to avoid context bloat)
+echo "=== Recent Implementation History ==="
+tail -100 IMPLEMENTATION_HISTORY.md 2>/dev/null || echo "No implementation history yet"
 ```
+
+### Artifact Verification
+
+Before proceeding, verify these artifacts exist and are useful:
+
+**AGENTS.md** (REQUIRED):
+- Should contain operational commands (lint, test, build)
+- Should document project structure
+- Should list discovered patterns and gotchas
+
+**If AGENTS.md is missing or empty:** Create a bead to fix this:
+```bash
+bd create --title="Create/Update AGENTS.md operational guide" --type=task --priority=0 --description="AGENTS.md is missing or incomplete. This file must contain:
+- Commands: lint, test, typecheck, build
+- Project structure
+- Code patterns
+- Gotchas discovered during development
+
+This is CRITICAL for session continuity."
+```
+
+**IMPLEMENTATION_HISTORY.md** (Optional but expected):
+- Should contain archived plans from completed features
+- If missing, coding agents may not have been archiving properly
 
 ---
 
@@ -204,11 +236,13 @@ bd list --status=open
 - Placeholder text in the UI
 - API endpoints that return static data
 
-### Probably OK (Don't Flag):
-- Clean, functional code even if simple
-- Real database queries even if basic
-- Actual working UI even if minimal styling
-- Proper error handling even if simple
+
+### Likely Incomplete:
+- Components that render but don't interact with state
+- Functions that don't call other functions
+- Missing error handling
+- Unused imports
+
 
 ### When In Doubt:
 - Try to trace the feature flow from UI to database

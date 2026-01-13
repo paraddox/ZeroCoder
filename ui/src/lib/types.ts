@@ -10,6 +10,14 @@ export interface ProjectStats {
   percentage: number
 }
 
+// Agent model options for coder/overseer agents
+export type AgentModel = 'claude-opus-4-5-20251101' | 'claude-sonnet-4-5-20250514'
+
+export const AGENT_MODELS: { id: AgentModel; name: string }[] = [
+  { id: 'claude-sonnet-4-5-20250514', name: 'Sonnet 4.5' },
+  { id: 'claude-opus-4-5-20251101', name: 'Opus 4.5' },
+]
+
 export interface ProjectSummary {
   name: string
   path: string
@@ -18,10 +26,15 @@ export interface ProjectSummary {
   stats: ProjectStats
   agent_status?: AgentStatus
   agent_running?: boolean
+  agent_model?: AgentModel
 }
 
 export interface ProjectDetail extends ProjectSummary {
   prompts_dir: string
+}
+
+export interface ProjectSettings {
+  agent_model: AgentModel
 }
 
 // Filesystem types

@@ -17,14 +17,77 @@ import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Awaitable, Callable, Literal, Set
+import sys
+
+# Add root to path for imports
+_root = Path(__file__).parent.parent.parent
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
+
+from prompts import refresh_project_prompts
 
 logger = logging.getLogger(__name__)
 
 # Container image name
 CONTAINER_IMAGE = "zerocoder-project"
 
+# Path to Dockerfile for building the image
+DOCKERFILE_PATH = Path(__file__).parent.parent.parent / "Dockerfile.project"
+
 # Idle timeout in minutes
 IDLE_TIMEOUT_MINUTES = 60
+
+
+def image_exists(image_name: str = CONTAINER_IMAGE) -> bool:
+    """Check if a Docker image exists."""
+    result = subprocess.run(
+        ["docker", "image", "inspect", image_name],
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
+def build_image(image_name: str = CONTAINER_IMAGE) -> tuple[bool, str]:
+    """
+    Build the Docker image from Dockerfile.project.
+
+    Returns:
+        Tuple of (success, message)
+    """
+    if not DOCKERFILE_PATH.exists():
+        return False, f"Dockerfile not found at {DOCKERFILE_PATH}"
+
+    logger.info(f"Building Docker image {image_name}...")
+    build_context = DOCKERFILE_PATH.parent
+
+    result = subprocess.run(
+        ["docker", "build", "-f", str(DOCKERFILE_PATH), "-t", image_name, str(build_context)],
+        capture_output=True,
+        text=True,
+        timeout=600,  # 10 minute timeout for build
+    )
+
+    if result.returncode != 0:
+        logger.error(f"Docker build failed: {result.stderr}")
+        return False, f"Failed to build image: {result.stderr}"
+
+    logger.info(f"Docker image {image_name} built successfully")
+    return True, f"Image {image_name} built successfully"
+
+
+def ensure_image_exists(image_name: str = CONTAINER_IMAGE) -> tuple[bool, str]:
+    """
+    Ensure the Docker image exists, building it if necessary.
+
+    Returns:
+        Tuple of (success, message)
+    """
+    if image_exists(image_name):
+        return True, "Image exists"
+
+    logger.info(f"Image {image_name} not found, building...")
+    return build_image(image_name)
 
 # Agent health check interval in seconds (10 minutes)
 AGENT_HEALTH_CHECK_INTERVAL = 600
@@ -85,6 +148,8 @@ class ContainerManager:
         self._restarting: bool = False
         # Track if the last agent was overseer (for completion detection)
         self._last_agent_was_overseer: bool = False
+        # Track if the last agent was hound (for hound → overseer flow)
+        self._last_agent_was_hound: bool = False
         # Track if graceful stop was requested
         self._graceful_stop_requested: bool = False
 
@@ -288,6 +353,14 @@ class ContainerManager:
         Returns:
             Tuple of (success, message)
         """
+        # Refresh prompts from templates before starting
+        try:
+            updated = refresh_project_prompts(Path(self.project_dir))
+            if updated:
+                logger.info(f"Refreshed prompts from templates: {updated}")
+        except Exception as e:
+            logger.warning(f"Failed to refresh prompts: {e}")
+
         self._sync_status()
 
         if self._status == "running":
@@ -308,6 +381,11 @@ class ContainerManager:
                 if result.returncode != 0:
                     return False, f"Failed to start container: {result.stderr}"
             else:
+                # Ensure Docker image exists (build if necessary)
+                image_ok, image_msg = ensure_image_exists()
+                if not image_ok:
+                    return False, image_msg
+
                 # Create new container with auth tokens from environment
                 cmd = [
                     "docker", "run", "-d",
@@ -610,13 +688,22 @@ class ContainerManager:
             # Success - determine next action
             logger.info(f"[EXIT] Agent exited successfully (code 0) in {self.container_name}, _user_started={self._user_started}")
             if self._user_started and self.has_open_features():
-                # Features remain - restart coding agent
+                # Features remain - check if hound should run (every 20 closed tasks)
+                if self._should_run_hound():
+                    logger.info(f"[EXIT] 20+ tasks closed since last hound, running hound review...")
+                    await self._broadcast_output("[System] Periodic code review triggered. Running Hound agent...")
+                    task_ids = await self.get_recent_closed_tasks(30)
+                    self._last_agent_was_hound = False
+                    self._last_agent_was_overseer = False
+                    return await self.restart_with_hound(task_ids)
+                # Otherwise restart coding agent
                 logger.info(f"[EXIT] Features remain in {self.container_name}, restarting coding agent...")
                 await self._broadcast_output("[System] Session complete. Starting fresh context for next task...")
                 self._last_agent_was_overseer = False
+                self._last_agent_was_hound = False
                 return await self.restart_agent()
             elif self._user_started and not self.has_open_features():
-                # All features closed - check if overseer already verified
+                # All features closed - determine verification flow
                 if self._last_agent_was_overseer:
                     # Overseer found nothing - project is truly complete
                     logger.info(f"Verification complete in {self.container_name}! All features verified.")
@@ -624,11 +711,17 @@ class ContainerManager:
                     await self.stop()
                     self.status = "completed"
                     return True, "All features verified complete"
-                else:
-                    # Run overseer to verify implementations
-                    logger.info(f"All features closed in {self.container_name}, running overseer verification...")
-                    await self._broadcast_output("[System] All features complete. Running verification...")
+                elif self._last_agent_was_hound:
+                    # Hound just ran - now run overseer
+                    logger.info(f"Hound review complete in {self.container_name}, running overseer verification...")
+                    await self._broadcast_output("[System] Code review complete. Running final verification...")
                     return await self.restart_with_overseer()
+                else:
+                    # Run hound first before overseer
+                    logger.info(f"All features closed in {self.container_name}, running hound review before overseer...")
+                    await self._broadcast_output("[System] All features complete. Running code review before verification...")
+                    task_ids = await self.get_recent_closed_tasks(30)
+                    return await self.restart_with_hound(task_ids)
             else:
                 logger.info(f"[EXIT] Not restarting: _user_started={self._user_started}, has_open_features={self.has_open_features()}")
             return True, "Instruction completed"
@@ -659,6 +752,7 @@ class ContainerManager:
                 await self._broadcast_output("[System] Auto-restarting after error...")
                 await asyncio.sleep(5)  # Brief delay before restart
                 self._last_agent_was_overseer = False
+                self._last_agent_was_hound = False
                 return await self.restart_agent()
             else:
                 return False, f"Agent failed: {error_info}"
@@ -774,6 +868,130 @@ class ContainerManager:
         finally:
             self._restarting = False
 
+    # =========================================================================
+    # Hound Agent Support
+    # =========================================================================
+
+    def _get_hound_state(self) -> dict:
+        """Read hound state from project directory."""
+        state_file = Path(self.project_dir) / ".hound_state.json"
+        if not state_file.exists():
+            return {"last_run_closed_count": 0}
+        try:
+            return json.loads(state_file.read_text())
+        except Exception as e:
+            logger.warning(f"Failed to read hound state: {e}")
+            return {"last_run_closed_count": 0}
+
+    def _save_hound_state(self, closed_count: int) -> None:
+        """Save hound state after hound runs."""
+        state_file = Path(self.project_dir) / ".hound_state.json"
+        try:
+            state_file.write_text(json.dumps({"last_run_closed_count": closed_count}))
+            logger.info(f"Saved hound state: last_run_closed_count={closed_count}")
+        except Exception as e:
+            logger.warning(f"Failed to save hound state: {e}")
+
+    def _get_closed_count(self) -> int:
+        """Get current closed task count from beads stats."""
+        try:
+            result = subprocess.run(
+                ["docker", "exec", "-u", "coder", self.container_name,
+                 "bd", "stats", "--json"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                stats = json.loads(result.stdout)
+                return stats.get("closed", 0)
+        except Exception as e:
+            logger.warning(f"Failed to get closed count: {e}")
+        return 0
+
+    def _should_run_hound(self) -> bool:
+        """Check if 20+ tasks closed since last hound run."""
+        state = self._get_hound_state()
+        last_count = state.get("last_run_closed_count", 0)
+        current_count = self._get_closed_count()
+        should_run = (current_count - last_count) >= 20
+        logger.info(f"Hound check: last={last_count}, current={current_count}, should_run={should_run}")
+        return should_run
+
+    async def get_recent_closed_tasks(self, limit: int = 30) -> list[str]:
+        """Get the last N closed task IDs from container."""
+        try:
+            result = subprocess.run(
+                ["docker", "exec", "-u", "coder", self.container_name,
+                 "bd", "list", "--status=closed", f"--limit={limit}"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                # Parse output - each line is a task (format: "id: title")
+                task_ids = []
+                for line in result.stdout.strip().split("\n"):
+                    if line and ":" in line:
+                        task_id = line.split(":")[0].strip()
+                        if task_id:
+                            task_ids.append(task_id)
+                return task_ids
+        except Exception as e:
+            logger.warning(f"Failed to get recent closed tasks: {e}")
+        return []
+
+    async def restart_with_hound(self, task_ids: list[str]) -> tuple[bool, str]:
+        """
+        Restart the agent with the hound prompt.
+
+        The hound reviews recently closed tasks and reopens incomplete ones.
+
+        Args:
+            task_ids: List of task IDs to review
+
+        Returns:
+            Tuple of (success, message)
+        """
+        logger.info(f"Starting hound review in container {self.container_name} for {len(task_ids)} tasks")
+
+        self._restarting = True
+        try:
+            # Stop the container
+            await self.stop()
+
+            # Read the hound prompt from the project
+            hound_prompt_path = self.project_dir / "prompts" / "hound_prompt.md"
+            if not hound_prompt_path.exists():
+                # Fall back to template if project-specific doesn't exist
+                from prompts import get_hound_prompt
+                try:
+                    instruction = get_hound_prompt(self.project_dir)
+                except FileNotFoundError:
+                    return False, "No hound_prompt.md found in project or templates"
+            else:
+                try:
+                    instruction = hound_prompt_path.read_text()
+                except Exception as e:
+                    return False, f"Failed to read hound prompt: {e}"
+
+            # Inject task IDs into prompt
+            task_list = "\n".join([f"- {task_id}" for task_id in task_ids])
+            instruction = instruction.replace("{task_ids}", task_list)
+
+            # Mark that we're running hound
+            self._last_agent_was_hound = True
+            self._last_agent_was_overseer = False
+
+            # Save current closed count for next hound trigger check
+            current_count = self._get_closed_count()
+            self._save_hound_state(current_count)
+
+            # Start container with instruction
+            return await self.start(instruction)
+        finally:
+            self._restarting = False
+
     async def start_container_only(self) -> tuple[bool, str]:
         """
         Start the container without starting the agent.
@@ -800,6 +1018,11 @@ class ContainerManager:
                 if result.returncode != 0:
                     return False, f"Failed to start container: {result.stderr}"
             else:
+                # Ensure Docker image exists (build if necessary)
+                image_ok, image_msg = ensure_image_exists()
+                if not image_ok:
+                    return False, image_msg
+
                 # Create new container with auth tokens from environment
                 cmd = [
                     "docker", "run", "-d",

@@ -11,6 +11,7 @@ Features:
 - Structured logging with prefixes for parsing
 - Graceful interrupt handling
 - Exit codes for different failure modes
+- Runtime model selection via config file
 """
 
 import asyncio
@@ -28,6 +29,36 @@ from claude_agent_sdk import (
     TextBlock,
     ToolUseBlock,
 )
+
+# Default model for coder/overseer agents
+DEFAULT_AGENT_MODEL = "claude-sonnet-4-5-20250514"
+
+# Config file path (relative to project directory)
+AGENT_CONFIG_FILE = "prompts/.agent_config.json"
+
+
+def get_agent_model(project_dir: str) -> str:
+    """
+    Read agent model from project config file.
+
+    Args:
+        project_dir: Path to project directory
+
+    Returns:
+        Model ID string (defaults to DEFAULT_AGENT_MODEL if not configured)
+    """
+    config_path = Path(project_dir) / AGENT_CONFIG_FILE
+    if config_path.exists():
+        try:
+            config = json.loads(config_path.read_text())
+            model = config.get("agent_model", DEFAULT_AGENT_MODEL)
+            print(f"[CONFIG] Using model from config: {model}", flush=True)
+            return model
+        except Exception as e:
+            print(f"[CONFIG] Error reading config, using default: {e}", flush=True)
+    else:
+        print(f"[CONFIG] No config file, using default model: {DEFAULT_AGENT_MODEL}", flush=True)
+    return DEFAULT_AGENT_MODEL
 
 # Set permissive umask so all files created are world-readable/writable
 # This ensures host user can access files created by container user
@@ -77,7 +108,11 @@ async def run_agent(prompt: str, project_dir: str, max_retries: int = 3) -> int:
     Returns:
         Exit code (0=success, 1=failure, 129=graceful_stop, 130=interrupted)
     """
+    # Get model from project config (can be changed at runtime)
+    model = get_agent_model(project_dir)
+
     options = ClaudeAgentOptions(
+        model=model,
         cwd=project_dir,
         permission_mode="bypassPermissions",
         setting_sources=["project"],  # Load CLAUDE.md from project directory

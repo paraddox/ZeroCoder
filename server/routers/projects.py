@@ -18,10 +18,15 @@ from ..schemas import (
     ProjectDetail,
     ProjectPrompts,
     ProjectPromptsUpdate,
+    ProjectSettingsUpdate,
     ProjectStats,
     ProjectSummary,
     WizardStatus,
 )
+
+# Default model for coder/overseer agents
+DEFAULT_AGENT_MODEL = "claude-sonnet-4-5-20250514"
+AGENT_CONFIG_FILENAME = ".agent_config.json"
 
 # Lazy imports to avoid circular dependencies
 _imports_initialized = False
@@ -111,6 +116,43 @@ def check_wizard_incomplete(project_dir: Path, has_spec: bool) -> bool:
     return wizard_file.exists()
 
 
+def get_agent_config_path(project_dir: Path) -> Path:
+    """Get the path to the agent config file."""
+    return project_dir / "prompts" / AGENT_CONFIG_FILENAME
+
+
+def read_agent_model(project_dir: Path) -> str:
+    """Read the agent model from project config file."""
+    import json
+    config_path = get_agent_config_path(project_dir)
+    if config_path.exists():
+        try:
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            return config.get("agent_model", DEFAULT_AGENT_MODEL)
+        except Exception:
+            pass
+    return DEFAULT_AGENT_MODEL
+
+
+def write_agent_config(project_dir: Path, agent_model: str) -> None:
+    """Write the agent model to project config file."""
+    import json
+    config_path = get_agent_config_path(project_dir)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Read existing config if it exists
+    config = {}
+    if config_path.exists():
+        try:
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    # Update the model
+    config["agent_model"] = agent_model
+    config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+
 @router.get("", response_model=list[ProjectSummary])
 async def list_projects():
     """List all registered projects."""
@@ -147,6 +189,9 @@ async def list_projects():
             # If container manager not found or error, leave as None
             pass
 
+        # Get agent model from config
+        agent_model = read_agent_model(project_dir)
+
         result.append(ProjectSummary(
             name=name,
             path=info["path"],
@@ -155,6 +200,7 @@ async def list_projects():
             stats=stats,
             agent_status=agent_status,
             agent_running=agent_running,
+            agent_model=agent_model,
         ))
 
     return result
@@ -240,6 +286,7 @@ async def get_project(name: str):
     has_spec = _has_project_prompts(project_dir)
     stats = get_project_stats(project_dir)
     prompts_dir = _get_project_prompts_dir(project_dir)
+    agent_model = read_agent_model(project_dir)
 
     return ProjectDetail(
         name=name,
@@ -247,6 +294,7 @@ async def get_project(name: str):
         has_spec=has_spec,
         stats=stats,
         prompts_dir=str(prompts_dir),
+        agent_model=agent_model,
     )
 
 
@@ -438,6 +486,63 @@ async def delete_wizard_status(name: str):
         wizard_file.unlink()
 
     return {"success": True, "message": "Wizard status cleared"}
+
+
+# ============================================================================
+# Project Settings (Agent Model)
+# ============================================================================
+
+@router.patch("/{name}/settings")
+async def update_project_settings(name: str, settings: ProjectSettingsUpdate):
+    """Update project settings (agent model, etc.)."""
+    _, _, get_project_path, _, _ = _get_registry_functions()
+
+    name = validate_project_name(name)
+    project_dir = get_project_path(name)
+
+    if not project_dir:
+        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+
+    if not project_dir.exists():
+        raise HTTPException(status_code=404, detail="Project directory not found")
+
+    # Validate the model ID
+    valid_models = ["claude-opus-4-5-20251101", "claude-sonnet-4-5-20250514"]
+    if settings.agent_model not in valid_models:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid model. Must be one of: {', '.join(valid_models)}"
+        )
+
+    # Write the config
+    write_agent_config(project_dir, settings.agent_model)
+
+    return {
+        "success": True,
+        "message": f"Agent model set to {settings.agent_model}",
+        "agent_model": settings.agent_model
+    }
+
+
+@router.get("/{name}/settings")
+async def get_project_settings(name: str):
+    """Get project settings (agent model, etc.)."""
+    _, _, get_project_path, _, _ = _get_registry_functions()
+
+    name = validate_project_name(name)
+    project_dir = get_project_path(name)
+
+    if not project_dir:
+        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+
+    if not project_dir.exists():
+        raise HTTPException(status_code=404, detail="Project directory not found")
+
+    agent_model = read_agent_model(project_dir)
+
+    return {
+        "agent_model": agent_model
+    }
 
 
 # ============================================================================
