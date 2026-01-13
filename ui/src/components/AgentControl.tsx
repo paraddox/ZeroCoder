@@ -24,11 +24,9 @@ export function AgentControl({ projectName, status, yoloMode = false, agentRunni
   const gracefulStopAgent = useGracefulStopAgent(projectName)
   const startContainerOnly = useStartContainerOnly(projectName)
 
-  const isLoading =
-    startAgent.isPending ||
-    stopAgent.isPending ||
-    gracefulStopAgent.isPending ||
-    startContainerOnly.isPending
+  // Separate loading states for start vs stop operations
+  const isStartLoading = startAgent.isPending || startContainerOnly.isPending
+  const isStopLoading = stopAgent.isPending || gracefulStopAgent.isPending
 
   const handleStart = () => startAgent.mutate(yoloEnabled)
   const handleStop = () => stopAgent.mutate()
@@ -60,11 +58,11 @@ export function AgentControl({ projectName, status, yoloMode = false, agentRunni
             {/* Edit Mode Button - starts container without agent */}
             <button
               onClick={handleStartContainer}
-              disabled={isLoading}
+              disabled={isStartLoading}
               className="btn btn-secondary btn-icon"
               title="Start container for editing tasks (no agent)"
             >
-              {isLoading && startContainerOnly.isPending ? (
+              {startContainerOnly.isPending ? (
                 <Loader2 size={16} className="animate-spin" />
               ) : (
                 <Edit3 size={16} />
@@ -82,11 +80,11 @@ export function AgentControl({ projectName, status, yoloMode = false, agentRunni
             </button>
             <button
               onClick={handleStart}
-              disabled={isLoading}
+              disabled={isStartLoading}
               className="btn btn-success btn-icon"
               title={yoloEnabled ? "Start Agent (YOLO Mode)" : "Start Agent"}
             >
-              {isLoading && startAgent.isPending ? (
+              {startAgent.isPending ? (
                 <Loader2 size={16} className="animate-spin" />
               ) : (
                 <Play size={16} />
@@ -107,11 +105,11 @@ export function AgentControl({ projectName, status, yoloMode = false, agentRunni
             </button>
             <button
               onClick={handleStart}
-              disabled={isLoading}
+              disabled={isStartLoading}
               className="btn btn-success btn-icon"
               title={yoloEnabled ? "Start Agent (YOLO Mode)" : "Start Agent"}
             >
-              {isLoading && startAgent.isPending ? (
+              {startAgent.isPending ? (
                 <Loader2 size={16} className="animate-spin" />
               ) : (
                 <Play size={16} />
@@ -119,11 +117,11 @@ export function AgentControl({ projectName, status, yoloMode = false, agentRunni
             </button>
             <button
               onClick={handleStop}
-              disabled={isLoading}
+              disabled={isStopLoading}
               className="btn btn-danger btn-icon"
               title="Stop Container"
             >
-              {isLoading && stopAgent.isPending ? (
+              {stopAgent.isPending ? (
                 <Loader2 size={16} className="animate-spin" />
               ) : (
                 <Square size={16} />
@@ -135,11 +133,11 @@ export function AgentControl({ projectName, status, yoloMode = false, agentRunni
             {/* Graceful Stop Button */}
             <button
               onClick={handleGracefulStop}
-              disabled={isLoading || gracefulStopRequested}
+              disabled={isStopLoading || gracefulStopRequested}
               className={`btn btn-icon ${gracefulStopRequested ? 'btn-secondary' : 'btn-warning'}`}
               title={gracefulStopRequested ? "Stopping after current session..." : "Complete current session then stop"}
             >
-              {gracefulStopRequested || (isLoading && gracefulStopAgent.isPending) ? (
+              {gracefulStopRequested || gracefulStopAgent.isPending ? (
                 <Loader2 size={16} className="animate-spin" />
               ) : (
                 <CircleStop size={16} />
@@ -149,11 +147,11 @@ export function AgentControl({ projectName, status, yoloMode = false, agentRunni
             {/* Immediate Stop Button */}
             <button
               onClick={handleStop}
-              disabled={isLoading}
+              disabled={isStopLoading}
               className="btn btn-danger btn-icon"
               title="Stop immediately"
             >
-              {isLoading && stopAgent.isPending ? (
+              {stopAgent.isPending ? (
                 <Loader2 size={16} className="animate-spin" />
               ) : (
                 <Square size={16} />

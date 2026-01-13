@@ -79,6 +79,7 @@ async def get_agent_status(project_name: str):
         started_at=manager.started_at,
         idle_seconds=status_dict["idle_seconds"],
         agent_running=status_dict.get("agent_running", False),
+        graceful_stop_requested=status_dict.get("graceful_stop_requested", False),
     )
 
 
