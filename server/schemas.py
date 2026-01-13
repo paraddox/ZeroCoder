@@ -37,6 +37,8 @@ class ProjectSummary(BaseModel):
     has_spec: bool
     wizard_incomplete: bool = False
     stats: ProjectStats
+    agent_status: str | None = None
+    agent_running: bool | None = None
 
 
 class ProjectDetail(BaseModel):

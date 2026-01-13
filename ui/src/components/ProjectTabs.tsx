@@ -12,6 +12,20 @@ interface ProjectTabsProps {
   isLoading: boolean
 }
 
+// Helper function to determine status dot configuration
+function getStatusDotConfig(project: ProjectSummary): { color: string; pulse: boolean } | null {
+  if (project.agent_status === 'running') {
+    if (project.agent_running) {
+      // Agent is running - green with pulse
+      return { color: 'var(--color-done)', pulse: true }
+    } else {
+      // Container running but no agent (Edit Mode) - blue
+      return { color: 'var(--color-progress)', pulse: false }
+    }
+  }
+  return null // No dot for other states
+}
+
 export function ProjectTabs({
   projects,
   selectedProject,
@@ -70,27 +84,37 @@ export function ProjectTabs({
               Get Started
             </button>
           ) : (
-            projects.map(project => (
-              <button
-                key={project.name}
-                onClick={() => handleTabClick(project)}
-                className={`tab-button ${project.name === selectedProject ? 'active' : ''}`}
-                title={project.name}
-              >
-                <span className="truncate max-w-[150px]">{project.name}</span>
-                {project.wizard_incomplete && (
-                  <AlertCircle
-                    size={12}
-                    className="text-[var(--color-warning)]"
-                  />
-                )}
-                {!project.wizard_incomplete && project.stats.total > 0 && (
-                  <span className="badge badge-sm">
-                    {project.stats.percentage}%
-                  </span>
-                )}
-              </button>
-            ))
+            projects.map(project => {
+              const dotConfig = getStatusDotConfig(project)
+
+              return (
+                <button
+                  key={project.name}
+                  onClick={() => handleTabClick(project)}
+                  className={`tab-button ${project.name === selectedProject ? 'active' : ''}`}
+                  title={project.name}
+                >
+                  {dotConfig && (
+                    <span
+                      className={`status-dot ${dotConfig.pulse ? 'status-dot-pulse' : ''}`}
+                      style={{ backgroundColor: dotConfig.color }}
+                    />
+                  )}
+                  <span className="truncate max-w-[150px]">{project.name}</span>
+                  {project.wizard_incomplete && (
+                    <AlertCircle
+                      size={12}
+                      className="text-[var(--color-warning)]"
+                    />
+                  )}
+                  {!project.wizard_incomplete && project.stats.total > 0 && (
+                    <span className="badge badge-sm">
+                      {project.stats.percentage}%
+                    </span>
+                  )}
+                </button>
+              )
+            })
           )}
         </div>
 

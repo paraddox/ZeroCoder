@@ -16,6 +16,8 @@ export interface ProjectSummary {
   has_spec: boolean
   wizard_incomplete: boolean
   stats: ProjectStats
+  agent_status?: AgentStatus
+  agent_running?: boolean
 }
 
 export interface ProjectDetail extends ProjectSummary {
