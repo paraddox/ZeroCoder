@@ -18,6 +18,7 @@ from ..services.container_manager import (
     check_docker_available,
     check_image_exists,
 )
+from ..websocket import manager as websocket_manager
 
 # Add root to path for imports
 _root = Path(__file__).parent.parent.parent
@@ -220,6 +221,13 @@ async def graceful_stop_agent(project_name: str):
     """
     manager = get_project_container(project_name)
     success, message = await manager.graceful_stop()
+
+    # Broadcast status update to WebSocket clients immediately
+    if success:
+        await websocket_manager.broadcast_to_project(project_name, {
+            "type": "graceful_stop_requested",
+            "graceful_stop_requested": True,
+        })
 
     return AgentActionResponse(
         success=success,

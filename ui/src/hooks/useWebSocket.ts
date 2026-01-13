@@ -15,6 +15,7 @@ interface WebSocketState {
   agentStatus: AgentStatus
   logs: Array<{ line: string; timestamp: string }>
   isConnected: boolean
+  gracefulStopRequested: boolean
 }
 
 const MAX_LOGS = 100 // Keep last 100 log lines
@@ -25,6 +26,7 @@ export function useProjectWebSocket(projectName: string | null) {
     agentStatus: 'stopped',
     logs: [],
     isConnected: false,
+    gracefulStopRequested: false,
   })
 
   const wsRef = useRef<WebSocket | null>(null)
@@ -73,6 +75,8 @@ export function useProjectWebSocket(projectName: string | null) {
               setState(prev => ({
                 ...prev,
                 agentStatus: message.status,
+                // Reset gracefulStopRequested when agent stops
+                gracefulStopRequested: message.status === 'running' ? prev.gracefulStopRequested : false,
               }))
               break
 
@@ -92,6 +96,13 @@ export function useProjectWebSocket(projectName: string | null) {
               })
               break
             }
+
+            case 'graceful_stop_requested':
+              setState(prev => ({
+                ...prev,
+                gracefulStopRequested: message.graceful_stop_requested,
+              }))
+              break
 
             case 'feature_update':
               // Feature updates will trigger a refetch via React Query

@@ -36,6 +36,34 @@ pip install -r requirements.txt --quiet
 
 PID_FILE="/tmp/zerocoder-ui.pid"
 
+# Cleanup function for graceful shutdown
+cleanup() {
+    echo ""
+    echo "Shutting down ZeroCoder UI..."
+
+    # Stop all zerocoder containers
+    echo "Stopping zerocoder containers..."
+    ZEROCODER_CONTAINERS=$(docker ps -q --filter "name=zerocoder-" 2>/dev/null)
+    if [ ! -z "$ZEROCODER_CONTAINERS" ]; then
+        docker stop $ZEROCODER_CONTAINERS 2>/dev/null && echo "Containers stopped"
+    fi
+
+    # Stop uvicorn if running
+    UVICORN_PIDS=$(pgrep -f "uvicorn server.main:app")
+    if [ ! -z "$UVICORN_PIDS" ]; then
+        echo "Stopping uvicorn processes..."
+        for PID in $UVICORN_PIDS; do
+            kill -TERM "$PID" 2>/dev/null
+        done
+    fi
+
+    echo "Shutdown complete"
+    exit 0
+}
+
+# Set up signal traps for clean shutdown on Ctrl-C
+trap cleanup SIGINT SIGTERM
+
 # Check for --stop flag
 if [[ " $* " == *" --stop "* ]] || [[ " $* " == *" -s "* ]]; then
     echo "Stopping ZeroCoder UI..."

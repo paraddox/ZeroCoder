@@ -763,6 +763,17 @@
   100% { transform: scale(1); }
 }
 
+@keyframes stopPulsate {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(232, 185, 75, 0.4);
+    border-color: var(--color-pending);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(232, 185, 75, 0);
+    border-color: var(--color-pending-border);
+  }
+}
+
 /* ============================================================================
    Utilities Layer
    ============================================================================ */
@@ -782,6 +793,10 @@
 
   .animate-complete {
     animation: completePop 0.4s var(--ease-out);
+  }
+
+  .animate-stop-pulsate {
+    animation: stopPulsate 2s infinite;
   }
 
   .animate-shimmer {

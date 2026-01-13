@@ -4,7 +4,7 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as api from '../lib/api'
-import type { FeatureCreate } from '../lib/types'
+import type { FeatureCreate, AgentStatusResponse } from '../lib/types'
 
 // ============================================================================
 // Projects
@@ -157,6 +157,33 @@ export function useGracefulStopAgent(projectName: string) {
 
   return useMutation({
     mutationFn: () => api.gracefulStopAgent(projectName),
+
+    // Optimistic update: immediately set graceful_stop_requested = true
+    onMutate: async () => {
+      // Cancel outgoing refetches to avoid overwriting optimistic update
+      await queryClient.cancelQueries({ queryKey: ['agent-status', projectName] })
+
+      // Snapshot previous value for rollback
+      const previousStatus = queryClient.getQueryData<AgentStatusResponse>(['agent-status', projectName])
+
+      // Optimistically update the cache
+      queryClient.setQueryData<AgentStatusResponse>(
+        ['agent-status', projectName],
+        (old) => old ? { ...old, graceful_stop_requested: true } : old
+      )
+
+      // Return context with previous state
+      return { previousStatus }
+    },
+
+    // Rollback on error
+    onError: (_err, _variables, context) => {
+      if (context?.previousStatus) {
+        queryClient.setQueryData(['agent-status', projectName], context.previousStatus)
+      }
+    },
+
+    // Refetch to sync with server state
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['agent-status', projectName] })
     },

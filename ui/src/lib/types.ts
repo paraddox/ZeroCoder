@@ -131,7 +131,7 @@ export interface SetupStatus {
 }
 
 // WebSocket message types
-export type WSMessageType = 'progress' | 'feature_update' | 'log' | 'agent_status' | 'pong'
+export type WSMessageType = 'progress' | 'feature_update' | 'log' | 'agent_status' | 'pong' | 'graceful_stop_requested'
 
 export interface WSProgressMessage {
   type: 'progress'
@@ -158,6 +158,11 @@ export interface WSAgentStatusMessage {
   status: AgentStatus
 }
 
+export interface WSGracefulStopRequestedMessage {
+  type: 'graceful_stop_requested'
+  graceful_stop_requested: boolean
+}
+
 export interface WSPongMessage {
   type: 'pong'
 }
@@ -167,6 +172,7 @@ export type WSMessage =
   | WSFeatureUpdateMessage
   | WSLogMessage
   | WSAgentStatusMessage
+  | WSGracefulStopRequestedMessage
   | WSPongMessage
 
 // ============================================================================

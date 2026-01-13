@@ -39,7 +39,7 @@ export function AgentControl({ projectName, status, yoloMode = false, agentRunni
   return (
     <div className="flex items-center gap-2">
       {/* Status Indicator */}
-      <StatusIndicator status={status} isIdleMode={isIdleMode} />
+      <StatusIndicator status={status} isIdleMode={isIdleMode} gracefulStopRequested={gracefulStopRequested} />
 
       {/* YOLO Mode Indicator */}
       {status === 'running' && yoloMode && !isIdleMode && (
@@ -164,7 +164,7 @@ export function AgentControl({ projectName, status, yoloMode = false, agentRunni
   )
 }
 
-function StatusIndicator({ status, isIdleMode = false }: { status: AgentStatus; isIdleMode?: boolean }) {
+function StatusIndicator({ status, isIdleMode = false, gracefulStopRequested = false }: { status: AgentStatus; isIdleMode?: boolean; gracefulStopRequested?: boolean }) {
   const statusConfig: Record<AgentStatus, { color: string; label: string; pulse: boolean }> = {
     not_created: {
       color: 'var(--color-text-muted)',
@@ -201,6 +201,24 @@ function StatusIndicator({ status, isIdleMode = false }: { status: AgentStatus; 
           style={{ color: 'var(--color-progress)' }}
         >
           Edit Mode
+        </span>
+      </div>
+    )
+  }
+
+  // Override for graceful stop (running, but stopping after current session)
+  if (status === 'running' && gracefulStopRequested) {
+    return (
+      <div className="flex items-center gap-2 px-3 py-1.5 bg-[var(--color-bg-elevated)] border border-[var(--color-border)] rounded-md">
+        <span
+          className="status-dot status-dot-pulse"
+          style={{ backgroundColor: 'var(--color-progress)' }}
+        />
+        <span
+          className="font-medium text-sm"
+          style={{ color: 'var(--color-progress)' }}
+        >
+          Running current session only
         </span>
       </div>
     )
