@@ -1,22 +1,57 @@
 # {project_name}
 
-This project uses **beads** for feature/issue tracking. All features are stored in `.beads/` directory.
+This project uses **beads** for feature/issue tracking and **Ralph artifacts** for session continuity.
 
 ## ⚠️ MANDATORY WORKFLOW - NEVER SKIP
 
 **You MUST follow this workflow. It is NOT optional.**
 
-The beads commands below are your **PRIMARY communication channel** with the monitoring UI. If you skip these steps, users cannot see your progress.
+### Session Flow
 
 ```
-bd ready                              # 1. Get next feature
-bd update <id> --status=in_progress   # 2. MUST run BEFORE coding
-# ... do the work ...
-bd close <id>                         # 3. Only after verification
-bd sync                               # 4. At session end
+1. READ ARTIFACTS        → cat AGENTS.md; cat IMPLEMENTATION_PLAN.md
+2. GET FEATURE           → bd ready
+3. CLAIM IT              → bd update <id> --status=in_progress
+4. GAP ANALYSIS          → What exists vs what's needed?
+5. PLAN                  → Create/update IMPLEMENTATION_PLAN.md
+6. IMPLEMENT             → Follow the plan
+7. VALIDATE              → npm run lint && npm run typecheck (MUST PASS)
+8. CLOSE                 → bd close <id>
+9. UPDATE ARTIFACTS      → Archive plan, update discoveries
+10. COMMIT + EXIT        → git commit && bd sync
 ```
 
 **Skipping `--status=in_progress` breaks the UI monitoring. NEVER skip it.**
+**Features CANNOT be closed until validation passes.**
+
+---
+
+## Ralph Artifacts (Session Continuity)
+
+These files persist knowledge across sessions. **READ THEM FIRST.**
+
+| Artifact | Purpose | Created By |
+|----------|---------|------------|
+| `AGENTS.md` | Operational guide: commands, patterns, gotchas | Initializer |
+| `IMPLEMENTATION_PLAN.md` | Current feature: gap analysis, task breakdown | Coding Agent |
+| `IMPLEMENTATION_HISTORY.md` | Archive of completed feature plans | Coding Agent |
+
+### AGENTS.md
+
+Contains operational knowledge that EVERY session should read:
+- Commands (how to lint, test, build)
+- Project structure
+- Code patterns and conventions
+- Gotchas and workarounds
+
+### IMPLEMENTATION_PLAN.md
+
+Contains the plan for the CURRENT feature:
+- Gap analysis (what exists vs what's needed)
+- Task breakdown (specific steps)
+- Discoveries made during implementation
+
+This file is **overwritten for each feature** and archived to IMPLEMENTATION_HISTORY.md when complete.
 
 ## Workflow
 
@@ -41,17 +76,25 @@ bd sync                               # 4. At session end
 ### Implementing Features
 
 **After marking in_progress:**
-1. Read the feature description and requirements
-2. Implement the feature following project conventions
-3. Run linting/type-checking to verify code quality
+1. Create/update IMPLEMENTATION_PLAN.md with gap analysis + task breakdown
+2. Follow the tasks in your plan
+3. Update discoveries in IMPLEMENTATION_PLAN.md as you work
 4. Test the implementation
 
-### Completing Features
+### Completing Features (Validation Required)
 
-When a feature is fully implemented and tested:
+**Before closing, validation MUST pass:**
+
 ```bash
+# Run all validation (check AGENTS.md for project-specific commands)
+npm run lint
+npm run typecheck
+
+# Only after validation passes:
 bd close <feature-id>
 ```
+
+**If validation fails, FIX THE ISSUES before closing.**
 
 Check overall progress:
 ```bash
@@ -83,7 +126,10 @@ Then move to the next available feature with `bd ready`.
 
 ## Project Guidelines
 
+- **Read AGENTS.md first** - It contains commands, patterns, and gotchas
+- **Plan before coding** - Create IMPLEMENTATION_PLAN.md with task breakdown
+- **Validate before closing** - Lint/typecheck MUST pass
+- **Update artifacts** - Log discoveries to AGENTS.md
 - Follow existing code patterns and conventions
-- Run `npm run lint` or equivalent before marking features complete
 - Commit changes with descriptive messages
 - One feature at a time - complete or skip before moving on
