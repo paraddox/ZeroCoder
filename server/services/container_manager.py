@@ -17,6 +17,14 @@ import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Awaitable, Callable, Literal, Set
+import sys
+
+# Add root to path for imports
+_root = Path(__file__).parent.parent.parent
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
+
+from prompts import refresh_project_prompts
 
 logger = logging.getLogger(__name__)
 
@@ -343,6 +351,14 @@ class ContainerManager:
         Returns:
             Tuple of (success, message)
         """
+        # Refresh prompts from templates before starting
+        try:
+            updated = refresh_project_prompts(Path(self.project_dir))
+            if updated:
+                logger.info(f"Refreshed prompts from templates: {updated}")
+        except Exception as e:
+            logger.warning(f"Failed to refresh prompts: {e}")
+
         self._sync_status()
 
         if self._status == "running":

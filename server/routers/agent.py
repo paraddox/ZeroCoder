@@ -27,7 +27,13 @@ if str(_root) not in sys.path:
 
 from registry import get_project_path
 from progress import has_features, has_open_features
-from prompts import get_initializer_prompt, get_coding_prompt, get_coding_prompt_yolo, get_overseer_prompt
+from prompts import (
+    get_initializer_prompt,
+    get_coding_prompt,
+    get_coding_prompt_yolo,
+    get_overseer_prompt,
+    is_existing_repo_project,
+)
 
 
 def _get_project_path(project_name: str) -> Path:
@@ -84,28 +90,6 @@ async def get_agent_status(project_name: str):
     )
 
 
-def _is_existing_repo_project(project_dir: Path) -> bool:
-    """
-    Check if this is an existing repo project (no valid app_spec).
-
-    Existing repo projects:
-    - Do NOT have prompts/app_spec.txt with <project_specification> tag
-    - These skip the initializer and go directly to coding
-
-    Returns:
-        True if this is an existing repo (no app_spec), False if new project with spec
-    """
-    app_spec = project_dir / "prompts" / "app_spec.txt"
-    if not app_spec.exists():
-        return True
-
-    try:
-        content = app_spec.read_text(encoding="utf-8")
-        return "<project_specification>" not in content
-    except (OSError, PermissionError):
-        return True
-
-
 def _get_agent_prompt(project_dir: Path, project_name: str, yolo_mode: bool = False) -> str:
     """
     Determine the appropriate prompt based on project state.
@@ -119,7 +103,7 @@ def _get_agent_prompt(project_dir: Path, project_name: str, yolo_mode: bool = Fa
     - Skip initializer entirely - go straight to coding
     - Use existing-repo variants of coding and overseer prompts
     """
-    is_existing = _is_existing_repo_project(project_dir)
+    is_existing = is_existing_repo_project(project_dir)
 
     if not has_features(project_dir, project_name):
         if is_existing:
@@ -175,7 +159,7 @@ async def start_agent(
         try:
             instruction = _get_agent_prompt(project_dir, project_name, request.yolo_mode)
             # Determine which prompt was selected for logging
-            is_existing = _is_existing_repo_project(project_dir)
+            is_existing = is_existing_repo_project(project_dir)
             if not has_features(project_dir, project_name):
                 prompt_type = "coding (existing repo)" if is_existing else "initializer"
             elif has_open_features(project_dir, project_name):
