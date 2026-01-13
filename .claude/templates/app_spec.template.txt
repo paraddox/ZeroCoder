@@ -7,8 +7,6 @@
   You can either:
   1. Use the /create-spec command to generate this interactively with Claude
   2. Manually edit this file following the structure below
-
-  See existing projects in generations/ for examples of complete specifications.
 -->
 
 <project_specification>

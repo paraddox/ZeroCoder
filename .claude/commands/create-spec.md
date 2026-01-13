@@ -6,7 +6,7 @@ description: Create an app spec for autonomous coding (project)
 
 This command **requires** the project directory as an argument via `$ARGUMENTS`.
 
-**Example:** `/create-spec generations/my-app`
+**Example:** `/create-spec ~/projects/my-app`
 
 **Output location:** `$ARGUMENTS/prompts/app_spec.txt` and `$ARGUMENTS/prompts/initializer_prompt.md`
 
