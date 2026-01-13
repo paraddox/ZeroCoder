@@ -49,9 +49,15 @@ Contains operational knowledge that EVERY session should read:
 Contains the plan for the CURRENT feature:
 - Gap analysis (what exists vs what's needed)
 - Task breakdown (specific steps)
+- Blockers encountered
 - Discoveries made during implementation
 
 This file is **overwritten for each feature** and archived to IMPLEMENTATION_HISTORY.md when complete.
+
+### Size Limits
+
+- **AGENTS.md**: Keep under 100 lines. Consolidate instead of endlessly appending.
+- **IMPLEMENTATION_HISTORY.md**: Only read last 50-100 lines for context. Full history is for human review.
 
 ## Workflow
 

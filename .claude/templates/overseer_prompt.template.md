@@ -29,7 +29,10 @@ cat prompts/app_spec.txt
 
 # Check Ralph artifacts
 cat AGENTS.md 2>/dev/null || echo "WARNING: AGENTS.md missing!"
-cat IMPLEMENTATION_HISTORY.md 2>/dev/null || echo "No implementation history yet"
+
+# Check recent history (last 100 lines to avoid context bloat)
+echo "=== Recent Implementation History ==="
+tail -100 IMPLEMENTATION_HISTORY.md 2>/dev/null || echo "No implementation history yet"
 ```
 
 ### Artifact Verification

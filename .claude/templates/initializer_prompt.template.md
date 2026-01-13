@@ -546,6 +546,8 @@ Create `AGENTS.md` at the project root. This file persists operational knowledge
 
 **Why this matters:** Every future coding session will read this file FIRST to understand how to work with the project without wasting time rediscovering basic commands and patterns.
 
+**Size limit:** Keep AGENTS.md under 100 lines. Focus on the most essential information. If it grows too large, consolidate or remove outdated entries.
+
 ### OPTIONAL: Start Implementation
 
 If you have time remaining in this session, you may begin implementing

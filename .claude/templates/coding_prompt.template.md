@@ -30,12 +30,17 @@ bd ready
 cat AGENTS.md 2>/dev/null || echo "No AGENTS.md yet"
 cat IMPLEMENTATION_PLAN.md 2>/dev/null || echo "No plan yet - will create in Step 2.5"
 
+# Read recent history (last 3 features for context, not full history)
+echo "=== Recent Implementation History (last 50 lines) ==="
+tail -50 IMPLEMENTATION_HISTORY.md 2>/dev/null || echo "No history yet"
+
 # Read app spec for context
 cat prompts/app_spec.txt
 ```
 
 **AGENTS.md** contains operational knowledge: commands, patterns, gotchas.
 **IMPLEMENTATION_PLAN.md** contains your task breakdown for the current feature.
+**IMPLEMENTATION_HISTORY.md** contains archived plans - only read recent entries (last 50 lines) to avoid context bloat.
 
 If these files exist, READ THEM CAREFULLY - they save you from rediscovering things.
 
@@ -82,6 +87,9 @@ chmod +x init.sh 2>/dev/null && ./init.sh || echo "No init.sh, start servers man
 
    ### Approach
    [Brief description of how you'll implement this]
+
+   ### Blockers
+   - None currently
 
    ### Discoveries
    [Will be updated as you work]
@@ -180,22 +188,27 @@ After completing ONE feature implementation + verification:
 
 #### 5.1 Archive the Current Feature Plan
 
-Move your completed plan to history:
+Move your completed plan to history (crash-safe):
 
 ```bash
-# Append completed plan to history
-echo "" >> IMPLEMENTATION_HISTORY.md
-echo "---" >> IMPLEMENTATION_HISTORY.md
-echo "## Completed: $(date '+%Y-%m-%d %H:%M')" >> IMPLEMENTATION_HISTORY.md
-cat IMPLEMENTATION_PLAN.md >> IMPLEMENTATION_HISTORY.md
-
-# Clear the plan for next feature
-rm IMPLEMENTATION_PLAN.md
+# Archive plan to history (only delete if archive succeeds)
+if [ -f IMPLEMENTATION_PLAN.md ]; then
+    {
+        echo ""
+        echo "---"
+        echo "## Completed: $(date '+%Y-%m-%d %H:%M')"
+        cat IMPLEMENTATION_PLAN.md
+    } >> IMPLEMENTATION_HISTORY.md && rm IMPLEMENTATION_PLAN.md
+fi
 ```
+
+**Note:** If the agent crashes mid-session, IMPLEMENTATION_PLAN.md may still exist. The next session will see it and can either continue from it or overwrite it with a new plan.
 
 #### 5.2 Update AGENTS.md (If You Learned Anything Useful)
 
 If you discovered new patterns, gotchas, or commands that would help future sessions, add them to AGENTS.md.
+
+**Size limit:** Keep AGENTS.md under 100 lines. If it's getting long, consolidate entries or remove outdated information instead of just appending.
 
 #### 5.3 Commit and Sync
 
