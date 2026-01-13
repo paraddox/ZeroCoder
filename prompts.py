@@ -85,6 +85,11 @@ def get_overseer_prompt(project_dir: Path | None = None) -> str:
     return load_prompt("overseer_prompt", project_dir)
 
 
+def get_hound_prompt(project_dir: Path | None = None) -> str:
+    """Load the hound agent prompt (project-specific if available)."""
+    return load_prompt("hound_prompt", project_dir)
+
+
 def get_app_spec(project_dir: Path) -> str:
     """
     Load the app spec from the project.
@@ -322,11 +327,13 @@ def refresh_project_prompts(project_dir: Path) -> list[str]:
     is_existing = is_existing_repo_project(project_dir)
 
     # Define template mappings based on project type
+    # Note: hound_prompt is the same for both project types
     if is_existing:
         # Existing repos use different template variants
         templates = [
             ("coding_prompt_existing.template.md", "coding_prompt.md"),
             ("overseer_prompt_existing.template.md", "overseer_prompt.md"),
+            ("hound_prompt.template.md", "hound_prompt.md"),
         ]
     else:
         # New projects with app_spec
@@ -335,6 +342,7 @@ def refresh_project_prompts(project_dir: Path) -> list[str]:
             ("coding_prompt_yolo.template.md", "coding_prompt_yolo.md"),
             ("initializer_prompt.template.md", "initializer_prompt.md"),
             ("overseer_prompt.template.md", "overseer_prompt.md"),
+            ("hound_prompt.template.md", "hound_prompt.md"),
         ]
 
     updated_files = []
