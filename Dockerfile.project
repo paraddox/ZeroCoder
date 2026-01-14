@@ -17,7 +17,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Disable beads daemon in containers (avoids stale lock file issues)
 ENV BD_NO_DAEMON=true
 
-# Install essentials (including procps for pgrep health checks)
+# Install essentials and webapp development tools
 RUN apt-get update && apt-get install -y \
     git \
     curl \
@@ -25,12 +25,21 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     sudo \
     procps \
+    jq \
+    tree \
+    zip \
+    unzip \
+    rsync \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js v22 (required for Vision MCP Server)
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
+
+# Install pnpm and yarn globally
+RUN npm install -g pnpm yarn
 
 # Create non-root user (required for Claude Code --dangerously-skip-permissions)
 # Use a different UID to avoid conflicts with existing ubuntu user
