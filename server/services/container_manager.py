@@ -35,7 +35,7 @@ CONTAINER_IMAGE = "zerocoder-project"
 DOCKERFILE_PATH = Path(__file__).parent.parent.parent / "Dockerfile.project"
 
 # Idle timeout in minutes
-IDLE_TIMEOUT_MINUTES = 60
+IDLE_TIMEOUT_MINUTES = 15
 
 
 def image_exists(image_name: str = CONTAINER_IMAGE) -> bool:
@@ -89,8 +89,8 @@ def ensure_image_exists(image_name: str = CONTAINER_IMAGE) -> tuple[bool, str]:
     logger.info(f"Image {image_name} not found, building...")
     return build_image(image_name)
 
-# Agent health check interval in seconds (10 minutes)
-AGENT_HEALTH_CHECK_INTERVAL = 600
+# Agent health check interval in seconds (5 minutes)
+AGENT_HEALTH_CHECK_INTERVAL = 300
 
 # Patterns for sensitive data that should be redacted from output
 SENSITIVE_PATTERNS = [
@@ -606,10 +606,10 @@ class ContainerManager:
 
     async def _monitor_graceful_stop(self) -> None:
         """
-        Monitor graceful stop with 2-hour timeout.
+        Monitor graceful stop with 20-minute timeout.
         Falls back to force stop if timeout exceeded.
         """
-        timeout_seconds = 120 * 60  # 2 hours (match session timeout)
+        timeout_seconds = 20 * 60  # 20 minutes
         poll_interval = 5  # Check every 5 seconds
 
         try:
@@ -1309,7 +1309,9 @@ async def monitor_agent_health() -> list[str]:
     Check health of agents in user-started containers and restart if needed.
 
     Only monitors containers that were explicitly started by the user.
-    If a container is running but the claude process is not, it will be restarted.
+    Handles two scenarios:
+    1. Container is running but agent process died → restart agent
+    2. Container itself stopped unexpectedly → restart container + agent
 
     Returns:
         List of container names that were restarted
@@ -1328,14 +1330,44 @@ async def monitor_agent_health() -> list[str]:
         if manager._restarting:
             continue
 
-        # Only check running containers
-        if manager.status != "running":
+        # Sync status with Docker to get latest state
+        manager._sync_status()
+
+        # Skip completed containers (all features done)
+        if manager.status == "completed":
             continue
 
-        # Check if agent is running
-        if not manager.is_agent_running():
+        # Skip not_created containers
+        if manager.status == "not_created":
+            continue
+
+        # Handle stopped container - restart it entirely
+        if manager.status == "stopped":
+            # Check if there are still features to work on
+            if not manager.has_open_features():
+                logger.info(f"Container {manager.container_name} stopped, no open features - marking complete")
+                manager.status = "completed"
+                continue
+
             logger.warning(
-                f"Agent not running in {manager.container_name}, restarting..."
+                f"Container {manager.container_name} stopped unexpectedly (user_started=True), restarting..."
+            )
+            try:
+                # Restart container and agent
+                success, message = await manager.start()
+                if success:
+                    restarted.append(manager.container_name)
+                    logger.info(f"Successfully restarted container {manager.container_name}")
+                else:
+                    logger.error(f"Failed to restart container {manager.container_name}: {message}")
+            except Exception as e:
+                logger.exception(f"Error restarting container {manager.container_name}: {e}")
+            continue
+
+        # Handle running container with dead agent process
+        if manager.status == "running" and not manager.is_agent_running():
+            logger.warning(
+                f"Agent not running in {manager.container_name}, restarting agent..."
             )
             try:
                 success, message = await manager.restart_agent()

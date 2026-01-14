@@ -17,12 +17,13 @@ This is an autonomous coding agent system with a React-based UI. It uses the Cla
 # Launch Web UI (serves pre-built React app)
 start-app.sh      # Windows
 ./start-app.sh     # macOS/Linux
+./start-app.sh -s #to stop all app service and remove all containers
 ```
 
 ### Python Backend (Manual)
 
 ```bash
-# Create and activate virtual environment
+# Create and activate virtual hhh
 python -m venv venv
 venv\Scripts\activate  # Windows
 source venv/bin/activate  # macOS/Linux
@@ -69,7 +70,7 @@ docker build -f Dockerfile.project -t zerocoder-project .
 - Multiple containers can run simultaneously for different projects
 
 **Container lifecycle:**
-- `not_created` → `running` → `stopped` (60 min idle timeout) → `completed`
+- `not_created` → `running` → `stopped` (15 min idle timeout) → `completed`
 - Stopped containers persist and restart quickly
 - Progress visible via cached data (polled from container every 30s)
 - `completed` status when all features are done
@@ -81,8 +82,8 @@ docker build -f Dockerfile.project -t zerocoder-project .
 - Continues until all features done or user stops
 
 **Health monitoring:**
-- Checks every 10 minutes if Claude process is running
-- Auto-restarts crashed agents (user-started containers only)
+- Checks every 5 minutes if agent process is running
+- Auto-restarts crashed agents and stopped containers (user-started only)
 - Skips containers already in restart process
 
 **Container naming:** `zerocoder-{project-name}`
