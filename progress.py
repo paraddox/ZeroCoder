@@ -31,7 +31,9 @@ def has_features(project_dir: Path, project_name: str | None = None) -> bool:
             from server.services.feature_poller import get_cached_stats
 
             stats = get_cached_stats(project_name)
-            if stats.get("total", 0) > 0:
+            total = stats.get("total", 0)
+            print(f"[DEBUG] has_features cache check: project={project_name}, total={total}")
+            if total > 0:
                 return True
         except ImportError:
             pass  # Server modules not available
@@ -45,14 +47,25 @@ def has_features(project_dir: Path, project_name: str | None = None) -> bool:
                     if line.strip():
                         return True  # At least one issue exists
         except (PermissionError, OSError):
-            pass  # Can't read - try config fallback
+            pass  # Can't read - try database check
 
-    # Check if .beads directory exists with config (beads initialized)
-    config_file = project_dir / ".beads" / "config.yaml"
-    if config_file.exists():
-        # Beads is initialized, may have issues we can't read
-        return True
+    # Check SQLite database for issues
+    db_file = project_dir / ".beads" / "beads.db"
+    if db_file.exists():
+        try:
+            import sqlite3
+            conn = sqlite3.connect(str(db_file))
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM issues")
+            count = cursor.fetchone()[0]
+            conn.close()
+            print(f"[DEBUG] has_features DB check: project={project_name}, count={count}")
+            return count > 0
+        except Exception as e:
+            print(f"[DEBUG] has_features DB error: {e}")
+            pass  # Database error - assume no issues
 
+    print(f"[DEBUG] has_features returning False for {project_name}")
     return False
 
 

@@ -331,6 +331,10 @@ async def delete_project(name: str, delete_files: bool = False):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to delete project files: {e}")
 
+    # Clear cached container manager to avoid stale state
+    from ..services.container_manager import clear_container_manager
+    clear_container_manager(name)
+
     # Unregister from registry
     unregister_project(name)
 

@@ -3,6 +3,11 @@ cd "$(dirname "$0")"
 # ZeroCoder UI Launcher for Unix/Linux/macOS
 # This script launches the web UI for the autonomous coding agent.
 
+# Load environment variables from .env file if it exists
+if [ -f ".env" ]; then
+    export $(grep -v '^#' .env | xargs)
+fi
+
 echo ""
 echo "===================================="
 echo "  ZeroCoder UI"

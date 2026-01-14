@@ -74,9 +74,10 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
 
   try {
     // Initialize OpenCode - this starts both the server and client
-    // Use port 5001 to avoid conflicts with default port 4096
-    log("AGENT", "Starting OpenCode server...");
-    opencode = await createOpencode({ port: 5001 });
+    // Use a random port to avoid conflicts with lingering servers
+    const port = 5000 + Math.floor(Math.random() * 1000);
+    log("AGENT", `Starting OpenCode server on port ${port}...`);
+    opencode = await createOpencode({ port });
     log("AGENT", `OpenCode server started at ${opencode.server.url}`);
 
     const client = opencode.client;
@@ -84,14 +85,17 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
     // Create a new session
     log("AGENT", "Creating session...");
     const sessionResult = await client.session.create();
-    const sessionId = sessionResult.data?.id;
+    // SDK returns { data: { id: ... }, request: ..., response: ... }
+    const sessionId = sessionResult?.data?.id || sessionResult?.id;
     if (!sessionId) {
       log("ERROR", "Failed to create session - no session ID returned");
+      log("ERROR", `Session response: ${JSON.stringify(sessionResult)}`);
       return EXIT_FAILURE;
     }
     log("AGENT", `Session created: ${sessionId}`);
 
     // Send the prompt to the agent using session.prompt()
+    // SDK format: { path: { id }, body: { parts: [...] } }
     log("AGENT", `Sending prompt to ${agentType} agent...`);
     const response = await client.session.prompt({
       path: { id: sessionId },
@@ -100,9 +104,10 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
       },
     });
 
-    // Process response parts
-    if (response.data?.parts) {
-      for (const part of response.data.parts) {
+    // Process response - SDK returns { data: { parts: [...] }, ... }
+    const responseParts = response?.data?.parts || response?.parts;
+    if (responseParts && responseParts.length > 0) {
+      for (const part of responseParts) {
         if (part.type === "text") {
           // Output text content
           console.log(part.text);
@@ -110,9 +115,8 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
           log("TOOL", `Using: ${(part as any).name || (part as any).toolName || "unknown"}`);
         }
       }
-    } else if (response.error) {
-      log("ERROR", `API returned error: ${JSON.stringify(response.error)}`);
-      return EXIT_FAILURE;
+    } else {
+      log("WARN", `No response parts received. Response: ${JSON.stringify(response)}`);
     }
 
     // Check for graceful stop after processing

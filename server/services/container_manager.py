@@ -281,13 +281,23 @@ class ContainerManager:
         if self._status != "running":
             return False
         try:
-            # Check for Python agent_app.py process
-            result = subprocess.run(
-                ["docker", "exec", self.container_name, "pgrep", "-f", "python.*agent_app"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
+            # Check for agent process based on model type
+            if self._is_opencode_model():
+                # Check for Node.js OpenCode agent process
+                result = subprocess.run(
+                    ["docker", "exec", self.container_name, "pgrep", "-f", "node.*opencode_agent_app"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+            else:
+                # Check for Python agent_app.py process
+                result = subprocess.run(
+                    ["docker", "exec", self.container_name, "pgrep", "-f", "python.*agent_app"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
             return result.returncode == 0
         except Exception as e:
             logger.warning(f"Failed to check agent status: {e}")
@@ -444,20 +454,33 @@ class ContainerManager:
 
             # Send instruction if provided
             if instruction:
-                # Wait for Python and agent app to be available
+                # Wait for agent app to be available
+                use_opencode = self._is_opencode_model()
                 for attempt in range(10):
                     await asyncio.sleep(2)
-                    check = subprocess.run(
-                        ["docker", "exec", "-u", "coder", self.container_name,
-                         "python", "-c", "import claude_agent_sdk; print('ok')"],
-                        capture_output=True,
-                        text=True,
-                    )
+                    if use_opencode:
+                        # Check for OpenCode SDK (Node.js) - check if compiled agent exists
+                        check = subprocess.run(
+                            ["docker", "exec", "-u", "coder", self.container_name,
+                             "test", "-f", "/app/dist/opencode_agent_app.js"],
+                            capture_output=True,
+                            text=True,
+                        )
+                    else:
+                        # Check for Claude SDK (Python)
+                        check = subprocess.run(
+                            ["docker", "exec", "-u", "coder", self.container_name,
+                             "python", "-c", "import claude_agent_sdk; print('ok')"],
+                            capture_output=True,
+                            text=True,
+                        )
                     if check.returncode == 0:
                         break
-                    logger.info(f"Waiting for agent SDK to be ready (attempt {attempt + 1}/10)")
+                    sdk_name = "OpenCode SDK" if use_opencode else "Claude SDK"
+                    logger.info(f"Waiting for {sdk_name} to be ready (attempt {attempt + 1}/10)")
                 else:
-                    return False, "Agent SDK not available in container after 20 seconds"
+                    sdk_name = "OpenCode SDK" if use_opencode else "Claude SDK"
+                    return False, f"{sdk_name} not available in container after 20 seconds"
 
                 return await self.send_instruction(instruction)
 
@@ -1144,6 +1167,13 @@ def get_container_manager(
         if project_name not in _managers:
             _managers[project_name] = ContainerManager(project_name, project_dir)
         return _managers[project_name]
+
+
+def clear_container_manager(project_name: str) -> None:
+    """Clear cached container manager for a project (for cleanup/reset)."""
+    with _managers_lock:
+        if project_name in _managers:
+            del _managers[project_name]
 
 
 async def cleanup_idle_containers() -> list[str]:
