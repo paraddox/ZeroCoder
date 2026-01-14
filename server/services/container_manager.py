@@ -447,6 +447,14 @@ class ContainerManager:
                     cmd.extend(["-v", "/etc/localtime:/etc/localtime:ro"])
                 if os.path.exists("/etc/timezone"):
                     cmd.extend(["-v", "/etc/timezone:/etc/timezone:ro"])
+                    # Also pass TZ env var for Node.js (doesn't read /etc/localtime)
+                    try:
+                        with open("/etc/timezone", "r") as f:
+                            tz = f.read().strip()
+                            if tz:
+                                cmd.extend(["-e", f"TZ={tz}"])
+                    except Exception:
+                        pass
                 # Mount SSH key for git operations if configured
                 ssh_key_path = os.getenv("GIT_SSH_KEY_PATH")
                 if ssh_key_path:
@@ -1177,6 +1185,14 @@ class ContainerManager:
                     cmd.extend(["-v", "/etc/localtime:/etc/localtime:ro"])
                 if os.path.exists("/etc/timezone"):
                     cmd.extend(["-v", "/etc/timezone:/etc/timezone:ro"])
+                    # Also pass TZ env var for Node.js (doesn't read /etc/localtime)
+                    try:
+                        with open("/etc/timezone", "r") as f:
+                            tz = f.read().strip()
+                            if tz:
+                                cmd.extend(["-e", f"TZ={tz}"])
+                    except Exception:
+                        pass
                 # Mount SSH key for git operations if configured
                 ssh_key_path = os.getenv("GIT_SSH_KEY_PATH")
                 if ssh_key_path:

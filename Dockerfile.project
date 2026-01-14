@@ -122,6 +122,12 @@ WORKDIR /project
 # Create entrypoint script
 COPY <<EOF /entrypoint.sh
 #!/bin/bash
+# Set TZ environment variable from /etc/timezone for Node.js
+# (Node.js doesn't read /etc/localtime, it needs TZ env var)
+if [ -f /etc/timezone ]; then
+    export TZ=$(cat /etc/timezone)
+fi
+
 # Set fully permissive umask so ALL new files are world readable/writable
 # This ensures both host user and container user can access files
 # 000 = files 666, dirs 777
