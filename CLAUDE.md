@@ -34,6 +34,11 @@ pip install -r requirements.txt
 uvicorn server.main:app --host 0.0.0.0 --port 8000
 ```
 
+**Important:** When testing agents locally, always use `./start-app.sh` instead of running uvicorn directly. The start script:
+- Loads environment variables from `.env` file (API keys like `ZHIPU_API_KEY`, `ANTHROPIC_API_KEY`)
+- Passes these to Docker containers so agents can authenticate
+- Handles graceful shutdown of containers on Ctrl+C
+
 ### React UI (in ui/ directory)
 
 ```bash

@@ -134,6 +134,8 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
     // Track session completion
     let sessionComplete = false;
     let sessionError: string | null = null;
+    // Track graceful stop request (don't abort, let session complete)
+    let gracefulStopRequested = false;
 
     // Subscribe to events using SDK's global event stream
     log("AGENT", "Subscribing to events...");
@@ -276,15 +278,11 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
       await new Promise(resolve => setTimeout(resolve, checkIntervalMs));
       elapsedMs += checkIntervalMs;
 
-      // Check for graceful stop
-      if (checkGracefulStop()) {
-        log("AGENT", "Graceful stop requested, aborting session...");
-        try {
-          await client.session.abort({ path: { id: sessionId } });
-        } catch {
-          // Ignore abort errors
-        }
-        return EXIT_GRACEFUL_STOP;
+      // Check for graceful stop - don't abort, just flag to exit after completion
+      if (checkGracefulStop() && !gracefulStopRequested) {
+        log("AGENT", "Graceful stop requested, will exit after current session completes...");
+        gracefulStopRequested = true;
+        // Don't call session.abort() - let the current work finish naturally
       }
     }
 
@@ -296,6 +294,12 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
     if (sessionError) {
       log("ERROR", `Session failed: ${sessionError}`);
       return EXIT_FAILURE;
+    }
+
+    // Check if graceful stop was requested - return appropriate exit code
+    if (gracefulStopRequested) {
+      log("AGENT", "Session completed, graceful stop requested - exiting");
+      return EXIT_GRACEFUL_STOP;
     }
 
     log("AGENT", "Completed successfully");
