@@ -11,9 +11,10 @@ export interface ProjectStats {
 }
 
 // Agent model options for coder/overseer agents
-export type AgentModel = 'claude-opus-4-5-20251101' | 'claude-sonnet-4-5-20250514'
+export type AgentModel = 'claude-opus-4-5-20251101' | 'claude-sonnet-4-5-20250514' | 'glm-4-7'
 
-export const AGENT_MODELS: { id: AgentModel; name: string }[] = [
+export const AGENT_MODELS: { id: AgentModel; name: string; badge?: string; badgeColor?: string }[] = [
+  { id: 'glm-4-7', name: 'GLM 4.7', badge: 'OpenCode', badgeColor: 'warning' },
   { id: 'claude-sonnet-4-5-20250514', name: 'Sonnet 4.5' },
   { id: 'claude-opus-4-5-20251101', name: 'Opus 4.5' },
 ]

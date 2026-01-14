@@ -1,8 +1,9 @@
 # =============================================================================
 # Project Container Dockerfile
 # =============================================================================
-# Container for running Claude Agent SDK on a single project.
-# Uses Python-based agent_app.py with retry logic and error recovery.
+# Container for running Claude Agent SDK or OpenCode SDK on a single project.
+# - Claude models: Uses Python-based agent_app.py
+# - GLM-4.7 model: Uses TypeScript-based opencode_agent_app.ts
 #
 # Usage:
 #   docker build -f Dockerfile.project -t zerocoder-project .
@@ -16,17 +17,29 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Disable beads daemon in containers (avoids stale lock file issues)
 ENV BD_NO_DAEMON=true
 
-# Install essentials (including procps for pgrep health checks)
+# Install essentials and webapp development tools
 RUN apt-get update && apt-get install -y \
     git \
     curl \
     wget \
     ca-certificates \
-    nodejs \
-    npm \
     sudo \
     procps \
+    jq \
+    tree \
+    zip \
+    unzip \
+    rsync \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js v22 (required for Vision MCP Server)
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install pnpm and yarn globally
+RUN npm install -g pnpm yarn
 
 # Create non-root user (required for Claude Code --dangerously-skip-permissions)
 # Use a different UID to avoid conflicts with existing ubuntu user
@@ -43,6 +56,38 @@ RUN pip install --no-cache-dir claude-agent-sdk
 # Install beads CLI
 RUN curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash \
     && mv /root/.local/bin/bd /usr/local/bin/bd 2>/dev/null || true
+
+# =============================================================================
+# OpenCode SDK Setup (for GLM-4.7 model)
+# =============================================================================
+
+# Install OpenCode CLI
+RUN curl -fsSL https://opencode.ai/install | bash \
+    && mv /root/.opencode/bin/opencode /usr/local/bin/opencode 2>/dev/null || true
+ENV PATH="/root/.opencode/bin:${PATH}"
+
+# Copy OpenCode configuration and agent definitions
+COPY opencode_config/ /app/opencode_config/
+COPY opencode_agent_app.ts /app/opencode_agent_app.ts
+COPY package.opencode.json /app/package.json
+COPY tsconfig.opencode.json /app/tsconfig.opencode.json
+
+# Install OpenCode SDK dependencies and build TypeScript
+WORKDIR /app
+RUN npm install && npm run build
+
+# Copy OpenCode config to the location where OpenCode CLI expects it
+# This is needed for the server to find the Z.ai provider configuration
+RUN mkdir -p /home/coder/.config/opencode \
+    && cp /app/opencode_config/config.json /home/coder/.config/opencode/config.json \
+    && chown -R coder:coder /home/coder/.config
+
+# Reset working directory
+WORKDIR /project
+
+# =============================================================================
+# Claude Agent SDK Setup (for Claude models)
+# =============================================================================
 
 # Copy agent application and container scripts
 COPY agent_app.py /app/agent_app.py
@@ -73,7 +118,7 @@ USER root
 WORKDIR /project
 
 # Create entrypoint script
-RUN cat > /entrypoint.sh << 'EOF'
+COPY <<EOF /entrypoint.sh
 #!/bin/bash
 # Set fully permissive umask so ALL new files are world readable/writable
 # This ensures both host user and container user can access files
@@ -96,8 +141,21 @@ if [ -d "/project/.beads" ]; then
     chmod -R a+rwX /project/.beads 2>/dev/null || true
 fi
 
-# Keep container running
-exec tail -f /dev/null
+# Fix prompts directory permissions at startup (make world-writable)
+# This ensures host can update prompt templates
+if [ -d "/project/prompts" ]; then
+    chmod -R a+rwX /project/prompts 2>/dev/null || true
+fi
+
+# Create agent log file (world-writable so coder user can write to it)
+# This file is tailed to show agent activity in docker logs
+touch /var/log/agent.log
+chmod 666 /var/log/agent.log
+echo "[$(date -Iseconds)] Container started, waiting for agent..." >> /var/log/agent.log
+
+# Keep container running by tailing the agent log
+# Agent processes will write to this file, making output visible in docker logs
+exec tail -f /var/log/agent.log
 EOF
 RUN chmod +x /entrypoint.sh
 

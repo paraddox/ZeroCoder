@@ -548,36 +548,39 @@ Create `AGENTS.md` at the project root. This file persists operational knowledge
 
 **Size limit:** Keep AGENTS.md under 100 lines. Focus on the most essential information. If it grows too large, consolidate or remove outdated entries.
 
-### OPTIONAL: Start Implementation
+### IMPORTANT: Do NOT Implement Features
 
-If you have time remaining in this session, you may begin implementing
-the highest-priority features. Get the next available feature with:
+Your role as the Initializer Agent is **COMPLETE** after the five tasks above:
+1. Initialize beads and create features
+2. Create init.sh
+3. Initialize Git
+4. Create project structure
+5. Create AGENTS.md
 
-```bash
-bd ready
-```
+**DO NOT:**
+- Implement any features
+- Write application code
+- Fix or close any issues you created
+- Start working on `bd ready` items
 
-Then claim it:
-
-```bash
-bd update <feature-id> --status=in_progress
-```
-
-Remember:
-- Work on ONE feature at a time
-- Test thoroughly before marking as complete
-- Commit your progress before session ends
+The **Coding Agent** (in subsequent sessions) will handle all feature implementation.
+Your job is to leave a clean, well-organized project scaffold with all features
+properly defined in beads for the coding agent to work through.
 
 ### ENDING THIS SESSION
 
 Before your context fills up:
 
-1. Commit all work with descriptive messages
-2. Sync beads: `bd sync`
-3. Verify features were created: `bd stats`
-4. Leave the environment in a clean, working state
+1. Verify all scaffolding is complete:
+   - `bd stats` shows the correct feature count
+   - `init.sh` exists and is executable
+   - Project structure matches the spec
+   - `AGENTS.md` documents the setup
+2. Commit all scaffolding with descriptive messages
+3. Sync beads: `bd sync`
+4. Push to remote if configured
 
-The next agent will continue from here with a fresh context window.
+The Coding Agent will take over from here to implement features.
 
 ---
 

@@ -24,6 +24,19 @@ You need one of the following:
 
 - **Claude Pro/Max Subscription** - Use `claude login` to authenticate (recommended)
 - **Anthropic API Key** - Pay-per-use from https://console.anthropic.com/
+- **Zhipu API Key** - For GLM-4.7 model support (add `ZHIPU_API_KEY` to `.env` file)
+
+### Model Support
+
+ZeroCoder supports multiple AI models:
+
+| Model | SDK | Use Case | API Key |
+|-------|-----|----------|---------|
+| **GLM-4.7** (default) | OpenCode SDK | Cost-effective coding agent | `ZHIPU_API_KEY` |
+| **Claude Sonnet 4.5** | Claude Agent SDK | High-quality coding agent | Claude login or `ANTHROPIC_API_KEY` |
+| **Claude Opus 4.5** | Claude Agent SDK | Initializer agent (always) | Claude login or `ANTHROPIC_API_KEY` |
+
+**Note:** The initializer agent (which creates features from your spec) always uses Claude Opus 4.5 for best results. The coding agent uses your configured model (GLM-4.7 by default).
 
 ---
 
@@ -184,7 +197,8 @@ ZeroCoder/
 ├── autostart.sh              # Enable/disable autostart on system boot
 ├── Dockerfile.project        # Per-project container image
 ├── docker-test.sh            # Build and test Docker containers
-├── agent_app.py              # Agent SDK app (runs inside containers)
+├── agent_app.py              # Claude Agent SDK app (runs inside containers)
+├── opencode_agent_app.ts     # OpenCode SDK agent for GLM-4.7 (TypeScript)
 ├── progress.py               # Progress tracking utilities
 ├── prompts.py                # Prompt loading utilities
 ├── registry.py               # Project registry (SQLite-based)
@@ -329,9 +343,37 @@ The UI receives live updates via WebSocket (`/ws/projects/{project_name}`):
 
 ## Configuration (Optional)
 
+### API Keys
+
+Create a `.env` file in the project root with your API keys:
+
+```bash
+# For GLM-4.7 model (default)
+ZHIPU_API_KEY=your_zhipu_api_key_here
+
+# For Claude models (if not using claude login)
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+```
+
+**Important:** Always use `./start-app.sh` to start the server. It loads the `.env` file and passes API keys to Docker containers.
+
+### Changing the Agent Model
+
+Each project stores its model configuration in `prompts/.agent_config.json`:
+
+```json
+{
+  "agent_model": "glm-4-7"
+}
+```
+
+Supported values:
+- `glm-4-7` - GLM-4.7 via OpenCode SDK (default, cost-effective)
+- `claude-sonnet-4-5-20250514` - Claude Sonnet 4.5 via Claude Agent SDK
+
 ### N8N Webhook Integration
 
-The agent can send progress notifications to an N8N webhook. Create a `.env` file:
+The agent can send progress notifications to an N8N webhook. Add to your `.env` file:
 
 ```bash
 # Optional: N8N webhook for progress notifications

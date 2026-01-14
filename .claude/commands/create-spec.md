@@ -546,7 +546,7 @@ Once files are generated, tell the user what to do next:
 > **Controls:**
 >
 > - Press `Ctrl+C` to pause the agent at any time
-> - Run `start.bat` (Windows) or `./start.sh` (Mac/Linux) to resume where you left off"
+> - Run `./start.sh`  to resume where you left off"
 
 Replace `[X]` with their feature count.
 

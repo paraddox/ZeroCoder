@@ -3,6 +3,11 @@ cd "$(dirname "$0")"
 # ZeroCoder UI Launcher for Unix/Linux/macOS
 # This script launches the web UI for the autonomous coding agent.
 
+# Load environment variables from .env file if it exists
+if [ -f ".env" ]; then
+    export $(grep -v '^#' .env | xargs)
+fi
+
 echo ""
 echo "===================================="
 echo "  ZeroCoder UI"
@@ -33,6 +38,20 @@ source venv/bin/activate
 # Install dependencies
 echo "Installing dependencies..."
 pip install -r requirements.txt --quiet
+
+# Check if Docker image exists, build if not
+DOCKER_IMAGE="zerocoder-project"
+if ! docker image inspect "$DOCKER_IMAGE" &> /dev/null; then
+    echo "Docker image '$DOCKER_IMAGE' not found, building..."
+    docker build -f Dockerfile.project -t "$DOCKER_IMAGE" .
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to build Docker image"
+        exit 1
+    fi
+    echo "Docker image built successfully"
+else
+    echo "Docker image '$DOCKER_IMAGE' found"
+fi
 
 PID_FILE="/tmp/zerocoder-ui.pid"
 PYTHON_PID=""

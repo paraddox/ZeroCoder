@@ -152,6 +152,12 @@ class ContainerManager:
         self._last_agent_was_hound: bool = False
         # Track if graceful stop was requested
         self._graceful_stop_requested: bool = False
+        # Track current agent type for OpenCode SDK routing
+        self._current_agent_type: Literal["coder", "overseer", "hound"] = "coder"
+        # Force Claude SDK for initializer (regardless of project model)
+        self._force_claude_sdk: bool = False
+        # Model to use when forcing Claude SDK (defaults to Opus 4.5)
+        self._forced_model: str = "claude-opus-4-5-20251101"
 
         # Callbacks for WebSocket notifications
         self._output_callbacks: Set[Callable[[str], Awaitable[None]]] = set()
@@ -184,6 +190,28 @@ class ContainerManager:
         except Exception as e:
             logger.warning(f"Failed to check container status: {e}")
             self._status = "not_created"
+
+    def _get_agent_model(self) -> str:
+        """
+        Read agent model from project config file.
+
+        Returns:
+            Model ID string (e.g., 'claude-sonnet-4-5-20250514' or 'glm-4-7')
+        """
+        config_path = self.project_dir / "prompts" / ".agent_config.json"
+        default_model = "claude-sonnet-4-5-20250514"
+        if config_path.exists():
+            try:
+                config = json.loads(config_path.read_text())
+                return config.get("agent_model", default_model)
+            except Exception as e:
+                logger.warning(f"Failed to read agent config: {e}")
+        return default_model
+
+    def _is_opencode_model(self) -> bool:
+        """Check if the current model requires OpenCode SDK."""
+        model = self._get_agent_model()
+        return model == "glm-4-7"
 
     @property
     def status(self) -> Literal["not_created", "running", "stopped", "completed"]:
@@ -257,13 +285,23 @@ class ContainerManager:
         if self._status != "running":
             return False
         try:
-            # Check for Python agent_app.py process
-            result = subprocess.run(
-                ["docker", "exec", self.container_name, "pgrep", "-f", "python.*agent_app"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
+            # Check for agent process based on model type
+            if self._is_opencode_model():
+                # Check for Node.js OpenCode agent process
+                result = subprocess.run(
+                    ["docker", "exec", self.container_name, "pgrep", "-f", "node.*opencode_agent_app"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+            else:
+                # Check for Python agent_app.py process
+                result = subprocess.run(
+                    ["docker", "exec", self.container_name, "pgrep", "-f", "python.*agent_app"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
             return result.returncode == 0
         except Exception as e:
             logger.warning(f"Failed to check agent status: {e}")
@@ -400,6 +438,10 @@ class ContainerManager:
                 api_key = os.getenv("ANTHROPIC_API_KEY")
                 if api_key:
                     cmd.extend(["-e", f"ANTHROPIC_API_KEY={api_key}"])
+                # Pass Z.ai API key for OpenCode SDK (GLM-4.7 model)
+                zhipu_key = os.getenv("ZHIPU_API_KEY")
+                if zhipu_key:
+                    cmd.extend(["-e", f"ZHIPU_API_KEY={zhipu_key}"])
                 cmd.append(CONTAINER_IMAGE)
 
                 result = subprocess.run(cmd, capture_output=True, text=True)
@@ -416,20 +458,34 @@ class ContainerManager:
 
             # Send instruction if provided
             if instruction:
-                # Wait for Python and agent app to be available
+                # Wait for agent app to be available
+                # If forcing Claude SDK (e.g., for initializer), always check for Claude SDK
+                use_opencode = self._is_opencode_model() and not self._force_claude_sdk
                 for attempt in range(10):
                     await asyncio.sleep(2)
-                    check = subprocess.run(
-                        ["docker", "exec", "-u", "coder", self.container_name,
-                         "python", "-c", "import claude_agent_sdk; print('ok')"],
-                        capture_output=True,
-                        text=True,
-                    )
+                    if use_opencode:
+                        # Check for OpenCode SDK (Node.js) - check if compiled agent exists
+                        check = subprocess.run(
+                            ["docker", "exec", "-u", "coder", self.container_name,
+                             "test", "-f", "/app/dist/opencode_agent_app.js"],
+                            capture_output=True,
+                            text=True,
+                        )
+                    else:
+                        # Check for Claude SDK (Python)
+                        check = subprocess.run(
+                            ["docker", "exec", "-u", "coder", self.container_name,
+                             "python", "-c", "import claude_agent_sdk; print('ok')"],
+                            capture_output=True,
+                            text=True,
+                        )
                     if check.returncode == 0:
                         break
-                    logger.info(f"Waiting for agent SDK to be ready (attempt {attempt + 1}/10)")
+                    sdk_name = "OpenCode SDK" if use_opencode else "Claude SDK"
+                    logger.info(f"Waiting for {sdk_name} to be ready (attempt {attempt + 1}/10)")
                 else:
-                    return False, "Agent SDK not available in container after 20 seconds"
+                    sdk_name = "OpenCode SDK" if use_opencode else "Claude SDK"
+                    return False, f"{sdk_name} not available in container after 20 seconds"
 
                 return await self.send_instruction(instruction)
 
@@ -550,10 +606,10 @@ class ContainerManager:
 
     async def _monitor_graceful_stop(self) -> None:
         """
-        Monitor graceful stop with 10-minute timeout.
+        Monitor graceful stop with 2-hour timeout.
         Falls back to force stop if timeout exceeded.
         """
-        timeout_seconds = 10 * 60  # 10 minutes
+        timeout_seconds = 120 * 60  # 2 hours (match session timeout)
         poll_interval = 5  # Check every 5 seconds
 
         try:
@@ -581,7 +637,8 @@ class ContainerManager:
         """
         Send an instruction to the Agent SDK app running in the container.
 
-        Uses stdin to pass the prompt to agent_app.py, avoiding shell escaping issues.
+        Uses stdin to pass the prompt to agent_app.py (Claude) or
+        opencode_agent_app.js (GLM-4.7), avoiding shell escaping issues.
 
         Args:
             instruction: The instruction/prompt to send
@@ -606,32 +663,66 @@ class ContainerManager:
                 prompt_file = f.name
 
             try:
-                # Use docker exec with stdin to run the Python agent app
-                # Run as 'coder' user (non-root) for proper permissions
-                # Note: Using create_subprocess_exec (not shell) for security
-                with open(prompt_file, "r", encoding="utf-8") as stdin_file:
-                    process = await asyncio.create_subprocess_exec(
-                        "docker", "exec", "-i", "-u", "coder", self.container_name,
-                        "python", "/app/agent_app.py",
-                        stdin=stdin_file,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.STDOUT,
-                    )
+                # Determine which agent app to use based on model
+                # If _force_claude_sdk is set, always use Claude SDK (for initializer)
+                use_opencode = self._is_opencode_model() and not self._force_claude_sdk
 
-                    # Stream output to callbacks
-                    while True:
-                        if process.stdout is None:
-                            break
-                        line = await process.stdout.readline()
-                        if not line:
-                            break
-                        decoded = line.decode("utf-8", errors="replace").rstrip()
-                        sanitized = sanitize_output(decoded)
-                        self._update_activity()
-                        await self._broadcast_output(sanitized)
+                if use_opencode:
+                    # OpenCode SDK agent (GLM-4.7)
+                    # Pass agent type via environment variable
+                    agent_type = self._current_agent_type
+                    logger.info(f"Using OpenCode agent ({agent_type}) for {self.container_name}")
 
-                    await process.wait()
-                    exit_code = process.returncode or 0
+                    with open(prompt_file, "r", encoding="utf-8") as stdin_file:
+                        process = await asyncio.create_subprocess_exec(
+                            "docker", "exec", "-i", "-u", "coder",
+                            "-e", f"OPENCODE_AGENT_TYPE={agent_type}",
+                            self.container_name,
+                            "node", "/app/dist/opencode_agent_app.js",
+                            stdin=stdin_file,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.STDOUT,
+                        )
+                else:
+                    # Claude Agent SDK (Python)
+                    # If forcing Claude SDK with a specific model, pass it as env var
+                    if self._force_claude_sdk:
+                        logger.info(f"Using Claude agent (forced, model={self._forced_model}) for {self.container_name}")
+                        with open(prompt_file, "r", encoding="utf-8") as stdin_file:
+                            process = await asyncio.create_subprocess_exec(
+                                "docker", "exec", "-i", "-u", "coder",
+                                "-e", f"AGENT_MODEL={self._forced_model}",
+                                self.container_name,
+                                "python", "/app/agent_app.py",
+                                stdin=stdin_file,
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.STDOUT,
+                            )
+                    else:
+                        logger.info(f"Using Claude agent for {self.container_name}")
+                        with open(prompt_file, "r", encoding="utf-8") as stdin_file:
+                            process = await asyncio.create_subprocess_exec(
+                                "docker", "exec", "-i", "-u", "coder", self.container_name,
+                                "python", "/app/agent_app.py",
+                                stdin=stdin_file,
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.STDOUT,
+                            )
+
+                # Stream output to callbacks (common to both OpenCode and Claude)
+                while True:
+                    if process.stdout is None:
+                        break
+                    line = await process.stdout.readline()
+                    if not line:
+                        break
+                    decoded = line.decode("utf-8", errors="replace").rstrip()
+                    sanitized = sanitize_output(decoded)
+                    self._update_activity()
+                    await self._broadcast_output(sanitized)
+
+                await process.wait()
+                exit_code = process.returncode or 0
 
             finally:
                 # Clean up temp file
@@ -653,6 +744,7 @@ class ContainerManager:
         - 1: Failure (all retries exhausted)
         - 129: Graceful stop requested
         - 130: User interrupt (Ctrl+C)
+        - 131: Context limit reached (restart with fresh context)
 
         Agent flow:
         - If open features exist → restart coding agent
@@ -666,6 +758,14 @@ class ContainerManager:
         Returns:
             Tuple of (success, message)
         """
+        # Handle context limit - exit code 131 (restart with fresh context)
+        if exit_code == 131:
+            logger.info(f"Context limit reached in {self.container_name}, restarting with fresh context...")
+            await self._broadcast_output("[System] Context limit reached. Restarting with fresh context...")
+            self._last_agent_was_overseer = False
+            self._last_agent_was_hound = False
+            return await self.restart_agent()
+
         # Handle graceful stop - exit code 129 or flag is set
         if exit_code == 129 or self._graceful_stop_requested:
             logger.info(f"Graceful stop completed for {self.container_name}")
@@ -817,6 +917,10 @@ class ContainerManager:
 
             # Mark that we're running coding agent (not overseer)
             self._last_agent_was_overseer = False
+            # Set agent type for OpenCode routing
+            self._current_agent_type = "coder"
+            # Use project's configured model (not forced Claude SDK)
+            self._force_claude_sdk = False
 
             # Start container with instruction
             return await self.start(instruction)
@@ -862,6 +966,10 @@ class ContainerManager:
 
             # Mark that we're running overseer
             self._last_agent_was_overseer = True
+            # Set agent type for OpenCode routing
+            self._current_agent_type = "overseer"
+            # Use project's configured model (not forced Claude SDK)
+            self._force_claude_sdk = False
 
             # Start container with instruction
             return await self.start(instruction)
@@ -982,6 +1090,10 @@ class ContainerManager:
             # Mark that we're running hound
             self._last_agent_was_hound = True
             self._last_agent_was_overseer = False
+            # Set agent type for OpenCode routing
+            self._current_agent_type = "hound"
+            # Use project's configured model (not forced Claude SDK)
+            self._force_claude_sdk = False
 
             # Save current closed count for next hound trigger check
             current_count = self._get_closed_count()
@@ -1037,6 +1149,10 @@ class ContainerManager:
                 api_key = os.getenv("ANTHROPIC_API_KEY")
                 if api_key:
                     cmd.extend(["-e", f"ANTHROPIC_API_KEY={api_key}"])
+                # Pass Z.ai API key for OpenCode SDK (GLM-4.7 model)
+                zhipu_key = os.getenv("ZHIPU_API_KEY")
+                if zhipu_key:
+                    cmd.extend(["-e", f"ZHIPU_API_KEY={zhipu_key}"])
                 cmd.append(CONTAINER_IMAGE)
 
                 result = subprocess.run(cmd, capture_output=True, text=True)
@@ -1085,6 +1201,13 @@ def get_container_manager(
         if project_name not in _managers:
             _managers[project_name] = ContainerManager(project_name, project_dir)
         return _managers[project_name]
+
+
+def clear_container_manager(project_name: str) -> None:
+    """Clear cached container manager for a project (for cleanup/reset)."""
+    with _managers_lock:
+        if project_name in _managers:
+            del _managers[project_name]
 
 
 async def cleanup_idle_containers() -> list[str]:

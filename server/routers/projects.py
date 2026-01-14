@@ -25,7 +25,7 @@ from ..schemas import (
 )
 
 # Default model for coder/overseer agents
-DEFAULT_AGENT_MODEL = "claude-sonnet-4-5-20250514"
+DEFAULT_AGENT_MODEL = "glm-4-7"
 AGENT_CONFIG_FILENAME = ".agent_config.json"
 
 # Lazy imports to avoid circular dependencies
@@ -331,6 +331,10 @@ async def delete_project(name: str, delete_files: bool = False):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to delete project files: {e}")
 
+    # Clear cached container manager to avoid stale state
+    from ..services.container_manager import clear_container_manager
+    clear_container_manager(name)
+
     # Unregister from registry
     unregister_project(name)
 
@@ -507,7 +511,7 @@ async def update_project_settings(name: str, settings: ProjectSettingsUpdate):
         raise HTTPException(status_code=404, detail="Project directory not found")
 
     # Validate the model ID
-    valid_models = ["claude-opus-4-5-20251101", "claude-sonnet-4-5-20250514"]
+    valid_models = ["claude-opus-4-5-20251101", "claude-sonnet-4-5-20250514", "glm-4-7"]
     if settings.agent_model not in valid_models:
         raise HTTPException(
             status_code=400,
