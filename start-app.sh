@@ -39,6 +39,20 @@ source venv/bin/activate
 echo "Installing dependencies..."
 pip install -r requirements.txt --quiet
 
+# Check if Docker image exists, build if not
+DOCKER_IMAGE="zerocoder-project"
+if ! docker image inspect "$DOCKER_IMAGE" &> /dev/null; then
+    echo "Docker image '$DOCKER_IMAGE' not found, building..."
+    docker build -f Dockerfile.project -t "$DOCKER_IMAGE" .
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to build Docker image"
+        exit 1
+    fi
+    echo "Docker image built successfully"
+else
+    echo "Docker image '$DOCKER_IMAGE' found"
+fi
+
 PID_FILE="/tmp/zerocoder-ui.pid"
 PYTHON_PID=""
 
