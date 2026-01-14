@@ -447,6 +447,20 @@ class ContainerManager:
                     cmd.extend(["-v", "/etc/localtime:/etc/localtime:ro"])
                 if os.path.exists("/etc/timezone"):
                     cmd.extend(["-v", "/etc/timezone:/etc/timezone:ro"])
+                # Mount SSH key for git operations if configured
+                ssh_key_path = os.getenv("GIT_SSH_KEY_PATH")
+                if ssh_key_path:
+                    expanded_path = os.path.expanduser(ssh_key_path)
+                    if os.path.exists(expanded_path):
+                        cmd.extend(["-v", f"{expanded_path}:/home/coder/.ssh/id_ed25519:ro"])
+                # Construct remote URL from base + project name
+                git_remote_base = os.getenv("GIT_REMOTE_BASE")
+                if git_remote_base:
+                    # Ensure base ends with / or :
+                    if not git_remote_base.endswith('/') and not git_remote_base.endswith(':'):
+                        git_remote_base += '/'
+                    git_remote_url = f"{git_remote_base}{self.project_name}.git"
+                    cmd.extend(["-e", f"GIT_REMOTE_URL={git_remote_url}"])
                 cmd.append(CONTAINER_IMAGE)
 
                 result = subprocess.run(cmd, capture_output=True, text=True)
@@ -1163,6 +1177,20 @@ class ContainerManager:
                     cmd.extend(["-v", "/etc/localtime:/etc/localtime:ro"])
                 if os.path.exists("/etc/timezone"):
                     cmd.extend(["-v", "/etc/timezone:/etc/timezone:ro"])
+                # Mount SSH key for git operations if configured
+                ssh_key_path = os.getenv("GIT_SSH_KEY_PATH")
+                if ssh_key_path:
+                    expanded_path = os.path.expanduser(ssh_key_path)
+                    if os.path.exists(expanded_path):
+                        cmd.extend(["-v", f"{expanded_path}:/home/coder/.ssh/id_ed25519:ro"])
+                # Construct remote URL from base + project name
+                git_remote_base = os.getenv("GIT_REMOTE_BASE")
+                if git_remote_base:
+                    # Ensure base ends with / or :
+                    if not git_remote_base.endswith('/') and not git_remote_base.endswith(':'):
+                        git_remote_base += '/'
+                    git_remote_url = f"{git_remote_base}{self.project_name}.git"
+                    cmd.extend(["-e", f"GIT_REMOTE_URL={git_remote_url}"])
                 cmd.append(CONTAINER_IMAGE)
 
                 result = subprocess.run(cmd, capture_output=True, text=True)

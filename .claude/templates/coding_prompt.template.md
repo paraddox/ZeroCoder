@@ -210,11 +210,16 @@ If you discovered new patterns, gotchas, or commands that would help future sess
 
 **Size limit:** Keep AGENTS.md under 100 lines. If it's getting long, consolidate entries or remove outdated information instead of just appending.
 
-#### 5.3 Commit and Sync
+#### 5.3 Commit, Sync, and Push
 
 ```bash
 git add . && git commit -m "Implement: <feature name>"
 bd sync
+
+# Push to remote if configured
+if git remote | grep -q origin; then
+    git push origin main
+fi
 ```
 
 **IMPORTANT: Exit now. Do NOT start another feature.**

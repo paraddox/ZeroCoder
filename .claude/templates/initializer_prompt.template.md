@@ -470,16 +470,33 @@ set up and run the development environment. The script should:
 
 Base the script on the technology stack specified in `prompts/app_spec.txt`.
 
-### THIRD TASK: Initialize Git
+### THIRD TASK: Initialize Git and Connect Remote
 
-Create a git repository and make your first commit with:
+Create a git repository and make your first commit:
 
+```bash
+git init
+git add .
+git commit -m "Initial setup: init.sh, project structure, and features"
+```
+
+**Connect to remote if configured:**
+
+If the `GIT_REMOTE_URL` environment variable is set, connect to the remote repository:
+
+```bash
+if [ -n "$GIT_REMOTE_URL" ]; then
+    git remote add origin "$GIT_REMOTE_URL"
+    # Push to remote (handle case where remote may have initial content)
+    git push -u origin main || (git pull origin main --allow-unrelated-histories && git push -u origin main)
+fi
+```
+
+Include in your commit:
 - init.sh (environment setup script)
 - README.md (project overview and setup instructions)
 - Any initial project structure files
 - .beads/ directory (feature tracking)
-
-Commit message: "Initial setup: init.sh, project structure, and features"
 
 ### FOURTH TASK: Create Project Structure
 
@@ -548,14 +565,28 @@ Create `AGENTS.md` at the project root. This file persists operational knowledge
 
 **Size limit:** Keep AGENTS.md under 100 lines. Focus on the most essential information. If it grows too large, consolidate or remove outdated entries.
 
+### SIXTH TASK: Run Beads Doctor
+
+Before ending your session, run the beads doctor to check for any issues:
+
+```bash
+bd doctor
+```
+
+Fix any warnings or errors that appear. Common fixes:
+- Missing hooks: `bd init` or re-run setup
+- Sync issues: `bd sync`
+- Invalid dependencies: `bd dep remove <issue> <dep>`
+
 ### IMPORTANT: Do NOT Implement Features
 
-Your role as the Initializer Agent is **COMPLETE** after the five tasks above:
+Your role as the Initializer Agent is **COMPLETE** after the six tasks above:
 1. Initialize beads and create features
 2. Create init.sh
-3. Initialize Git
+3. Initialize Git and connect remote
 4. Create project structure
 5. Create AGENTS.md
+6. Run beads doctor
 
 **DO NOT:**
 - Implement any features
@@ -576,9 +607,13 @@ Before your context fills up:
    - `init.sh` exists and is executable
    - Project structure matches the spec
    - `AGENTS.md` documents the setup
+   - `bd doctor` shows no warnings
 2. Commit all scaffolding with descriptive messages
-3. Sync beads: `bd sync`
-4. Push to remote if configured
+3. Sync and push:
+   ```bash
+   bd sync
+   git push origin main  # If remote is configured
+   ```
 
 The Coding Agent will take over from here to implement features.
 

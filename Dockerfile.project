@@ -101,6 +101,8 @@ RUN git config --global user.email "docker@zerocoder.local" \
 
 # Create directories for coder user
 RUN mkdir -p /home/coder/.claude \
+    && mkdir -p /home/coder/.ssh \
+    && chmod 700 /home/coder/.ssh \
     && chown -R coder:coder /home/coder
 
 # Configure git for coder user and set permissive umask
@@ -152,6 +154,17 @@ fi
 touch /var/log/agent.log
 chmod 666 /var/log/agent.log
 echo "[$(date -Iseconds)] Container started, waiting for agent..." >> /var/log/agent.log
+
+# Set up SSH key permissions and known_hosts for git operations
+if [ -f /home/coder/.ssh/id_ed25519 ]; then
+    chmod 600 /home/coder/.ssh/id_ed25519
+    chown coder:coder /home/coder/.ssh/id_ed25519
+    # Add GitHub to known_hosts (prevents "authenticity" prompts)
+    ssh-keyscan github.com >> /home/coder/.ssh/known_hosts 2>/dev/null
+    chmod 644 /home/coder/.ssh/known_hosts
+    chown coder:coder /home/coder/.ssh/known_hosts
+    echo "[$(date -Iseconds)] SSH key configured for git operations" >> /var/log/agent.log
+fi
 
 # Keep container running by tailing the agent log
 # Agent processes will write to this file, making output visible in docker logs
