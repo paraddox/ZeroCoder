@@ -167,22 +167,23 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
               const part = props?.part;
 
               // Handle reasoning/thinking content (GLM-4.7)
+              // Only log complete thinking blocks, not every delta (too noisy)
               if (part?.type === "reasoning" || part?.type === "thinking") {
-                if (props?.delta) {
-                  // Stream thinking delta
-                  logTrace("thinking", { delta: props.delta });
-                } else if (part?.text) {
-                  logTrace("thinking", { content: part.text });
+                // Skip deltas - too noisy for logs
+                // Only log if we have substantial complete content (over 100 chars)
+                if (!props?.delta && part?.text && part.text.length > 100) {
+                  // Extract first line as summary
+                  const firstLine = part.text.split('\n')[0].slice(0, 150);
+                  log("THINKING", firstLine);
                 }
               }
-              // Handle text content
+              // Handle text content - only log complete text, not every token delta
               else if (part?.type === "text") {
-                if (props?.delta) {
-                  process.stdout.write(props.delta);
-                  appendToLogFile(props.delta);
-                } else if (part?.text) {
-                  console.log(part.text);
-                  appendToLogFile(part.text);
+                // Skip deltas - too noisy
+                // Only log complete text blocks
+                if (!props?.delta && part?.text && part.text.length > 20) {
+                  const firstLine = part.text.split('\n')[0].slice(0, 200);
+                  log("TEXT", firstLine);
                 }
               }
               // Handle tool invocations
