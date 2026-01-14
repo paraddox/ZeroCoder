@@ -270,7 +270,7 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
     log("AGENT", "Prompt sent, waiting for completion...");
 
     // Wait for session to complete (with timeout and graceful stop check)
-    const maxWaitMs = 60 * 60 * 1000; // 60 minutes max
+    const maxWaitMs = 120 * 60 * 1000; // 60 minutes max
     const checkIntervalMs = 1000;
     let elapsedMs = 0;
 
