@@ -21,6 +21,10 @@
     "edit": "allow",
     "bash": "allow"
   },
+  "compaction": {
+    "auto": true,
+    "prune": true
+  },
   "mcp": {
     "vision": {
       "type": "local",

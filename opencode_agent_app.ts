@@ -22,6 +22,11 @@ const EXIT_FAILURE = 1;
 const EXIT_GRACEFUL_STOP = 129;
 const EXIT_INTERRUPTED = 130;
 
+// Context monitoring constants
+const CONTEXT_LIMIT_TOKENS = 200000;  // GLM-4.7 context window (200K)
+const EXIT_THRESHOLD = 0.70;          // Exit at 70% (~140K tokens)
+const CONTEXT_CHECK_INTERVAL_MS = 30000;  // Check every 30 seconds
+
 // Project directory (mounted in container)
 const PROJECT_DIR = "/project";
 
@@ -270,9 +275,10 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
     log("AGENT", "Prompt sent, waiting for completion...");
 
     // Wait for session to complete (with timeout and graceful stop check)
-    const maxWaitMs = 120 * 60 * 1000; // 60 minutes max
+    const maxWaitMs = 120 * 60 * 1000; // 120 minutes max
     const checkIntervalMs = 1000;
     let elapsedMs = 0;
+    let lastContextCheck = 0;
 
     while (!sessionComplete && elapsedMs < maxWaitMs) {
       await new Promise(resolve => setTimeout(resolve, checkIntervalMs));
@@ -284,10 +290,37 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
         gracefulStopRequested = true;
         // Don't call session.abort() - let the current work finish naturally
       }
+
+      // Periodic context usage check (every 30 seconds)
+      if (!gracefulStopRequested && elapsedMs - lastContextCheck >= CONTEXT_CHECK_INTERVAL_MS) {
+        lastContextCheck = elapsedMs;
+        try {
+          const messagesResult = await client.session.messages({ path: { id: sessionId } });
+          const messages = messagesResult?.data || messagesResult || [];
+
+          // Estimate tokens: sum all message content lengths / 4
+          let estimatedTokens = 0;
+          for (const msg of messages) {
+            for (const part of msg?.parts || []) {
+              if (part?.text) {
+                estimatedTokens += part.text.length / 4;
+              }
+            }
+          }
+
+          const usagePercent = estimatedTokens / CONTEXT_LIMIT_TOKENS;
+          if (usagePercent >= EXIT_THRESHOLD) {
+            log("AGENT", `Context usage at ${(usagePercent * 100).toFixed(1)}% (~${Math.round(estimatedTokens / 1000)}K tokens), requesting graceful exit...`);
+            gracefulStopRequested = true;
+          }
+        } catch {
+          // Ignore errors in context check - API might not support this
+        }
+      }
     }
 
     if (!sessionComplete) {
-      log("ERROR", "Session timed out after 60 minutes");
+      log("ERROR", "Session timed out after 120 minutes");
       return EXIT_FAILURE;
     }
 
