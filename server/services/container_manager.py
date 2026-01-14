@@ -606,10 +606,10 @@ class ContainerManager:
 
     async def _monitor_graceful_stop(self) -> None:
         """
-        Monitor graceful stop with 10-minute timeout.
+        Monitor graceful stop with 2-hour timeout.
         Falls back to force stop if timeout exceeded.
         """
-        timeout_seconds = 10 * 60  # 10 minutes
+        timeout_seconds = 120 * 60  # 2 hours (match session timeout)
         poll_interval = 5  # Check every 5 seconds
 
         try:
