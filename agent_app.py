@@ -31,7 +31,7 @@ from claude_agent_sdk import (
 )
 
 # Default model for coder/overseer agents
-DEFAULT_AGENT_MODEL = "claude-sonnet-4-5-20250514"
+DEFAULT_AGENT_MODEL = "glm-4-7"
 
 # Config file path (relative to project directory)
 AGENT_CONFIG_FILE = "prompts/.agent_config.json"
