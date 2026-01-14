@@ -132,6 +132,12 @@ if [ -d "/project/.beads" ]; then
     chmod -R a+rwX /project/.beads 2>/dev/null || true
 fi
 
+# Fix prompts directory permissions at startup (make world-writable)
+# This ensures host can update prompt templates
+if [ -d "/project/prompts" ]; then
+    chmod -R a+rwX /project/prompts 2>/dev/null || true
+fi
+
 # Keep container running
 exec tail -f /dev/null
 EOF
