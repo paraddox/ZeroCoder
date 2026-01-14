@@ -38,11 +38,34 @@ const GRACEFUL_STOP_FLAG = path.join(PROJECT_DIR, ".graceful_stop");
 const AGENT_LOG_FILE = "/var/log/agent.log";
 
 /**
+ * Get local ISO timestamp (without Z suffix, uses system timezone)
+ */
+function getLocalTimestamp(): string {
+  const now = new Date();
+  const offset = now.getTimezoneOffset();
+  const offsetHours = Math.abs(Math.floor(offset / 60));
+  const offsetMins = Math.abs(offset % 60);
+  const offsetSign = offset <= 0 ? "+" : "-";
+  const offsetStr = `${offsetSign}${String(offsetHours).padStart(2, "0")}:${String(offsetMins).padStart(2, "0")}`;
+
+  return (
+    now.getFullYear() +
+    "-" + String(now.getMonth() + 1).padStart(2, "0") +
+    "-" + String(now.getDate()).padStart(2, "0") +
+    "T" + String(now.getHours()).padStart(2, "0") +
+    ":" + String(now.getMinutes()).padStart(2, "0") +
+    ":" + String(now.getSeconds()).padStart(2, "0") +
+    "." + String(now.getMilliseconds()).padStart(3, "0") +
+    offsetStr
+  );
+}
+
+/**
  * Append message to agent log file for docker logs visibility
  */
 function appendToLogFile(message: string): void {
   try {
-    const timestamp = new Date().toISOString();
+    const timestamp = getLocalTimestamp();
     fs.appendFileSync(AGENT_LOG_FILE, `[${timestamp}] ${message}\n`);
   } catch {
     // Ignore errors (file may not exist during local testing)
@@ -98,7 +121,7 @@ function logTrace(
   const trace = {
     type: "trace",
     event,
-    timestamp: new Date().toISOString(),
+    timestamp: getLocalTimestamp(),
     data,
   };
   const formatted = `[TRACE] ${JSON.stringify(trace)}`;
