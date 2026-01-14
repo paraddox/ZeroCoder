@@ -25,7 +25,7 @@ from ..schemas import (
 )
 
 # Default model for coder/overseer agents
-DEFAULT_AGENT_MODEL = "claude-sonnet-4-5-20250514"
+DEFAULT_AGENT_MODEL = "glm-4-7"
 AGENT_CONFIG_FILENAME = ".agent_config.json"
 
 # Lazy imports to avoid circular dependencies
