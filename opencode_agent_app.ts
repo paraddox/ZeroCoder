@@ -21,6 +21,7 @@ const EXIT_SUCCESS = 0;
 const EXIT_FAILURE = 1;
 const EXIT_GRACEFUL_STOP = 129;
 const EXIT_INTERRUPTED = 130;
+const EXIT_CONTEXT_LIMIT = 131;  // Context limit reached - restart with fresh context
 
 // Context monitoring constants
 const CONTEXT_LIMIT_TOKENS = 200000;  // GLM-4.7 context window (200K)
@@ -141,6 +142,8 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
     let sessionError: string | null = null;
     // Track graceful stop request (don't abort, let session complete)
     let gracefulStopRequested = false;
+    // Track context limit reached (different from graceful stop - should restart)
+    let contextLimitReached = false;
 
     // Subscribe to events using SDK's global event stream
     log("AGENT", "Subscribing to events...");
@@ -310,8 +313,8 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
 
           const usagePercent = estimatedTokens / CONTEXT_LIMIT_TOKENS;
           if (usagePercent >= EXIT_THRESHOLD) {
-            log("AGENT", `Context usage at ${(usagePercent * 100).toFixed(1)}% (~${Math.round(estimatedTokens / 1000)}K tokens), requesting graceful exit...`);
-            gracefulStopRequested = true;
+            log("AGENT", `Context usage at ${(usagePercent * 100).toFixed(1)}% (~${Math.round(estimatedTokens / 1000)}K tokens), will restart with fresh context...`);
+            contextLimitReached = true;
           }
         } catch {
           // Ignore errors in context check - API might not support this
@@ -327,6 +330,12 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
     if (sessionError) {
       log("ERROR", `Session failed: ${sessionError}`);
       return EXIT_FAILURE;
+    }
+
+    // Check if context limit was reached - return code that triggers restart
+    if (contextLimitReached) {
+      log("AGENT", "Session completed, context limit reached - restarting with fresh context");
+      return EXIT_CONTEXT_LIMIT;
     }
 
     // Check if graceful stop was requested - return appropriate exit code

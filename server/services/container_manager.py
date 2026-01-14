@@ -744,6 +744,7 @@ class ContainerManager:
         - 1: Failure (all retries exhausted)
         - 129: Graceful stop requested
         - 130: User interrupt (Ctrl+C)
+        - 131: Context limit reached (restart with fresh context)
 
         Agent flow:
         - If open features exist → restart coding agent
@@ -757,6 +758,14 @@ class ContainerManager:
         Returns:
             Tuple of (success, message)
         """
+        # Handle context limit - exit code 131 (restart with fresh context)
+        if exit_code == 131:
+            logger.info(f"Context limit reached in {self.container_name}, restarting with fresh context...")
+            await self._broadcast_output("[System] Context limit reached. Restarting with fresh context...")
+            self._last_agent_was_overseer = False
+            self._last_agent_was_hound = False
+            return await self.restart_agent()
+
         # Handle graceful stop - exit code 129 or flag is set
         if exit_code == 129 or self._graceful_stop_requested:
             logger.info(f"Graceful stop completed for {self.container_name}")
