@@ -442,6 +442,11 @@ class ContainerManager:
                 zhipu_key = os.getenv("ZHIPU_API_KEY")
                 if zhipu_key:
                     cmd.extend(["-e", f"ZHIPU_API_KEY={zhipu_key}"])
+                # Sync timezone with host
+                if os.path.exists("/etc/localtime"):
+                    cmd.extend(["-v", "/etc/localtime:/etc/localtime:ro"])
+                if os.path.exists("/etc/timezone"):
+                    cmd.extend(["-v", "/etc/timezone:/etc/timezone:ro"])
                 cmd.append(CONTAINER_IMAGE)
 
                 result = subprocess.run(cmd, capture_output=True, text=True)
@@ -1153,6 +1158,11 @@ class ContainerManager:
                 zhipu_key = os.getenv("ZHIPU_API_KEY")
                 if zhipu_key:
                     cmd.extend(["-e", f"ZHIPU_API_KEY={zhipu_key}"])
+                # Sync timezone with host
+                if os.path.exists("/etc/localtime"):
+                    cmd.extend(["-v", "/etc/localtime:/etc/localtime:ro"])
+                if os.path.exists("/etc/timezone"):
+                    cmd.extend(["-v", "/etc/timezone:/etc/timezone:ro"])
                 cmd.append(CONTAINER_IMAGE)
 
                 result = subprocess.run(cmd, capture_output=True, text=True)
