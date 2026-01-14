@@ -456,11 +456,12 @@ class ContainerManager:
                     except Exception:
                         pass
                 # Mount SSH key for git operations if configured
+                # Mount to temp location; entrypoint copies with correct permissions
                 ssh_key_path = os.getenv("GIT_SSH_KEY_PATH")
                 if ssh_key_path:
                     expanded_path = os.path.expanduser(ssh_key_path)
                     if os.path.exists(expanded_path):
-                        cmd.extend(["-v", f"{expanded_path}:/home/coder/.ssh/id_ed25519:ro"])
+                        cmd.extend(["-v", f"{expanded_path}:/tmp/ssh_key:ro"])
                 # Construct remote URL from base + project name
                 git_remote_base = os.getenv("GIT_REMOTE_BASE")
                 if git_remote_base:
@@ -1194,11 +1195,12 @@ class ContainerManager:
                     except Exception:
                         pass
                 # Mount SSH key for git operations if configured
+                # Mount to temp location; entrypoint copies with correct permissions
                 ssh_key_path = os.getenv("GIT_SSH_KEY_PATH")
                 if ssh_key_path:
                     expanded_path = os.path.expanduser(ssh_key_path)
                     if os.path.exists(expanded_path):
-                        cmd.extend(["-v", f"{expanded_path}:/home/coder/.ssh/id_ed25519:ro"])
+                        cmd.extend(["-v", f"{expanded_path}:/tmp/ssh_key:ro"])
                 # Construct remote URL from base + project name
                 git_remote_base = os.getenv("GIT_REMOTE_BASE")
                 if git_remote_base:
