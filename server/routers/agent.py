@@ -155,6 +155,7 @@ async def start_agent(
     # Determine the instruction to send
     instruction = request.instruction
     agent_type = "coder"  # Default agent type
+    use_initializer = False  # Track if we need the initializer
     if not instruction:
         # Auto-determine based on project state
         try:
@@ -164,6 +165,8 @@ async def start_agent(
             if not has_features(project_dir, project_name):
                 prompt_type = "coding (existing repo)" if is_existing else "initializer"
                 agent_type = "coder"  # Initializer uses coder agent type
+                # Only set use_initializer for new projects (not existing repos)
+                use_initializer = not is_existing
             elif has_open_features(project_dir, project_name):
                 prompt_type = "coding"
                 agent_type = "coder"
@@ -179,6 +182,14 @@ async def start_agent(
 
     # Set agent type for OpenCode SDK routing
     manager._current_agent_type = agent_type
+
+    # For initializer, always use Claude SDK with Opus 4.5 (regardless of project model)
+    if use_initializer:
+        manager._force_claude_sdk = True
+        manager._forced_model = "claude-opus-4-5-20251101"
+        print(f"[Agent] Initializer will use Claude SDK with Opus 4.5")
+    else:
+        manager._force_claude_sdk = False
 
     success, message = await manager.start(instruction=instruction)
 

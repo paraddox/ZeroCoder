@@ -154,6 +154,10 @@ class ContainerManager:
         self._graceful_stop_requested: bool = False
         # Track current agent type for OpenCode SDK routing
         self._current_agent_type: Literal["coder", "overseer", "hound"] = "coder"
+        # Force Claude SDK for initializer (regardless of project model)
+        self._force_claude_sdk: bool = False
+        # Model to use when forcing Claude SDK (defaults to Opus 4.5)
+        self._forced_model: str = "claude-opus-4-5-20251101"
 
         # Callbacks for WebSocket notifications
         self._output_callbacks: Set[Callable[[str], Awaitable[None]]] = set()
@@ -455,7 +459,8 @@ class ContainerManager:
             # Send instruction if provided
             if instruction:
                 # Wait for agent app to be available
-                use_opencode = self._is_opencode_model()
+                # If forcing Claude SDK (e.g., for initializer), always check for Claude SDK
+                use_opencode = self._is_opencode_model() and not self._force_claude_sdk
                 for attempt in range(10):
                     await asyncio.sleep(2)
                     if use_opencode:
@@ -659,7 +664,8 @@ class ContainerManager:
 
             try:
                 # Determine which agent app to use based on model
-                use_opencode = self._is_opencode_model()
+                # If _force_claude_sdk is set, always use Claude SDK (for initializer)
+                use_opencode = self._is_opencode_model() and not self._force_claude_sdk
 
                 if use_opencode:
                     # OpenCode SDK agent (GLM-4.7)
@@ -679,16 +685,29 @@ class ContainerManager:
                         )
                 else:
                     # Claude Agent SDK (Python)
-                    logger.info(f"Using Claude agent for {self.container_name}")
-
-                    with open(prompt_file, "r", encoding="utf-8") as stdin_file:
-                        process = await asyncio.create_subprocess_exec(
-                            "docker", "exec", "-i", "-u", "coder", self.container_name,
-                            "python", "/app/agent_app.py",
-                            stdin=stdin_file,
-                            stdout=asyncio.subprocess.PIPE,
-                            stderr=asyncio.subprocess.STDOUT,
-                        )
+                    # If forcing Claude SDK with a specific model, pass it as env var
+                    if self._force_claude_sdk:
+                        logger.info(f"Using Claude agent (forced, model={self._forced_model}) for {self.container_name}")
+                        with open(prompt_file, "r", encoding="utf-8") as stdin_file:
+                            process = await asyncio.create_subprocess_exec(
+                                "docker", "exec", "-i", "-u", "coder",
+                                "-e", f"AGENT_MODEL={self._forced_model}",
+                                self.container_name,
+                                "python", "/app/agent_app.py",
+                                stdin=stdin_file,
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.STDOUT,
+                            )
+                    else:
+                        logger.info(f"Using Claude agent for {self.container_name}")
+                        with open(prompt_file, "r", encoding="utf-8") as stdin_file:
+                            process = await asyncio.create_subprocess_exec(
+                                "docker", "exec", "-i", "-u", "coder", self.container_name,
+                                "python", "/app/agent_app.py",
+                                stdin=stdin_file,
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.STDOUT,
+                            )
 
                 # Stream output to callbacks (common to both OpenCode and Claude)
                 while True:
@@ -891,6 +910,8 @@ class ContainerManager:
             self._last_agent_was_overseer = False
             # Set agent type for OpenCode routing
             self._current_agent_type = "coder"
+            # Use project's configured model (not forced Claude SDK)
+            self._force_claude_sdk = False
 
             # Start container with instruction
             return await self.start(instruction)
@@ -938,6 +959,8 @@ class ContainerManager:
             self._last_agent_was_overseer = True
             # Set agent type for OpenCode routing
             self._current_agent_type = "overseer"
+            # Use project's configured model (not forced Claude SDK)
+            self._force_claude_sdk = False
 
             # Start container with instruction
             return await self.start(instruction)
@@ -1060,6 +1083,8 @@ class ContainerManager:
             self._last_agent_was_overseer = False
             # Set agent type for OpenCode routing
             self._current_agent_type = "hound"
+            # Use project's configured model (not forced Claude SDK)
+            self._force_claude_sdk = False
 
             # Save current closed count for next hound trigger check
             current_count = self._get_closed_count()

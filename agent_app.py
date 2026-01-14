@@ -39,7 +39,12 @@ AGENT_CONFIG_FILE = "prompts/.agent_config.json"
 
 def get_agent_model(project_dir: str) -> str:
     """
-    Read agent model from project config file.
+    Read agent model from environment variable or project config file.
+
+    Priority:
+    1. AGENT_MODEL environment variable (for initializer override)
+    2. Project config file (prompts/.agent_config.json)
+    3. DEFAULT_AGENT_MODEL fallback
 
     Args:
         project_dir: Path to project directory
@@ -47,6 +52,12 @@ def get_agent_model(project_dir: str) -> str:
     Returns:
         Model ID string (defaults to DEFAULT_AGENT_MODEL if not configured)
     """
+    # Check for environment variable override (used by initializer)
+    env_model = os.environ.get("AGENT_MODEL")
+    if env_model:
+        print(f"[CONFIG] Using model from environment: {env_model}", flush=True)
+        return env_model
+
     config_path = Path(project_dir) / AGENT_CONFIG_FILE
     if config_path.exists():
         try:
