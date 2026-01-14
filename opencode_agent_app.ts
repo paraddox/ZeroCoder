@@ -28,6 +28,21 @@ const PROJECT_DIR = "/project";
 // Graceful stop flag file
 const GRACEFUL_STOP_FLAG = path.join(PROJECT_DIR, ".graceful_stop");
 
+// Agent log file (shared with container entrypoint for docker logs visibility)
+const AGENT_LOG_FILE = "/var/log/agent.log";
+
+/**
+ * Append message to agent log file for docker logs visibility
+ */
+function appendToLogFile(message: string): void {
+  try {
+    const timestamp = new Date().toISOString();
+    fs.appendFileSync(AGENT_LOG_FILE, `[${timestamp}] ${message}\n`);
+  } catch {
+    // Ignore errors (file may not exist during local testing)
+  }
+}
+
 /**
  * Read all input from stdin
  */
@@ -58,19 +73,23 @@ function checkGracefulStop(): boolean {
 
 /**
  * Log with prefix for parsing
+ * Outputs to both stdout (for Python backend streaming) and log file (for docker logs)
  */
 function log(prefix: string, message: string): void {
-  console.log(`[${prefix}] ${message}`);
+  const formatted = `[${prefix}] ${message}`;
+  console.log(formatted);
+  appendToLogFile(formatted);
 }
 
 /**
- * Run the OpenCode agent
+ * Run the OpenCode agent with async prompts and event streaming
  */
 async function runAgent(prompt: string, agentType: string): Promise<number> {
   log("AGENT", `Starting OpenCode agent: ${agentType}`);
   log("AGENT", `Prompt length: ${prompt.length} chars`);
 
   let opencode: { client: any; server: { url: string; close(): void } } | null = null;
+  let eventStream: { cancel: () => void } | null = null;
 
   try {
     // Initialize OpenCode - this starts both the server and client
@@ -85,7 +104,6 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
     // Create a new session
     log("AGENT", "Creating session...");
     const sessionResult = await client.session.create();
-    // SDK returns { data: { id: ... }, request: ..., response: ... }
     const sessionId = sessionResult?.data?.id || sessionResult?.id;
     if (!sessionId) {
       log("ERROR", "Failed to create session - no session ID returned");
@@ -94,35 +112,103 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
     }
     log("AGENT", `Session created: ${sessionId}`);
 
-    // Send the prompt to the agent using session.prompt()
-    // SDK format: { path: { id }, body: { parts: [...] } }
+    // Track session completion
+    let sessionComplete = false;
+    let sessionError: string | null = null;
+
+    // Subscribe to global events BEFORE sending prompt
+    log("AGENT", "Subscribing to events...");
+    const eventResult = await client.global.event({
+      onSseEvent: (event: any) => {
+        const payload = event?.data?.payload || event?.payload;
+        if (!payload) return;
+
+        const eventType = payload.type;
+        const props = payload.properties;
+
+        // Only process events for our session
+        if (props?.sessionID && props.sessionID !== sessionId) return;
+
+        switch (eventType) {
+          case "message.part.updated":
+            // Stream text updates
+            if (props?.delta) {
+              process.stdout.write(props.delta);
+              appendToLogFile(props.delta);
+            } else if (props?.part?.type === "text" && props?.part?.text) {
+              console.log(props.part.text);
+              appendToLogFile(props.part.text);
+            } else if (props?.part?.type === "tool-invocation" || props?.part?.type === "tool_use") {
+              const toolName = props.part?.name || props.part?.toolName || "unknown";
+              log("TOOL", `Using: ${toolName}`);
+            }
+            break;
+
+          case "session.idle":
+            log("AGENT", "Session completed");
+            sessionComplete = true;
+            break;
+
+          case "session.error":
+            sessionError = props?.error || "Unknown session error";
+            log("ERROR", `Session error: ${sessionError}`);
+            sessionComplete = true;
+            break;
+
+          case "file.edited":
+            log("FILE", `Edited: ${props?.file}`);
+            break;
+
+          case "todo.updated":
+            log("TODO", `Updated: ${props?.todo?.content || "unknown"}`);
+            break;
+        }
+      },
+      onSseError: (error: any) => {
+        log("ERROR", `SSE error: ${error?.message || String(error)}`);
+      },
+    });
+    eventStream = eventResult;
+
+    // Send the prompt asynchronously (returns immediately)
     log("AGENT", `Sending prompt to ${agentType} agent...`);
-    const response = await client.session.prompt({
+    await client.session.promptAsync({
       path: { id: sessionId },
       body: {
         parts: [{ type: "text", text: prompt }],
       },
     });
+    log("AGENT", "Prompt sent, waiting for completion...");
 
-    // Process response - SDK returns { data: { parts: [...] }, ... }
-    const responseParts = response?.data?.parts || response?.parts;
-    if (responseParts && responseParts.length > 0) {
-      for (const part of responseParts) {
-        if (part.type === "text") {
-          // Output text content
-          console.log(part.text);
-        } else if (part.type === "tool-invocation" || part.type === "tool_use") {
-          log("TOOL", `Using: ${(part as any).name || (part as any).toolName || "unknown"}`);
+    // Wait for session to complete (with timeout and graceful stop check)
+    const maxWaitMs = 60 * 60 * 1000; // 60 minutes max
+    const checkIntervalMs = 1000;
+    let elapsedMs = 0;
+
+    while (!sessionComplete && elapsedMs < maxWaitMs) {
+      await new Promise(resolve => setTimeout(resolve, checkIntervalMs));
+      elapsedMs += checkIntervalMs;
+
+      // Check for graceful stop
+      if (checkGracefulStop()) {
+        log("AGENT", "Graceful stop requested, aborting session...");
+        try {
+          await client.session.abort({ path: { id: sessionId } });
+        } catch {
+          // Ignore abort errors
         }
+        return EXIT_GRACEFUL_STOP;
       }
-    } else {
-      log("WARN", `No response parts received. Response: ${JSON.stringify(response)}`);
     }
 
-    // Check for graceful stop after processing
-    if (checkGracefulStop()) {
-      log("AGENT", "Graceful stop requested, completing session...");
-      return EXIT_GRACEFUL_STOP;
+    if (!sessionComplete) {
+      log("ERROR", "Session timed out after 60 minutes");
+      return EXIT_FAILURE;
+    }
+
+    if (sessionError) {
+      log("ERROR", `Session failed: ${sessionError}`);
+      return EXIT_FAILURE;
     }
 
     log("AGENT", "Completed successfully");
@@ -131,7 +217,6 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
   } catch (err: unknown) {
     const error = err as Error;
 
-    // Check if it's an API error from the SDK
     if (err && typeof err === 'object' && 'status' in err) {
       const apiErr = err as { status?: number; message?: string };
       log("ERROR", `API Error (${apiErr.status}): ${apiErr.message || error.message}`);
@@ -151,7 +236,14 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
 
     return EXIT_FAILURE;
   } finally {
-    // Clean up - close the server
+    // Clean up
+    if (eventStream?.cancel) {
+      try {
+        eventStream.cancel();
+      } catch {
+        // Ignore cancel errors
+      }
+    }
     if (opencode?.server) {
       log("AGENT", "Closing OpenCode server...");
       opencode.server.close();

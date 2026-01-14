@@ -138,8 +138,15 @@ if [ -d "/project/prompts" ]; then
     chmod -R a+rwX /project/prompts 2>/dev/null || true
 fi
 
-# Keep container running
-exec tail -f /dev/null
+# Create agent log file (world-writable so coder user can write to it)
+# This file is tailed to show agent activity in docker logs
+touch /var/log/agent.log
+chmod 666 /var/log/agent.log
+echo "[$(date -Iseconds)] Container started, waiting for agent..." >> /var/log/agent.log
+
+# Keep container running by tailing the agent log
+# Agent processes will write to this file, making output visible in docker logs
+exec tail -f /var/log/agent.log
 EOF
 RUN chmod +x /entrypoint.sh
 
