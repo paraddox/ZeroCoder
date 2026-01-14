@@ -82,6 +82,25 @@ function log(prefix: string, message: string): void {
 }
 
 /**
+ * Structured trace logging for frontend consumption
+ * Outputs JSON traces with [TRACE] prefix for parsing
+ */
+function logTrace(
+  event: "tool.start" | "tool.end" | "thinking" | "text" | "file.edit" | "error",
+  data: Record<string, unknown>
+): void {
+  const trace = {
+    type: "trace",
+    event,
+    timestamp: new Date().toISOString(),
+    data,
+  };
+  const formatted = `[TRACE] ${JSON.stringify(trace)}`;
+  console.log(formatted);
+  appendToLogFile(formatted);
+}
+
+/**
  * Run the OpenCode agent with async prompts and event streaming
  */
 async function runAgent(prompt: string, agentType: string): Promise<number> {
@@ -131,8 +150,15 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
 
         switch (eventType) {
           case "message.part.updated":
+            // Handle thinking/reasoning content (GLM-4.7 with Preserved Thinking)
+            if (props?.part?.type === "thinking" || props?.reasoning_content) {
+              const thinking = props.reasoning_content || props.part?.text;
+              if (thinking) {
+                logTrace("thinking", { content: thinking });
+              }
+            }
             // Stream text updates
-            if (props?.delta) {
+            else if (props?.delta) {
               process.stdout.write(props.delta);
               appendToLogFile(props.delta);
             } else if (props?.part?.type === "text" && props?.part?.text) {
@@ -140,7 +166,21 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
               appendToLogFile(props.part.text);
             } else if (props?.part?.type === "tool-invocation" || props?.part?.type === "tool_use") {
               const toolName = props.part?.name || props.part?.toolName || "unknown";
+              const toolArgs = props.part?.args || props.part?.input || props.part?.arguments || {};
               log("TOOL", `Using: ${toolName}`);
+              logTrace("tool.start", {
+                toolName,
+                toolArgs,
+                toolId: props.part?.id || props.part?.toolCallId,
+              });
+            } else if (props?.part?.type === "tool-result" || props?.part?.type === "tool_result") {
+              const toolName = props.part?.name || props.part?.toolName || "unknown";
+              const result = props.part?.result || props.part?.output;
+              logTrace("tool.end", {
+                toolName,
+                toolId: props.part?.id || props.part?.toolCallId,
+                result: typeof result === "string" ? result.slice(0, 500) : result, // Truncate long results
+              });
             }
             break;
 
@@ -152,15 +192,31 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
           case "session.error":
             sessionError = props?.error || "Unknown session error";
             log("ERROR", `Session error: ${sessionError}`);
+            logTrace("error", { message: sessionError });
             sessionComplete = true;
             break;
 
           case "file.edited":
             log("FILE", `Edited: ${props?.file}`);
+            logTrace("file.edit", {
+              file: props?.file,
+              additions: props?.additions,
+              deletions: props?.deletions,
+            });
             break;
 
           case "todo.updated":
             log("TODO", `Updated: ${props?.todo?.content || "unknown"}`);
+            break;
+
+          // Handle tool results at top level (some SDKs send them this way)
+          case "tool.result":
+          case "tool_result":
+            logTrace("tool.end", {
+              toolName: props?.name || props?.toolName || "unknown",
+              toolId: props?.id || props?.toolCallId,
+              result: typeof props?.result === "string" ? props.result.slice(0, 500) : props?.result,
+            });
             break;
         }
       },
