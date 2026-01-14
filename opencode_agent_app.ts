@@ -135,96 +135,126 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
     let sessionComplete = false;
     let sessionError: string | null = null;
 
-    // Subscribe to global events BEFORE sending prompt
+    // Subscribe to events using SDK's global event stream
     log("AGENT", "Subscribing to events...");
-    const eventResult = await client.global.event({
-      onSseEvent: (event: any) => {
-        const payload = event?.data?.payload || event?.payload;
-        if (!payload) return;
+    let stream: any = null;
 
-        const eventType = payload.type;
-        const props = payload.properties;
+    try {
+      const eventResult = await client.global.event();
+      stream = eventResult?.stream;
+    } catch (e: any) {
+      log("ERROR", `Failed to subscribe to events: ${e.message}`);
+    }
 
-        // Only process events for our session
-        if (props?.sessionID && props.sessionID !== sessionId) return;
+    eventStream = stream ? { cancel: () => stream.controller?.abort() } : null;
 
-        switch (eventType) {
-          case "message.part.updated":
-            // Handle thinking/reasoning content (GLM-4.7 with Preserved Thinking)
-            if (props?.part?.type === "thinking" || props?.reasoning_content) {
-              const thinking = props.reasoning_content || props.part?.text;
-              if (thinking) {
-                logTrace("thinking", { content: thinking });
+    // Process events in background (only if we have a stream)
+    const eventProcessor = stream ? (async () => {
+      try {
+        for await (const event of stream) {
+          // Extract payload (events are wrapped)
+          const payload = event?.payload || event;
+          const eventType = payload?.type;
+          const props = payload?.properties || payload;
+
+          // Only process events for our session
+          const partSessionId = props?.part?.sessionID || props?.sessionID;
+          if (partSessionId && partSessionId !== sessionId) continue;
+
+          switch (eventType) {
+            case "message.part.updated":
+            case "message.updated":
+              const part = props?.part;
+
+              // Handle reasoning/thinking content (GLM-4.7)
+              if (part?.type === "reasoning" || part?.type === "thinking") {
+                if (props?.delta) {
+                  // Stream thinking delta
+                  logTrace("thinking", { delta: props.delta });
+                } else if (part?.text) {
+                  logTrace("thinking", { content: part.text });
+                }
               }
-            }
-            // Stream text updates
-            else if (props?.delta) {
-              process.stdout.write(props.delta);
-              appendToLogFile(props.delta);
-            } else if (props?.part?.type === "text" && props?.part?.text) {
-              console.log(props.part.text);
-              appendToLogFile(props.part.text);
-            } else if (props?.part?.type === "tool-invocation" || props?.part?.type === "tool_use") {
-              const toolName = props.part?.name || props.part?.toolName || "unknown";
-              const toolArgs = props.part?.args || props.part?.input || props.part?.arguments || {};
-              log("TOOL", `Using: ${toolName}`);
-              logTrace("tool.start", {
-                toolName,
-                toolArgs,
-                toolId: props.part?.id || props.part?.toolCallId,
+              // Handle text content
+              else if (part?.type === "text") {
+                if (props?.delta) {
+                  process.stdout.write(props.delta);
+                  appendToLogFile(props.delta);
+                } else if (part?.text) {
+                  console.log(part.text);
+                  appendToLogFile(part.text);
+                }
+              }
+              // Handle tool invocations
+              else if (part?.type === "tool-invocation" || part?.type === "tool_use" || part?.type === "tool-call") {
+                const toolName = part?.name || part?.toolName || "unknown";
+                const toolArgs = part?.args || part?.input || part?.arguments || {};
+                log("TOOL", `Using: ${toolName}`);
+                logTrace("tool.start", {
+                  toolName,
+                  toolArgs,
+                  toolId: part?.id,
+                });
+              }
+              // Handle tool results
+              else if (part?.type === "tool-result" || part?.type === "tool_result") {
+                const toolName = part?.name || part?.toolName || "unknown";
+                const result = part?.result || part?.output;
+                logTrace("tool.end", {
+                  toolName,
+                  toolId: part?.id,
+                  result: typeof result === "string" ? result.slice(0, 500) : result,
+                });
+              }
+              break;
+
+            case "session.idle":
+              log("AGENT", "Session completed");
+              sessionComplete = true;
+              break;
+
+            case "session.error":
+              sessionError = props?.error || "Unknown session error";
+              log("ERROR", `Session error: ${sessionError}`);
+              logTrace("error", { message: sessionError });
+              sessionComplete = true;
+              break;
+
+            case "file.edited":
+              log("FILE", `Edited: ${props?.file}`);
+              logTrace("file.edit", {
+                file: props?.file,
+                additions: props?.additions,
+                deletions: props?.deletions,
               });
-            } else if (props?.part?.type === "tool-result" || props?.part?.type === "tool_result") {
-              const toolName = props.part?.name || props.part?.toolName || "unknown";
-              const result = props.part?.result || props.part?.output;
+              break;
+
+            case "todo.updated":
+              log("TODO", `Updated: ${props?.todo?.content || "unknown"}`);
+              break;
+
+            case "tool.result":
+            case "tool_result":
               logTrace("tool.end", {
-                toolName,
-                toolId: props.part?.id || props.part?.toolCallId,
-                result: typeof result === "string" ? result.slice(0, 500) : result, // Truncate long results
+                toolName: props?.name || props?.toolName || "unknown",
+                toolId: props?.id || props?.toolCallId,
+                result: typeof props?.result === "string" ? props.result.slice(0, 500) : props?.result,
               });
-            }
-            break;
+              break;
+          }
 
-          case "session.idle":
-            log("AGENT", "Session completed");
-            sessionComplete = true;
-            break;
-
-          case "session.error":
-            sessionError = props?.error || "Unknown session error";
-            log("ERROR", `Session error: ${sessionError}`);
-            logTrace("error", { message: sessionError });
-            sessionComplete = true;
-            break;
-
-          case "file.edited":
-            log("FILE", `Edited: ${props?.file}`);
-            logTrace("file.edit", {
-              file: props?.file,
-              additions: props?.additions,
-              deletions: props?.deletions,
-            });
-            break;
-
-          case "todo.updated":
-            log("TODO", `Updated: ${props?.todo?.content || "unknown"}`);
-            break;
-
-          // Handle tool results at top level (some SDKs send them this way)
-          case "tool.result":
-          case "tool_result":
-            logTrace("tool.end", {
-              toolName: props?.name || props?.toolName || "unknown",
-              toolId: props?.id || props?.toolCallId,
-              result: typeof props?.result === "string" ? props.result.slice(0, 500) : props?.result,
-            });
-            break;
+          // Exit loop if session is complete
+          if (sessionComplete) break;
         }
-      },
-      onSseError: (error: any) => {
-        log("ERROR", `SSE error: ${error?.message || String(error)}`);
-      },
-    });
-    eventStream = eventResult;
+      } catch (err: any) {
+        // Stream was cancelled or errored
+        if (!sessionComplete) {
+          log("ERROR", `Event stream error: ${err?.message || String(err)}`);
+        }
+      }
+    })() : null;
+
+    // Don't await eventProcessor - let it run in background
 
     // Send the prompt asynchronously (returns immediately)
     log("AGENT", `Sending prompt to ${agentType} agent...`);
