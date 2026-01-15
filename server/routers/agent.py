@@ -266,6 +266,24 @@ async def start_all_containers(project_name: str):
             detail=f"Project directory not found for '{project_name}'"
         )
 
+    # Pull latest changes to local clone before checking state
+    # This ensures we have up-to-date .beads/ data for has_features check
+    if (project_dir / ".git").exists():
+        try:
+            print(f"[StartAll] Pulling latest changes to local clone...")
+            pull_result = subprocess.run(
+                ["git", "-C", str(project_dir), "pull", "origin", "main"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if pull_result.returncode == 0:
+                print(f"[StartAll] Local clone updated successfully")
+            else:
+                print(f"[StartAll] Git pull warning: {pull_result.stderr}")
+        except Exception as e:
+            print(f"[StartAll] Git pull error (continuing anyway): {e}")
+
     # ==========================================================================
     # PHASE 1: Run init container (container_number=0)
     # ==========================================================================

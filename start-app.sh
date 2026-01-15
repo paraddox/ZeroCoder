@@ -5,7 +5,14 @@ cd "$(dirname "$0")"
 
 # Load environment variables from .env file if it exists
 if [ -f ".env" ]; then
-    export $(grep -v '^#' .env | xargs)
+    # Source each line to properly handle tilde expansion
+    while IFS='=' read -r key value; do
+        # Skip empty lines and comments
+        [[ -z "$key" || "$key" =~ ^# ]] && continue
+        # Expand tilde in value
+        value="${value/#\~/$HOME}"
+        export "$key=$value"
+    done < .env
 fi
 
 echo ""

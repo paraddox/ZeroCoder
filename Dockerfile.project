@@ -124,6 +124,9 @@ USER root
 # Working directory is the project directory (cloned at runtime)
 WORKDIR /project
 
+# Make /project writable by coder user for git clone
+RUN chown coder:coder /project
+
 # Create entrypoint script
 COPY <<EOF /entrypoint.sh
 #!/bin/bash
@@ -168,6 +171,7 @@ echo "[$(date -Iseconds)] Container started, waiting for agent..." >> /var/log/a
 
 # Set up SSH key for git operations (copy from temp mount with correct permissions)
 if [ -f /tmp/ssh_key ]; then
+    # Set up for coder user
     cp /tmp/ssh_key /home/coder/.ssh/id_ed25519
     chmod 600 /home/coder/.ssh/id_ed25519
     chown coder:coder /home/coder/.ssh/id_ed25519
@@ -175,23 +179,30 @@ if [ -f /tmp/ssh_key ]; then
     ssh-keyscan github.com >> /home/coder/.ssh/known_hosts 2>/dev/null
     chmod 644 /home/coder/.ssh/known_hosts
     chown coder:coder /home/coder/.ssh/known_hosts
+    # Also set up for root (for entrypoint git operations)
+    mkdir -p /root/.ssh
+    cp /tmp/ssh_key /root/.ssh/id_ed25519
+    chmod 600 /root/.ssh/id_ed25519
+    ssh-keyscan github.com >> /root/.ssh/known_hosts 2>/dev/null
+    chmod 644 /root/.ssh/known_hosts
     echo "[$(date -Iseconds)] SSH key configured for git operations" >> /var/log/agent.log
 fi
 
-# Clone or pull repository from GIT_REMOTE_URL
+# Clone or pull repository from GIT_REMOTE_URL (as coder user who has SSH keys)
 if [ -n "\$GIT_REMOTE_URL" ]; then
     if [ ! -d "/project/.git" ]; then
         echo "[$(date -Iseconds)] Cloning repository from \$GIT_REMOTE_URL..." >> /var/log/agent.log
-        git clone "\$GIT_REMOTE_URL" /project
-        cd /project
-        chmod -R a+rwX /project 2>/dev/null || true
-        echo "[$(date -Iseconds)] Repository cloned successfully" >> /var/log/agent.log
+        # Run as coder user who has SSH key configured
+        if su - coder -c "git clone \$GIT_REMOTE_URL /project"; then
+            chmod -R a+rwX /project 2>/dev/null || true
+            echo "[$(date -Iseconds)] Repository cloned successfully" >> /var/log/agent.log
+        else
+            echo "[$(date -Iseconds)] ERROR: Failed to clone repository" >> /var/log/agent.log
+        fi
     else
         echo "[$(date -Iseconds)] Repository already cloned, pulling latest..." >> /var/log/agent.log
-        cd /project
-        git fetch origin
-        git checkout main
-        git pull origin main
+        # Run git operations as coder user
+        su - coder -c "cd /project && git fetch origin && git checkout main && git pull origin main"
         echo "[$(date -Iseconds)] Repository updated successfully" >> /var/log/agent.log
     fi
 fi

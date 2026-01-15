@@ -802,6 +802,7 @@ class ContainerManager:
                     expanded_path = os.path.expanduser(ssh_key_path)
                     if os.path.exists(expanded_path):
                         cmd.extend(["-v", f"{expanded_path}:/tmp/ssh_key:ro"])
+                        logger.info(f"Added SSH key mount: {expanded_path}")
                 cmd.append(CONTAINER_IMAGE)
 
                 result = subprocess.run(cmd, capture_output=True, text=True)
@@ -1626,6 +1627,7 @@ class ContainerManager:
                     expanded_path = os.path.expanduser(ssh_key_path)
                     if os.path.exists(expanded_path):
                         cmd.extend(["-v", f"{expanded_path}:/tmp/ssh_key:ro"])
+                        logger.info(f"Added SSH key mount: {expanded_path}")
                 cmd.append(CONTAINER_IMAGE)
 
                 result = subprocess.run(cmd, capture_output=True, text=True)
