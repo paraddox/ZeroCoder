@@ -257,32 +257,3 @@ export function useHealthCheck() {
   })
 }
 
-// ============================================================================
-// Filesystem
-// ============================================================================
-
-export function useListDirectory(path?: string) {
-  return useQuery({
-    queryKey: ['filesystem', 'list', path],
-    queryFn: () => api.listDirectory(path),
-  })
-}
-
-export function useCreateDirectory() {
-  const queryClient = useQueryClient()
-
-  return useMutation({
-    mutationFn: (path: string) => api.createDirectory(path),
-    onSuccess: (_, path) => {
-      // Invalidate parent directory listing
-      const parentPath = path.split('/').slice(0, -1).join('/') || undefined
-      queryClient.invalidateQueries({ queryKey: ['filesystem', 'list', parentPath] })
-    },
-  })
-}
-
-export function useValidatePath() {
-  return useMutation({
-    mutationFn: (path: string) => api.validatePath(path),
-  })
-}

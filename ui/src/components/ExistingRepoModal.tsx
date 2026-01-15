@@ -1,22 +1,15 @@
 /**
  * Existing Repo Modal Component
  *
- * Multi-step modal for adding existing repositories:
- * 1. Choose source type (Git URL or Local Folder)
- * 2a. If Git URL: Enter URL + select destination folder
- * 2b. If Local Folder: Select the folder
- * 3. Enter project name (auto-suggested)
- * 4. Processing (clone, init beads, scaffold)
- * 5. Complete
+ * Modal for adding existing repositories by Git URL.
+ * The repository will be cloned to the default projects directory.
  */
 
 import { useState } from 'react'
-import { X, GitBranch, Folder, ArrowRight, ArrowLeft, Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
-import { FolderBrowser } from './FolderBrowser'
+import { X, GitBranch, ArrowLeft, Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
 import { addExistingRepo } from '../lib/api'
 
-type Step = 'source' | 'git_url' | 'local_folder' | 'name' | 'processing' | 'complete' | 'error'
-type SourceType = 'git_url' | 'local_folder'
+type Step = 'git_url' | 'name' | 'processing' | 'complete' | 'error'
 
 interface ExistingRepoModalProps {
   isOpen: boolean
@@ -29,10 +22,8 @@ export function ExistingRepoModal({
   onClose,
   onProjectAdded,
 }: ExistingRepoModalProps) {
-  const [step, setStep] = useState<Step>('source')
-  const [sourceType, setSourceType] = useState<SourceType | null>(null)
+  const [step, setStep] = useState<Step>('git_url')
   const [gitUrl, setGitUrl] = useState('')
-  const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [projectName, setProjectName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [processingStatus, setProcessingStatus] = useState('')
@@ -47,22 +38,6 @@ export function ExistingRepoModal({
     return match ? match[1].replace('.git', '') : ''
   }
 
-  const extractFolderName = (path: string): string => {
-    // Extract folder name from path
-    const parts = path.split(/[/\\]/).filter(Boolean)
-    return parts[parts.length - 1] || ''
-  }
-
-  const handleSourceSelect = (type: SourceType) => {
-    setSourceType(type)
-    setError(null)
-    if (type === 'git_url') {
-      setStep('git_url')
-    } else {
-      setStep('local_folder')
-    }
-  }
-
   const handleGitUrlSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!gitUrl.trim()) {
@@ -74,34 +49,10 @@ export function ExistingRepoModal({
       return
     }
     setError(null)
-    // Now need to select destination folder
-    setStep('local_folder')
-  }
-
-  const handleFolderSelect = (path: string) => {
-    setSelectedPath(path)
-    // Auto-suggest project name
-    if (sourceType === 'git_url') {
-      // For git clone, the repo will be cloned into this folder
-      // Suggest name from git URL
-      const suggestedName = extractRepoName(gitUrl)
-      setProjectName(suggestedName)
-      // Full path will be path + repo name
-      setSelectedPath(`${path}/${suggestedName}`)
-    } else {
-      // For local folder, suggest name from folder
-      const suggestedName = extractFolderName(path)
-      setProjectName(suggestedName)
-    }
+    // Auto-suggest project name from URL
+    const suggestedName = extractRepoName(gitUrl)
+    setProjectName(suggestedName)
     setStep('name')
-  }
-
-  const handleFolderCancel = () => {
-    if (sourceType === 'git_url') {
-      setStep('git_url')
-    } else {
-      setStep('source')
-    }
   }
 
   const handleNameSubmit = async (e: React.FormEvent) => {
@@ -122,18 +73,12 @@ export function ExistingRepoModal({
     setStep('processing')
 
     try {
-      if (sourceType === 'git_url') {
-        setProcessingStatus('Cloning repository...')
-      } else {
-        setProcessingStatus('Checking folder...')
-      }
+      setProcessingStatus('Cloning repository...')
 
-      // Call API
+      // Call API - only git_url mode supported now
       await addExistingRepo({
         name: trimmed,
-        source_type: sourceType!,
-        git_url: sourceType === 'git_url' ? gitUrl : undefined,
-        path: selectedPath!,
+        git_url: gitUrl,
       })
 
       setProcessingStatus('Project added successfully!')
@@ -151,10 +96,8 @@ export function ExistingRepoModal({
   }
 
   const handleClose = () => {
-    setStep('source')
-    setSourceType(null)
+    setStep('git_url')
     setGitUrl('')
-    setSelectedPath(null)
     setProjectName('')
     setError(null)
     setProcessingStatus('')
@@ -163,62 +106,12 @@ export function ExistingRepoModal({
 
   const handleBack = () => {
     setError(null)
-    if (step === 'git_url') {
-      setStep('source')
-      setGitUrl('')
-    } else if (step === 'local_folder') {
-      if (sourceType === 'git_url') {
-        setStep('git_url')
-      } else {
-        setStep('source')
-      }
-      setSelectedPath(null)
-    } else if (step === 'name') {
-      setStep('local_folder')
+    if (step === 'name') {
+      setStep('git_url')
       setProjectName('')
     } else if (step === 'error') {
       setStep('name')
     }
-  }
-
-  // Folder browser step uses larger modal
-  if (step === 'local_folder') {
-    return (
-      <div className="modal-backdrop" onClick={handleClose}>
-        <div
-          className="modal w-full max-w-3xl max-h-[85vh] flex flex-col"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {/* Header */}
-          <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)]">
-            <div className="flex items-center gap-3">
-              <Folder size={24} className="text-[var(--color-accent)]" />
-              <div>
-                <h2 className="font-medium text-xl text-[var(--color-text)]">
-                  {sourceType === 'git_url' ? 'Select Clone Destination' : 'Select Repository Folder'}
-                </h2>
-                <p className="text-sm text-[var(--color-text-secondary)]">
-                  {sourceType === 'git_url'
-                    ? 'Choose where to clone the repository'
-                    : 'Select the folder containing your existing repository'}
-                </p>
-              </div>
-            </div>
-            <button onClick={handleClose} className="btn btn-ghost p-2">
-              <X size={20} />
-            </button>
-          </div>
-
-          {/* Folder Browser */}
-          <div className="flex-1 overflow-hidden">
-            <FolderBrowser
-              onSelect={handleFolderSelect}
-              onCancel={handleFolderCancel}
-            />
-          </div>
-        </div>
-      </div>
-    )
   }
 
   return (
@@ -232,8 +125,7 @@ export function ExistingRepoModal({
           <div className="flex items-center gap-2">
             <GitBranch size={20} className="text-[var(--color-accent)]" />
             <h2 className="font-medium text-xl text-[var(--color-text)]">
-              {step === 'source' && 'Add Existing Repository'}
-              {step === 'git_url' && 'Enter Git URL'}
+              {step === 'git_url' && 'Clone Existing Repository'}
               {step === 'name' && 'Project Name'}
               {step === 'processing' && 'Adding Project...'}
               {step === 'complete' && 'Project Added!'}
@@ -247,76 +139,13 @@ export function ExistingRepoModal({
 
         {/* Content */}
         <div className="p-6">
-          {/* Step 1: Source Type */}
-          {step === 'source' && (
-            <div>
-              <p className="text-[var(--color-text-secondary)] mb-6">
-                How would you like to add your repository?
-              </p>
-
-              <div className="space-y-4">
-                {/* Git URL option */}
-                <button
-                  onClick={() => handleSourceSelect('git_url')}
-                  className={`
-                    w-full text-left p-4
-                    border border-[var(--color-border)]
-                    bg-[var(--color-bg)]
-                    rounded-lg
-                    hover:bg-[var(--color-bg-elevated)]
-                    hover:border-[var(--color-accent)]
-                    transition-all duration-150
-                  `}
-                >
-                  <div className="flex items-start gap-4">
-                    <div className="p-2 bg-[var(--color-accent)] rounded-md">
-                      <GitBranch size={24} className="text-[var(--color-text-inverse)]" />
-                    </div>
-                    <div className="flex-1">
-                      <span className="font-medium text-lg text-[var(--color-text)]">
-                        Clone from Git URL
-                      </span>
-                      <p className="text-sm text-[var(--color-text-secondary)] mt-1">
-                        Clone a repository from GitHub, GitLab, or any Git remote.
-                      </p>
-                    </div>
-                  </div>
-                </button>
-
-                {/* Local folder option */}
-                <button
-                  onClick={() => handleSourceSelect('local_folder')}
-                  className={`
-                    w-full text-left p-4
-                    border border-[var(--color-border)]
-                    bg-[var(--color-bg)]
-                    rounded-lg
-                    hover:bg-[var(--color-bg-elevated)]
-                    hover:border-[var(--color-accent)]
-                    transition-all duration-150
-                  `}
-                >
-                  <div className="flex items-start gap-4">
-                    <div className="p-2 bg-[var(--color-text-secondary)] rounded-md">
-                      <Folder size={24} className="text-[var(--color-text-inverse)]" />
-                    </div>
-                    <div className="flex-1">
-                      <span className="font-medium text-lg text-[var(--color-text)]">
-                        Select Local Folder
-                      </span>
-                      <p className="text-sm text-[var(--color-text-secondary)] mt-1">
-                        Add a repository that's already on your machine.
-                      </p>
-                    </div>
-                  </div>
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Step 2a: Git URL */}
+          {/* Step 1: Git URL */}
           {step === 'git_url' && (
             <form onSubmit={handleGitUrlSubmit}>
+              <p className="text-[var(--color-text-secondary)] mb-6">
+                Enter the Git URL of an existing repository to clone.
+              </p>
+
               <div className="mb-6">
                 <label className="block font-medium mb-2 text-[var(--color-text)]">
                   Repository URL
@@ -340,34 +169,25 @@ export function ExistingRepoModal({
                 </div>
               )}
 
-              <div className="flex justify-between">
-                <button
-                  type="button"
-                  onClick={handleBack}
-                  className="btn btn-ghost"
-                >
-                  <ArrowLeft size={16} />
-                  Back
-                </button>
+              <div className="flex justify-end">
                 <button
                   type="submit"
                   className="btn btn-primary"
                   disabled={!gitUrl.trim()}
                 >
                   Next
-                  <ArrowRight size={16} />
                 </button>
               </div>
             </form>
           )}
 
-          {/* Step 3: Project Name */}
+          {/* Step 2: Project Name */}
           {step === 'name' && (
             <form onSubmit={handleNameSubmit}>
               <div className="mb-4">
                 <div className="text-sm text-[var(--color-text-secondary)] mb-4 p-3 bg-[var(--color-bg-elevated)] rounded-md">
-                  <div className="font-medium text-[var(--color-text)]">Selected:</div>
-                  <code className="text-xs">{selectedPath}</code>
+                  <div className="font-medium text-[var(--color-text)]">Repository:</div>
+                  <code className="text-xs break-all">{gitUrl}</code>
                 </div>
 
                 <label className="block font-medium mb-2 text-[var(--color-text)]">
@@ -408,13 +228,12 @@ export function ExistingRepoModal({
                   disabled={!projectName.trim()}
                 >
                   Add Project
-                  <ArrowRight size={16} />
                 </button>
               </div>
             </form>
           )}
 
-          {/* Step 4: Processing */}
+          {/* Step 3: Processing */}
           {step === 'processing' && (
             <div className="text-center py-8">
               <Loader2 size={48} className="animate-spin mx-auto mb-4 text-[var(--color-accent)]" />
@@ -422,7 +241,7 @@ export function ExistingRepoModal({
             </div>
           )}
 
-          {/* Step 5: Complete */}
+          {/* Step 4: Complete */}
           {step === 'complete' && (
             <div className="text-center py-8">
               <CheckCircle2 size={48} className="mx-auto mb-4 text-[var(--color-done)]" />

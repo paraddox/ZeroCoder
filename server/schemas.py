@@ -87,7 +87,7 @@ class WizardStatusMessage(BaseModel):
 
 class WizardStatus(BaseModel):
     """Wizard state for resuming interrupted project setup."""
-    step: Literal["name", "folder", "method", "chat"]
+    step: Literal["mode", "details", "method", "chat"]
     spec_method: Literal["claude", "manual"] | None = None
     started_at: datetime
     chat_messages: list[WizardStatusMessage] = []

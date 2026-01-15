@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import subprocess
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -55,7 +56,8 @@ class BeadsSyncManager:
             self.local_path.parent.mkdir(parents=True, exist_ok=True)
 
             # Clone only beads-sync branch (sparse)
-            result = subprocess.run(
+            result = await asyncio.to_thread(
+                subprocess.run,
                 [
                     "git", "clone",
                     "--single-branch", "--branch", "beads-sync",
@@ -95,7 +97,8 @@ class BeadsSyncManager:
             return await self.ensure_cloned()
 
         try:
-            result = subprocess.run(
+            result = await asyncio.to_thread(
+                subprocess.run,
                 ["git", "-C", str(self.local_path), "pull", "--ff-only", "origin", "beads-sync"],
                 capture_output=True,
                 text=True,
@@ -104,16 +107,24 @@ class BeadsSyncManager:
 
             if result.returncode != 0:
                 # Try a fetch + reset if pull fails
-                subprocess.run(
+                fetch_result = await asyncio.to_thread(
+                    subprocess.run,
                     ["git", "-C", str(self.local_path), "fetch", "origin", "beads-sync"],
                     capture_output=True,
+                    text=True,
                     timeout=30,
                 )
-                subprocess.run(
+                if fetch_result.returncode != 0:
+                    logger.error(f"Git fetch failed for {self.project_name}: {fetch_result.stderr}")
+                reset_result = await asyncio.to_thread(
+                    subprocess.run,
                     ["git", "-C", str(self.local_path), "reset", "--hard", "origin/beads-sync"],
                     capture_output=True,
+                    text=True,
                     timeout=10,
                 )
+                if reset_result.returncode != 0:
+                    logger.error(f"Git reset failed for {self.project_name}: {reset_result.stderr}")
 
             self._last_pull = datetime.now()
             return True, "Pulled successfully"
@@ -143,7 +154,8 @@ class BeadsSyncManager:
                     if line:
                         try:
                             tasks.append(json.loads(line))
-                        except json.JSONDecodeError:
+                        except json.JSONDecodeError as e:
+                            logger.warning(f"Skipped corrupt JSON in {self.project_name} issues.jsonl: {e}")
                             continue
         except Exception as e:
             logger.warning(f"Failed to read issues file for {self.project_name}: {e}")
@@ -188,19 +200,22 @@ class BeadsSyncManager:
 
 # Global registry of BeadsSyncManager instances
 _sync_managers: dict[str, BeadsSyncManager] = {}
+_sync_managers_lock = threading.Lock()
 
 
 def get_beads_sync_manager(project_name: str, git_remote_url: str) -> BeadsSyncManager:
     """Get or create a BeadsSyncManager for a project."""
-    if project_name not in _sync_managers:
-        _sync_managers[project_name] = BeadsSyncManager(project_name, git_remote_url)
-    return _sync_managers[project_name]
+    with _sync_managers_lock:
+        if project_name not in _sync_managers:
+            _sync_managers[project_name] = BeadsSyncManager(project_name, git_remote_url)
+        return _sync_managers[project_name]
 
 
 def clear_beads_sync_manager(project_name: str) -> None:
     """Clear cached BeadsSyncManager for a project."""
-    if project_name in _sync_managers:
-        del _sync_managers[project_name]
+    with _sync_managers_lock:
+        if project_name in _sync_managers:
+            del _sync_managers[project_name]
 
 
 async def pull_all_beads_sync() -> dict[str, bool]:

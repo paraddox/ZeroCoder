@@ -405,12 +405,14 @@ class ContainerManager:
                         issue = json.loads(line.strip())
                         if issue.get("status") in ("open", "in_progress"):
                             open_count += 1
-                    except json.JSONDecodeError:
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Skipped corrupt JSON in {self.project_name} issues.jsonl: {e}")
                         continue
             return open_count > 0
         except Exception as e:
             logger.warning(f"Failed to read issues file directly: {e}")
-            return False
+            # On read error, assume features exist (safer than assuming none)
+            return True
 
     async def _broadcast_output(self, line: str) -> None:
         """Broadcast output line to all registered callbacks."""

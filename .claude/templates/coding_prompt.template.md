@@ -293,12 +293,13 @@ git merge origin/main --no-edit
 # - git commit -m "Resolve merge conflicts with main"
 
 # 3. Push your feature branch
-git push -u origin "$(git branch --show-current)"
+FEATURE_BRANCH="$(git branch --show-current)"
+git push -u origin "$FEATURE_BRANCH"
 
 # 4. Merge to main (should be clean now - fast-forward or no conflicts)
 git checkout main
 git pull origin main
-git merge "$(git branch --show-current)" --no-ff -m "Merge: <feature name>"
+git merge "$FEATURE_BRANCH" --no-ff -m "Merge: <feature name>"
 git push origin main
 
 # 5. Sync beads state

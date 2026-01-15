@@ -95,7 +95,7 @@ export function DeleteProjectModal({
               Project: <span className="font-medium text-[var(--color-text)]">{project.name}</span>
             </p>
             <p className="text-sm text-[var(--color-text-secondary)] mt-1 break-all">
-              Path: <span className="font-mono text-xs">{project.path}</span>
+              Path: <span className="font-mono text-xs">{project.local_path}</span>
             </p>
           </div>
 

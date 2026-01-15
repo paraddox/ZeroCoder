@@ -181,10 +181,20 @@ function StatusIndicator({ status, isIdleMode = false, gracefulStopRequested = f
       label: 'Running',
       pulse: true,
     },
+    paused: {
+      color: 'var(--color-progress)',
+      label: 'Paused',
+      pulse: false,
+    },
     crashed: {
       color: 'var(--color-danger)',
       label: 'Crashed',
       pulse: true,
+    },
+    completed: {
+      color: 'var(--color-done)',
+      label: 'Completed',
+      pulse: false,
     },
   }
 

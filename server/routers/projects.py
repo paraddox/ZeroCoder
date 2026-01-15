@@ -117,6 +117,13 @@ def validate_project_name(name: str) -> str:
     return name
 
 
+def validate_task_id(task_id: str) -> str:
+    """Validate task ID format (e.g., 'beads-123', 'feat-42')."""
+    if not re.match(r'^[a-zA-Z]+-\d+$', task_id):
+        raise HTTPException(status_code=400, detail=f"Invalid task ID format: {task_id}")
+    return task_id
+
+
 def get_project_stats(project_dir: Path) -> ProjectStats:
     """Get statistics for a project."""
     _init_imports()
@@ -151,13 +158,15 @@ def get_agent_config_path(project_dir: Path) -> Path:
 def read_agent_model(project_dir: Path) -> str:
     """Read the agent model from project config file."""
     import json
+    import logging
+    logger = logging.getLogger(__name__)
     config_path = get_agent_config_path(project_dir)
     if config_path.exists():
         try:
             config = json.loads(config_path.read_text(encoding="utf-8"))
             return config.get("agent_model", DEFAULT_AGENT_MODEL)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to read agent config for {project_dir.name}, using default: {e}")
     return DEFAULT_AGENT_MODEL
 
 
@@ -804,7 +813,7 @@ async def list_containers(name: str):
 @router.post("/{name}/stop")
 async def stop_all_containers(name: str, graceful: bool = True):
     """
-    Stop all containers for a project.
+    Stop the container for a project.
 
     Args:
         name: Project name
@@ -814,7 +823,7 @@ async def stop_all_containers(name: str, graceful: bool = True):
 
     (
         _, _, get_project_path, _, _, _,
-        _, _, _, _, list_project_containers
+        _, _, _, _, _
     ) = _get_registry_functions()
 
     name = validate_project_name(name)
@@ -822,39 +831,39 @@ async def stop_all_containers(name: str, graceful: bool = True):
     if not get_project_path(name):
         raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
 
-    containers = list_project_containers(name)
+    try:
+        manager = get_project_container(name)
+    except HTTPException as e:
+        if e.status_code == 404:
+            return {"success": True, "message": "No container to stop", "stopped": 0}
+        raise
 
-    if not containers:
-        return {"success": True, "message": "No containers to stop", "stopped": 0}
+    try:
+        if graceful:
+            success, message = await manager.graceful_stop()
+        else:
+            success, message = await manager.stop()
 
-    stopped = 0
-    errors = []
-
-    for container in containers:
-        try:
-            manager = get_project_container(name)
-            if graceful:
-                success, message = await manager.graceful_stop()
-            else:
-                success, message = await manager.stop()
-
-            if success:
-                stopped += 1
-            else:
-                errors.append(f"Container {container['container_number']}: {message}")
-        except Exception as e:
-            errors.append(f"Container {container['container_number']}: {str(e)}")
-
-    result = {
-        "success": len(errors) == 0,
-        "message": f"Stopped {stopped} container(s)",
-        "stopped": stopped,
-    }
-
-    if errors:
-        result["errors"] = errors
-
-    return result
+        if success:
+            return {
+                "success": True,
+                "message": f"Stopped container {manager.container_name}",
+                "stopped": 1,
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"Failed to stop container: {message}",
+                "stopped": 0,
+                "errors": [message],
+            }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Error stopping container: {str(e)}",
+            "stopped": 0,
+            "errors": [str(e)],
+        }
 
 
 # ============================================================================
@@ -1016,6 +1025,7 @@ async def update_task(name: str, task_id: str, task: TaskUpdate):
     ) = _get_registry_functions()
 
     name = validate_project_name(name)
+    task_id = validate_task_id(task_id)
 
     if not get_project_path(name):
         raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
@@ -1057,6 +1067,7 @@ async def delete_task(name: str, task_id: str):
     ) = _get_registry_functions()
 
     name = validate_project_name(name)
+    task_id = validate_task_id(task_id)
 
     if not get_project_path(name):
         raise HTTPException(status_code=404, detail=f"Project '{name}' not found")

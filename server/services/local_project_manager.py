@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import subprocess
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -53,7 +54,8 @@ class LocalProjectManager:
         try:
             self.local_path.parent.mkdir(parents=True, exist_ok=True)
 
-            result = subprocess.run(
+            result = await asyncio.to_thread(
+                subprocess.run,
                 ["git", "clone", self.git_url, str(self.local_path)],
                 capture_output=True,
                 text=True,
@@ -84,13 +86,15 @@ class LocalProjectManager:
 
         try:
             # Checkout main and pull
-            subprocess.run(
+            await asyncio.to_thread(
+                subprocess.run,
                 ["git", "-C", str(self.local_path), "checkout", "main"],
                 capture_output=True,
                 timeout=10,
             )
 
-            result = subprocess.run(
+            result = await asyncio.to_thread(
+                subprocess.run,
                 ["git", "-C", str(self.local_path), "pull", "origin", "main"],
                 capture_output=True,
                 text=True,
@@ -116,7 +120,8 @@ class LocalProjectManager:
             Tuple of (success, message)
         """
         try:
-            result = subprocess.run(
+            result = await asyncio.to_thread(
+                subprocess.run,
                 ["bd", "sync"],
                 cwd=str(self.local_path),
                 capture_output=True,
@@ -149,21 +154,24 @@ class LocalProjectManager:
         """
         try:
             # Add all changes
-            subprocess.run(
+            await asyncio.to_thread(
+                subprocess.run,
                 ["git", "-C", str(self.local_path), "add", "."],
                 capture_output=True,
                 timeout=10,
             )
 
             # Commit (may fail if nothing to commit)
-            subprocess.run(
+            await asyncio.to_thread(
+                subprocess.run,
                 ["git", "-C", str(self.local_path), "commit", "-m", message],
                 capture_output=True,
                 timeout=10,
             )
 
             # Push
-            result = subprocess.run(
+            result = await asyncio.to_thread(
+                subprocess.run,
                 ["git", "-C", str(self.local_path), "push", "origin", "main"],
                 capture_output=True,
                 text=True,
@@ -217,7 +225,8 @@ class LocalProjectManager:
             if description:
                 cmd.append(f"--description={description}")
 
-            result = subprocess.run(
+            result = await asyncio.to_thread(
+                subprocess.run,
                 cmd,
                 cwd=str(self.local_path),
                 capture_output=True,
@@ -279,7 +288,8 @@ class LocalProjectManager:
             if len(cmd) == 3:  # No updates specified
                 return False, "No updates specified"
 
-            result = subprocess.run(
+            result = await asyncio.to_thread(
+                subprocess.run,
                 cmd,
                 cwd=str(self.local_path),
                 capture_output=True,
@@ -310,7 +320,8 @@ class LocalProjectManager:
             Tuple of (success, message)
         """
         try:
-            result = subprocess.run(
+            result = await asyncio.to_thread(
+                subprocess.run,
                 ["bd", "delete", task_id, "--force"],
                 cwd=str(self.local_path),
                 capture_output=True,
@@ -346,7 +357,8 @@ class LocalProjectManager:
             if reason:
                 cmd.append(f"--reason={reason}")
 
-            result = subprocess.run(
+            result = await asyncio.to_thread(
+                subprocess.run,
                 cmd,
                 cwd=str(self.local_path),
                 capture_output=True,
@@ -377,7 +389,8 @@ class LocalProjectManager:
             Tuple of (success, message)
         """
         try:
-            result = subprocess.run(
+            result = await asyncio.to_thread(
+                subprocess.run,
                 ["bd", "reopen", task_id],
                 cwd=str(self.local_path),
                 capture_output=True,
@@ -416,7 +429,8 @@ class LocalProjectManager:
                     if line:
                         try:
                             tasks.append(json.loads(line))
-                        except json.JSONDecodeError:
+                        except json.JSONDecodeError as e:
+                            logger.warning(f"Skipped corrupt JSON in {self.project_name} issues.jsonl: {e}")
                             continue
         except Exception as e:
             logger.warning(f"Failed to read issues file for {self.project_name}: {e}")
@@ -452,16 +466,19 @@ class LocalProjectManager:
 
 # Global registry of LocalProjectManager instances
 _project_managers: dict[str, LocalProjectManager] = {}
+_project_managers_lock = threading.Lock()
 
 
 def get_local_project_manager(project_name: str, git_url: str) -> LocalProjectManager:
     """Get or create a LocalProjectManager for a project."""
-    if project_name not in _project_managers:
-        _project_managers[project_name] = LocalProjectManager(project_name, git_url)
-    return _project_managers[project_name]
+    with _project_managers_lock:
+        if project_name not in _project_managers:
+            _project_managers[project_name] = LocalProjectManager(project_name, git_url)
+        return _project_managers[project_name]
 
 
 def clear_local_project_manager(project_name: str) -> None:
     """Clear cached LocalProjectManager for a project."""
-    if project_name in _project_managers:
-        del _project_managers[project_name]
+    with _project_managers_lock:
+        if project_name in _project_managers:
+            del _project_managers[project_name]
