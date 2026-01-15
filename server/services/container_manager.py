@@ -208,6 +208,9 @@ class ContainerManager:
                 docker_status = result.stdout.strip()
                 if docker_status == "running":
                     self._status = "running"
+                    # Initialize last_activity from container logs if not set
+                    if self.last_activity is None:
+                        self._init_last_activity_from_logs()
                 else:
                     self._status = "stopped"
             else:
@@ -215,6 +218,40 @@ class ContainerManager:
         except Exception as e:
             logger.warning(f"Failed to check container status: {e}")
             self._status = "not_created"
+
+    def _init_last_activity_from_logs(self) -> None:
+        """Initialize last_activity from container's last log timestamp."""
+        try:
+            # Get last log line with timestamp
+            result = subprocess.run(
+                ["docker", "logs", "--tail", "1", "--timestamps", self.container_name],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                # Docker timestamp format: 2026-01-15T01:50:15.745000000Z
+                line = result.stdout.strip()
+                # Extract timestamp (first space-separated part)
+                timestamp_str = line.split()[0] if line else None
+                if timestamp_str:
+                    # Parse ISO format timestamp
+                    # Remove nanoseconds (keep only microseconds) and handle Z suffix
+                    ts = timestamp_str.replace('Z', '+00:00')
+                    # Truncate nanoseconds to microseconds
+                    if '.' in ts:
+                        base, frac_and_tz = ts.split('.', 1)
+                        # Find where timezone starts (+ or -)
+                        for i, c in enumerate(frac_and_tz):
+                            if c in '+-':
+                                frac = frac_and_tz[:i][:6]  # Max 6 digits for microseconds
+                                tz = frac_and_tz[i:]
+                                ts = f"{base}.{frac}{tz}"
+                                break
+                    self.last_activity = datetime.fromisoformat(ts).replace(tzinfo=None)
+                    logger.info(f"Initialized last_activity from logs: {self.last_activity}")
+        except Exception as e:
+            logger.debug(f"Could not init last_activity from logs: {e}")
 
     def _get_agent_model(self) -> str:
         """
