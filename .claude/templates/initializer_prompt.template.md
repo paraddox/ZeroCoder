@@ -521,7 +521,52 @@ Set up the basic project structure based on what's specified in `prompts/app_spe
 This typically includes directories for frontend, backend, and any other
 components mentioned in the spec.
 
-### FIFTH TASK: Create AGENTS.md (Operational Guide)
+### FIFTH TASK: Create Beads Helper Scripts
+
+Create helper scripts that coding agents will use for safe beads operations. These prevent JSON parsing errors from verbose bd output.
+
+```bash
+# Create scripts directory
+mkdir -p scripts
+
+# Create safe_bd_json.sh - safely captures JSON output from bd commands
+cat > scripts/safe_bd_json.sh << 'SCRIPT'
+#!/bin/bash
+# Safe wrapper for bd commands that return JSON
+# Usage: ./scripts/safe_bd_json.sh <bd-command> [args...]
+# Example: ./scripts/safe_bd_json.sh ready --json
+
+output=$(bd "$@" 2>/dev/null)
+exit_code=$?
+
+if [ $exit_code -ne 0 ]; then
+    exit $exit_code
+fi
+
+# Validate it's actually JSON
+if echo "$output" | jq -e . >/dev/null 2>&1; then
+    echo "$output"
+    exit 0
+else
+    exit 1
+fi
+SCRIPT
+chmod +x scripts/safe_bd_json.sh
+
+# Create safe_bd_sync.sh - syncs beads without verbose output
+cat > scripts/safe_bd_sync.sh << 'SCRIPT'
+#!/bin/bash
+# Safe wrapper for bd sync that suppresses verbose output
+# Usage: ./scripts/safe_bd_sync.sh
+
+bd sync >/dev/null 2>&1
+SCRIPT
+chmod +x scripts/safe_bd_sync.sh
+```
+
+These scripts are essential because `bd` outputs verbose status messages to stdout which breaks JSON parsing when agents try to capture output.
+
+### SIXTH TASK: Create AGENTS.md (Operational Guide)
 
 Create `AGENTS.md` at the project root. This file persists operational knowledge for all future coding sessions, preventing them from rediscovering commands and patterns.
 
@@ -582,7 +627,7 @@ Create `AGENTS.md` at the project root. This file persists operational knowledge
 
 **Size limit:** Keep AGENTS.md under 100 lines. Focus on the most essential information. If it grows too large, consolidate or remove outdated entries.
 
-### SIXTH TASK: Run Beads Doctor
+### SEVENTH TASK: Run Beads Doctor
 
 Before ending your session, run the beads doctor to check for any issues:
 
@@ -597,13 +642,14 @@ Fix any warnings or errors that appear. Common fixes:
 
 ### IMPORTANT: Do NOT Implement Features
 
-Your role as the Initializer Agent is **COMPLETE** after the six tasks above:
+Your role as the Initializer Agent is **COMPLETE** after the seven tasks above:
 1. Initialize beads and create features
 2. Create init.sh
 3. Initialize Git and connect remote
 4. Create project structure
-5. Create AGENTS.md
-6. Run beads doctor
+5. Create beads helper scripts (scripts/safe_bd_json.sh, scripts/safe_bd_sync.sh)
+6. Create AGENTS.md
+7. Run beads doctor
 
 **DO NOT:**
 - Implement any features
