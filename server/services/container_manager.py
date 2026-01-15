@@ -1238,17 +1238,14 @@ class ContainerManager:
                                 stderr=asyncio.subprocess.STDOUT,
                             )
 
-                # Stream output to callbacks (common to both OpenCode and Claude)
+                # Consume stdout (docker logs -f handles broadcasting via _stream_logs)
                 while True:
                     if process.stdout is None:
                         break
                     line = await process.stdout.readline()
                     if not line:
                         break
-                    decoded = line.decode("utf-8", errors="replace").rstrip()
-                    sanitized = sanitize_output(decoded)
                     self._update_activity()
-                    await self._broadcast_output(sanitized)
 
                 await process.wait()
                 exit_code = process.returncode or 0
