@@ -318,11 +318,11 @@ def _tasks_to_features(tasks: list[dict]) -> list[dict]:
         labels = task.get("labels", [])
         category = labels[0] if labels else ""
 
-        # Parse steps from body if available
-        body = task.get("body", "")
+        # Parse steps from description if available (beads uses 'description' not 'body')
+        description = task.get("description", "") or task.get("body", "")
         steps = []
-        if body:
-            step_matches = re.findall(r'^\d+\.\s*(.+)$', body, re.MULTILINE)
+        if description:
+            step_matches = re.findall(r'^\d+\.\s*(.+)$', description, re.MULTILINE)
             if step_matches:
                 steps = step_matches
 
@@ -333,7 +333,7 @@ def _tasks_to_features(tasks: list[dict]) -> list[dict]:
             "priority": task.get("priority", 999),
             "category": category,
             "name": task.get("title", ""),
-            "description": body,
+            "description": description,
             "steps": steps,
             "passes": status == "closed",
             "in_progress": status == "in_progress",
@@ -358,10 +358,10 @@ async def initialize_all_projects() -> dict[str, bool]:
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
 
-    from registry import list_all_projects, get_project_git_url
+    from registry import list_valid_projects, get_project_git_url
 
     results = {}
-    projects = list_all_projects()
+    projects = list_valid_projects()
     logger.info(f"Initializing beads-sync for {len(projects)} registered projects")
 
     for project in projects:

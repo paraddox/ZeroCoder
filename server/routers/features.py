@@ -130,13 +130,13 @@ def beads_task_to_feature(task: dict) -> dict:
     labels = task.get("labels", [])
     category = labels[0] if labels else ""
 
-    # Parse steps from body if available
-    body = task.get("body", "")
+    # Parse steps from description if available (beads uses 'description' not 'body')
+    description = task.get("description", "") or task.get("body", "")
     steps = []
-    if body:
-        # Try to extract numbered steps from body
+    if description:
+        # Try to extract numbered steps from description
         import re
-        step_matches = re.findall(r'^\d+\.\s*(.+)$', body, re.MULTILINE)
+        step_matches = re.findall(r'^\d+\.\s*(.+)$', description, re.MULTILINE)
         if step_matches:
             steps = step_matches
 
@@ -147,7 +147,7 @@ def beads_task_to_feature(task: dict) -> dict:
         "priority": task.get("priority", 999),
         "category": category,
         "name": task.get("title", ""),
-        "description": body,
+        "description": description,
         "steps": steps,
         "passes": status == "closed",
         "in_progress": status == "in_progress",
