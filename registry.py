@@ -18,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine
+from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
@@ -67,6 +67,13 @@ class Project(Base):
     target_container_count = Column(Integer, default=1)  # 1-10 parallel agents
     created_at = Column(DateTime, nullable=False)
 
+    __table_args__ = (
+        CheckConstraint(
+            'target_container_count >= 1 AND target_container_count <= 10',
+            name='valid_target_container_count'
+        ),
+    )
+
     @property
     def local_path(self) -> Path:
         """Get the local clone path for this project."""
@@ -93,6 +100,8 @@ class Container(Base):
 
     __table_args__ = (
         UniqueConstraint('project_name', 'container_number', 'container_type', name='uq_container_identity'),
+        CheckConstraint("container_type IN ('init', 'coding')", name='valid_container_type'),
+        CheckConstraint("status IN ('created', 'running', 'stopping', 'stopped')", name='valid_container_status'),
     )
 
 
@@ -114,6 +123,10 @@ class FeatureCache(Base):
     steps_json = Column(Text, default="[]")  # JSON array of steps
     status = Column(String(20), nullable=False)  # open, in_progress, closed
     updated_at = Column(DateTime, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("status IN ('open', 'in_progress', 'closed')", name='valid_feature_status'),
+    )
 
 
 class FeatureStatsCache(Base):
@@ -626,6 +639,27 @@ def get_container(project_name: str, container_number: int, container_type: str 
             "current_feature": container.current_feature,
             "created_at": container.created_at.isoformat() if container.created_at else None
         }
+    finally:
+        session.close()
+
+
+def list_containers(status_filter: list[str] | None = None) -> list[Container]:
+    """
+    List all containers across all projects.
+
+    Args:
+        status_filter: Optional list of statuses to filter by (e.g., ['running', 'stopping']).
+
+    Returns:
+        List of Container model objects.
+    """
+    _, SessionLocal = _get_engine()
+    session = SessionLocal()
+    try:
+        query = session.query(Container)
+        if status_filter:
+            query = query.filter(Container.status.in_(status_filter))
+        return query.all()
     finally:
         session.close()
 

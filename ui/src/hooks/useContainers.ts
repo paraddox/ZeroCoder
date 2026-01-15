@@ -3,7 +3,7 @@
  */
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { listContainers, updateContainerCount, stopAllContainers, startAgent, stopAgent, gracefulStopAgent } from '../lib/api'
+import { listContainers, updateContainerCount, startAgent, stopAgent, gracefulStopAgent } from '../lib/api'
 import type { ContainerInfo } from '../lib/types'
 
 /**
@@ -79,18 +79,3 @@ export function useGracefulStopAgent(projectName: string) {
   })
 }
 
-/**
- * Hook to stop all containers
- */
-export function useStopAllContainers(projectName: string) {
-  const queryClient = useQueryClient()
-
-  return useMutation({
-    mutationFn: (graceful: boolean = true) => stopAllContainers(projectName, graceful),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['containers', projectName] })
-      queryClient.invalidateQueries({ queryKey: ['agentStatus', projectName] })
-      queryClient.invalidateQueries({ queryKey: ['projects'] })
-    },
-  })
-}

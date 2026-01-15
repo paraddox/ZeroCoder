@@ -152,11 +152,13 @@ export interface WSLogMessage {
   type: 'log'
   line: string
   timestamp: string
+  container_number?: number
 }
 
 export interface WSAgentStatusMessage {
   type: 'agent_status'
   status: AgentStatus
+  container_number?: number
 }
 
 export interface WSGracefulStopRequestedMessage {

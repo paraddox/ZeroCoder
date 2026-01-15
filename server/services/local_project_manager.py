@@ -85,6 +85,8 @@ class LocalProjectManager:
             return await self.ensure_cloned()
 
         try:
+            stashed = False
+
             # Checkout main first
             checkout_result = await asyncio.to_thread(
                 subprocess.run,
@@ -105,6 +107,8 @@ class LocalProjectManager:
                 if stash_result.returncode != 0:
                     return False, f"Checkout failed and could not stash: {checkout_result.stderr}"
 
+                stashed = True
+
                 # Retry checkout after stash
                 checkout_result = await asyncio.to_thread(
                     subprocess.run,
@@ -114,6 +118,14 @@ class LocalProjectManager:
                     timeout=10,
                 )
                 if checkout_result.returncode != 0:
+                    # Pop stash to restore changes before returning error
+                    await asyncio.to_thread(
+                        subprocess.run,
+                        ["git", "-C", str(self.local_path), "stash", "pop"],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
                     return False, f"Checkout failed after stash: {checkout_result.stderr}"
 
             # Pull from origin
@@ -126,7 +138,30 @@ class LocalProjectManager:
             )
 
             if result.returncode != 0:
+                # Pop stash to restore changes before returning error
+                if stashed:
+                    await asyncio.to_thread(
+                        subprocess.run,
+                        ["git", "-C", str(self.local_path), "stash", "pop"],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
                 return False, f"Pull failed: {result.stderr}"
+
+            # Pop stash to reapply local changes
+            if stashed:
+                pop_result = await asyncio.to_thread(
+                    subprocess.run,
+                    ["git", "-C", str(self.local_path), "stash", "pop"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if pop_result.returncode != 0:
+                    # Stash pop conflict - changes are in stash but couldn't apply
+                    logger.warning(f"Stash pop conflict for {self.project_name}: {pop_result.stderr}")
+                    return True, "Pulled successfully, but local changes couldn't be reapplied (conflict in stash)"
 
             return True, "Pulled successfully"
 

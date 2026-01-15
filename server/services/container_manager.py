@@ -837,6 +837,18 @@ class ContainerManager:
                     sdk_name = "OpenCode SDK" if use_opencode else "Claude SDK"
                     return False, f"{sdk_name} not available in container after 20 seconds"
 
+                # Pre-agent sync: pull latest code and beads state
+                sync_ok, sync_msg = await self.pre_agent_sync()
+                if not sync_ok:
+                    logger.warning(f"Pre-agent sync failed: {sync_msg}")
+                    # Continue anyway - sync failure shouldn't block agent
+
+                # Recovery: reset any stuck in_progress features to open
+                recovery_ok, recovery_msg = await self.recover_stuck_features()
+                if not recovery_ok:
+                    logger.warning(f"Feature recovery failed: {recovery_msg}")
+                    # Continue anyway - recovery failure shouldn't block agent
+
                 return await self.send_instruction(instruction)
 
             return True, f"Container {self.container_name} started"
@@ -1138,6 +1150,13 @@ class ContainerManager:
         if exit_code == 0:
             # Success - determine next action
             logger.info(f"[EXIT] Agent exited successfully (code 0) in {self.container_name}, _user_started={self._user_started}")
+
+            # Post-agent cleanup: remove feature branches
+            cleanup_ok, cleanup_msg = await self.post_agent_cleanup()
+            if not cleanup_ok:
+                logger.warning(f"Post-agent cleanup failed: {cleanup_msg}")
+                # Continue anyway - cleanup failure shouldn't block flow
+
             if self._user_started and self.has_open_features():
                 # Features remain - check if hound should run (every 20 closed tasks)
                 if self._should_run_hound():
@@ -1606,6 +1625,102 @@ def clear_container_manager(project_name: str, container_number: int | None = No
                 del _managers[project_name][container_number]
         else:
             del _managers[project_name]
+
+
+async def restore_managers_from_registry() -> int:
+    """
+    Restore ContainerManager instances for existing containers on startup.
+
+    This should be called during server startup to reconnect to any
+    containers that may still be running from before the restart.
+
+    Returns:
+        Number of managers restored
+    """
+    import sys
+    _root = Path(__file__).parent.parent.parent
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+
+    from registry import list_containers, get_project_git_url, update_container_status
+
+    restored = 0
+
+    try:
+        # Get all containers from registry
+        containers = list_containers()
+
+        for container in containers:
+            project_name = container.project_name
+            container_number = container.container_number
+            docker_container_id = container.docker_container_id
+            status = container.status
+
+            # Skip containers that weren't running
+            if status not in ("running", "stopping"):
+                continue
+
+            # Get git URL for this project
+            git_url = get_project_git_url(project_name)
+            if not git_url:
+                logger.warning(f"No git URL for project {project_name}, skipping container restore")
+                continue
+
+            # Check if Docker container actually exists
+            container_name = f"zerocoder-{project_name}-{container_number}"
+            docker_exists = False
+
+            if docker_container_id:
+                try:
+                    check = subprocess.run(
+                        ["docker", "inspect", docker_container_id],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    docker_exists = check.returncode == 0
+                except Exception:
+                    pass
+
+            if not docker_exists:
+                # Try by name
+                try:
+                    check = subprocess.run(
+                        ["docker", "inspect", container_name],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    docker_exists = check.returncode == 0
+                except Exception:
+                    pass
+
+            if docker_exists:
+                # Restore manager
+                manager = ContainerManager(
+                    project_name,
+                    git_url,
+                    container_number,
+                )
+                manager._sync_status()  # Sync with actual Docker state
+
+                with _managers_lock:
+                    if project_name not in _managers:
+                        _managers[project_name] = {}
+                    _managers[project_name][container_number] = manager
+
+                restored += 1
+                logger.info(f"Restored container manager for {container_name} (status: {manager.status})")
+            else:
+                # Docker container gone, update registry
+                logger.info(f"Container {container_name} no longer exists, updating registry")
+                container_type = container.container_type or 'coding'
+                update_container_status(project_name, container_number, container_type, status="stopped")
+
+    except Exception as e:
+        logger.exception(f"Error restoring container managers: {e}")
+
+    return restored
 
 
 async def cleanup_idle_containers() -> list[str]:

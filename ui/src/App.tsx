@@ -39,6 +39,7 @@ function App() {
   const [selectedFeature, setSelectedFeature] = useState<Feature | null>(null)
   const [setupComplete, setSetupComplete] = useState(true) // Start optimistic
   const [logViewerExpanded, setLogViewerExpanded] = useState(false)
+  const [logContainerFilter, setLogContainerFilter] = useState<number | null>(null)
   const [assistantOpen, setAssistantOpen] = useState(false)
 
   // Incomplete project wizard resume state
@@ -81,6 +82,7 @@ function App() {
   // Persist selected project to localStorage
   const handleSelectProject = useCallback((project: string | null) => {
     setSelectedProject(project)
+    setLogContainerFilter(null) // Reset container filter when switching projects
     try {
       if (project) {
         localStorage.setItem(STORAGE_KEY, project)
@@ -143,19 +145,35 @@ function App() {
 
   // Container control handlers
   const handleContainerCountChange = useCallback(async (count: number) => {
-    await updateContainerCount.mutateAsync(count)
+    try {
+      await updateContainerCount.mutateAsync(count)
+    } catch (err) {
+      console.error('Failed to update container count:', err)
+    }
   }, [updateContainerCount])
 
   const handleStartAgent = useCallback(async () => {
-    await startAgent.mutateAsync(false)
+    try {
+      await startAgent.mutateAsync(false)
+    } catch (err) {
+      console.error('Failed to start agent:', err)
+    }
   }, [startAgent])
 
   const handleStopAgent = useCallback(async () => {
-    await stopAgent.mutateAsync()
+    try {
+      await stopAgent.mutateAsync()
+    } catch (err) {
+      console.error('Failed to stop agent:', err)
+    }
   }, [stopAgent])
 
   const handleGracefulStop = useCallback(async () => {
-    await gracefulStopAgent.mutateAsync()
+    try {
+      await gracefulStopAgent.mutateAsync()
+    } catch (err) {
+      console.error('Failed to initiate graceful stop:', err)
+    }
   }, [gracefulStopAgent])
 
   const handleEditTasks = useCallback(() => {
@@ -167,8 +185,7 @@ function App() {
   const handleViewContainerLogs = useCallback((containerId: number) => {
     // Expand log viewer and filter by container
     setLogViewerExpanded(true)
-    // TODO: Add container ID filtering to log viewer
-    console.log('View logs for container:', containerId)
+    setLogContainerFilter(containerId)
   }, [])
 
   // Get current project data for container count
@@ -348,6 +365,8 @@ function App() {
               isExpanded={logViewerExpanded}
               onToggleExpanded={() => setLogViewerExpanded(!logViewerExpanded)}
               onClearLogs={wsState.clearLogs}
+              containerFilter={logContainerFilter}
+              onContainerFilterChange={setLogContainerFilter}
             />
 
             {/* Initializing Features State - show when agent is running but no features yet */}

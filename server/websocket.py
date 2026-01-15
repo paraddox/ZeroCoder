@@ -15,7 +15,7 @@ from typing import Set
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from .services.container_manager import get_container_manager
+from .services.container_manager import get_container_manager, get_all_container_managers
 
 # Lazy imports
 _count_passing_tests = None
@@ -184,33 +184,49 @@ async def project_websocket(websocket: WebSocket, project_name: str):
 
     await manager.connect(websocket, project_name)
 
-    # Get container manager and register callbacks (container_number=1 for default)
+    # Get all container managers for this project and register callbacks
+    # First ensure at least the default container exists
     container_manager = get_container_manager(project_name, git_url, 1, project_dir)
+    all_managers = get_all_container_managers(project_name)
+    if not all_managers:
+        all_managers = [container_manager]
 
-    async def on_output(line: str):
-        """Handle agent output - broadcast to this WebSocket."""
-        try:
-            await websocket.send_json({
-                "type": "log",
-                "line": line,
-                "timestamp": datetime.now().isoformat(),
-            })
-        except Exception:
-            pass  # Connection may be closed
+    # Create callback factory that captures container_number
+    def make_output_callback(container_num: int):
+        async def on_output(line: str):
+            """Handle agent output - broadcast to this WebSocket with container info."""
+            try:
+                await websocket.send_json({
+                    "type": "log",
+                    "line": line,
+                    "timestamp": datetime.now().isoformat(),
+                    "container_number": container_num,
+                })
+            except Exception:
+                pass  # Connection may be closed
+        return on_output
 
-    async def on_status_change(status: str):
-        """Handle status change - broadcast to this WebSocket."""
-        try:
-            await websocket.send_json({
-                "type": "agent_status",
-                "status": status,
-            })
-        except Exception:
-            pass  # Connection may be closed
+    def make_status_callback(container_num: int):
+        async def on_status_change(status: str):
+            """Handle status change - broadcast to this WebSocket."""
+            try:
+                await websocket.send_json({
+                    "type": "agent_status",
+                    "status": status,
+                    "container_number": container_num,
+                })
+            except Exception:
+                pass  # Connection may be closed
+        return on_status_change
 
-    # Register callbacks
-    container_manager.add_output_callback(on_output)
-    container_manager.add_status_callback(on_status_change)
+    # Register callbacks for all containers and store them for cleanup
+    registered_callbacks: list[tuple] = []  # (manager, output_cb, status_cb)
+    for cm in all_managers:
+        output_cb = make_output_callback(cm.container_number)
+        status_cb = make_status_callback(cm.container_number)
+        cm.add_output_callback(output_cb)
+        cm.add_status_callback(status_cb)
+        registered_callbacks.append((cm, output_cb, status_cb))
 
     # Start progress polling task
     poll_task = asyncio.create_task(poll_progress(websocket, project_name, project_dir))
@@ -261,9 +277,10 @@ async def project_websocket(websocket: WebSocket, project_name: str):
         except asyncio.CancelledError:
             pass
 
-        # Unregister callbacks
-        container_manager.remove_output_callback(on_output)
-        container_manager.remove_status_callback(on_status_change)
+        # Unregister callbacks from all containers
+        for cm, output_cb, status_cb in registered_callbacks:
+            cm.remove_output_callback(output_cb)
+            cm.remove_status_callback(status_cb)
 
         # Disconnect from manager
         await manager.disconnect(websocket, project_name)

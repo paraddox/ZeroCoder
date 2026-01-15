@@ -5,6 +5,12 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import type { WSMessage, AgentStatus } from '../lib/types'
 
+export interface LogEntry {
+  line: string
+  timestamp: string
+  container_number?: number
+}
+
 interface WebSocketState {
   progress: {
     passing: number
@@ -13,7 +19,7 @@ interface WebSocketState {
     percentage: number
   }
   agentStatus: AgentStatus
-  logs: Array<{ line: string; timestamp: string }>
+  logs: LogEntry[]
   isConnected: boolean
   gracefulStopRequested: boolean
 }
@@ -81,7 +87,11 @@ export function useProjectWebSocket(projectName: string | null) {
               break
 
             case 'log': {
-              const logEntry = { line: message.line, timestamp: message.timestamp }
+              const logEntry: LogEntry = {
+                line: message.line,
+                timestamp: message.timestamp,
+                container_number: message.container_number,
+              }
               setState(prev => {
                 const newLogs = [...prev.logs, logEntry]
                 // Keep last 100 logs

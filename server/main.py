@@ -38,6 +38,7 @@ from .services.assistant_chat_session import cleanup_all_sessions as cleanup_ass
 from .services.container_manager import (
     cleanup_all_containers,
     cleanup_idle_containers,
+    restore_managers_from_registry,
     start_agent_health_monitor,
 )
 from .services.feature_poller import start_feature_poller
@@ -101,6 +102,14 @@ async def lifespan(app: FastAPI):
 
     # Setup signal handlers
     setup_signal_handlers()
+
+    # Restore container managers from registry (for server restarts)
+    try:
+        restored = await restore_managers_from_registry()
+        if restored:
+            logger.info(f"Restored {restored} container managers from registry")
+    except Exception as e:
+        logger.warning(f"Failed to restore container managers: {e}")
 
     # Startup - start background monitors
     idle_monitor_task = asyncio.create_task(idle_container_monitor())

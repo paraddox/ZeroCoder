@@ -47,6 +47,11 @@ export function ContainerControl({
             value={targetCount}
             onChange={handleSliderChange}
             disabled={agentRunning}
+            aria-label="Number of containers"
+            aria-valuemin={1}
+            aria-valuemax={10}
+            aria-valuenow={targetCount}
+            aria-valuetext={`${targetCount} container${targetCount > 1 ? 's' : ''}`}
             className="w-32 h-2 rounded-full appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             style={{
               background: agentRunning
@@ -103,6 +108,7 @@ export function ContainerControl({
           disabled={!agentRunning || gracefulStopRequested}
           className={`btn ${gracefulStopRequested ? 'btn-secondary' : 'btn-warning'}`}
           title={gracefulStopRequested ? "Stopping after current tasks complete..." : "Complete current tasks then stop"}
+          aria-pressed={gracefulStopRequested}
         >
           <PauseCircle size={16} />
           <span>{gracefulStopRequested ? 'Stopping...' : 'Complete & Stop'}</span>

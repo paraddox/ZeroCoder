@@ -9,6 +9,7 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { Brain, Sparkles, ChevronUp, ChevronDown, Trash2, GripHorizontal } from 'lucide-react'
 import type { AgentStatus } from '../lib/types'
+import type { LogEntry } from '../hooks/useWebSocket'
 
 const IDLE_TIMEOUT = 30000 // 30 seconds
 const MIN_HEIGHT = 150
@@ -17,12 +18,14 @@ const DEFAULT_HEIGHT = 288
 const STORAGE_KEY = 'unified-log-viewer-height'
 
 interface AgentLogViewerProps {
-  logs: Array<{ line: string; timestamp: string }>
+  logs: LogEntry[]
   agentStatus: AgentStatus
   isExpanded: boolean
   onToggleExpanded: () => void
   onClearLogs: () => void
   onHeightChange?: (height: number) => void
+  containerFilter?: number | null
+  onContainerFilterChange?: (container: number | null) => void
 }
 
 type LogLevel = 'error' | 'warn' | 'debug' | 'info'
@@ -124,9 +127,30 @@ export function AgentLogViewer({
   onToggleExpanded,
   onClearLogs,
   onHeightChange,
+  containerFilter,
+  onContainerFilterChange,
 }: AgentLogViewerProps) {
-  // From AgentThought
-  const thought = useMemo(() => getLatestThought(logs), [logs])
+  // Get unique container numbers from logs
+  const availableContainers = useMemo(() => {
+    const containers = new Set<number>()
+    logs.forEach(log => {
+      if (log.container_number !== undefined) {
+        containers.add(log.container_number)
+      }
+    })
+    return Array.from(containers).sort((a, b) => a - b)
+  }, [logs])
+
+  // Filter logs by container if filter is set
+  const filteredLogs = useMemo(() => {
+    if (containerFilter === null || containerFilter === undefined) {
+      return logs
+    }
+    return logs.filter(log => log.container_number === containerFilter)
+  }, [logs, containerFilter])
+
+  // From AgentThought - use filtered logs
+  const thought = useMemo(() => getLatestThought(filteredLogs), [filteredLogs])
   const [displayedThought, setDisplayedThought] = useState<string | null>(null)
   const [textVisible, setTextVisible] = useState(true)
   const [isVisible, setIsVisible] = useState(false)
@@ -140,12 +164,12 @@ export function AgentLogViewer({
     return saved ? Math.min(Math.max(parseInt(saved, 10), MIN_HEIGHT), MAX_HEIGHT) : DEFAULT_HEIGHT
   })
 
-  // Get last log timestamp for idle detection
+  // Get last log timestamp for idle detection (use all logs, not filtered)
   const lastLogTimestamp = logs.length > 0
     ? new Date(logs[logs.length - 1].timestamp).getTime()
     : 0
 
-  // Determine if component should be visible
+  // Determine if component should be visible (use all logs, not filtered)
   const shouldShow = useMemo(() => {
     if (!logs.length && agentStatus !== 'running') return false
     if (isExpanded) return true // Always show when expanded
@@ -184,7 +208,7 @@ export function AgentLogViewer({
     if (autoScroll && scrollRef.current && isExpanded) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
-  }, [logs, autoScroll, isExpanded])
+  }, [filteredLogs, autoScroll, isExpanded])
 
   // Scroll to bottom when expanding
   useEffect(() => {
@@ -255,7 +279,8 @@ export function AgentLogViewer({
   if (!isVisible) return null
 
   const isRunning = agentStatus === 'running'
-  const displayText = displayedThought || (logs.length > 0 ? 'Agent working...' : 'Waiting for agent...')
+  const displayText = displayedThought || (filteredLogs.length > 0 ? 'Agent working...' : 'Waiting for agent...')
+  const hasMultipleContainers = availableContainers.length > 1
 
   // Collapsed state: AgentThought style
   if (!isExpanded) {
@@ -364,9 +389,9 @@ export function AgentLogViewer({
           <kbd className="px-1.5 py-0.5 text-xs font-mono bg-slate-900 text-slate-500 rounded">
             D
           </kbd>
-          {logs.length > 0 && (
+          {filteredLogs.length > 0 && (
             <span className="px-2 py-0.5 text-xs font-mono bg-slate-900 text-slate-400 rounded-full">
-              {logs.length}
+              {filteredLogs.length}
             </span>
           )}
           {!autoScroll && (
@@ -377,6 +402,37 @@ export function AgentLogViewer({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Container filter tabs (only show when multiple containers) */}
+          {hasMultipleContainers && (
+            <div
+              className="flex items-center gap-1 mr-2"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                onClick={() => onContainerFilterChange?.(null)}
+                className={`px-2 py-0.5 text-xs font-mono rounded transition-colors ${
+                  containerFilter === null || containerFilter === undefined
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                }`}
+              >
+                All
+              </button>
+              {availableContainers.map((containerNum) => (
+                <button
+                  key={containerNum}
+                  onClick={() => onContainerFilterChange?.(containerNum)}
+                  className={`px-2 py-0.5 text-xs font-mono rounded transition-colors ${
+                    containerFilter === containerNum
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                  }`}
+                >
+                  #{containerNum}
+                </button>
+              ))}
+            </div>
+          )}
           <button
             onClick={(e) => {
               e.stopPropagation()
@@ -399,16 +455,19 @@ export function AgentLogViewer({
         onScroll={handleScroll}
         className="h-[calc(100%-2.25rem)] overflow-y-auto bg-slate-900 p-3 font-mono text-sm"
       >
-        {logs.length === 0 ? (
+        {filteredLogs.length === 0 ? (
           <div className="flex items-center justify-center h-full text-slate-600">
-            No logs yet. Start the agent to see output.
+            {containerFilter !== null && containerFilter !== undefined
+              ? `No logs for container #${containerFilter}. Try selecting "All".`
+              : 'No logs yet. Start the agent to see output.'}
           </div>
         ) : (
           <div className="space-y-0.5">
-            {logs.map((log, index) => {
+            {filteredLogs.map((log, index) => {
               const level = getLogLevel(log.line)
               const colorClass = getLogColor(level)
               const timestamp = formatTimestamp(log.timestamp)
+              const showContainerBadge = hasMultipleContainers && containerFilter === null && log.container_number !== undefined
 
               return (
                 <div
@@ -418,6 +477,11 @@ export function AgentLogViewer({
                   <span className="text-slate-600 select-none shrink-0 text-xs">
                     {timestamp}
                   </span>
+                  {showContainerBadge && (
+                    <span className="px-1.5 py-0.5 text-xs font-mono bg-slate-700 text-slate-400 rounded shrink-0">
+                      #{log.container_number}
+                    </span>
+                  )}
                   <span className={`${colorClass} whitespace-pre-wrap break-all text-xs leading-relaxed`}>
                     {log.line}
                   </span>
