@@ -325,6 +325,42 @@ class ContainerManager:
         except Exception as e:
             logger.warning(f"Callback error: {e}")
 
+    async def _push_template_updates(self) -> None:
+        """Commit and push updated template files to git.
+
+        Called after refresh_project_prompts() to ensure containers
+        get the latest templates when they clone/pull the repo.
+        """
+        try:
+            # Stage prompts and CLAUDE.md
+            await asyncio.to_thread(
+                subprocess.run,
+                ["git", "add", "prompts/", "CLAUDE.md"],
+                cwd=self.project_dir,
+                capture_output=True,
+            )
+
+            # Commit (may fail if no changes, that's OK)
+            await asyncio.to_thread(
+                subprocess.run,
+                ["git", "commit", "-m", "chore: Update agent templates"],
+                cwd=self.project_dir,
+                capture_output=True,
+            )
+
+            # Push to remote
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ["git", "push"],
+                cwd=self.project_dir,
+                capture_output=True,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                logger.info("Pushed template updates to git")
+        except Exception as e:
+            logger.warning(f"Failed to push template updates: {e}")
+
     def add_output_callback(self, callback: Callable[[str], Awaitable[None]]) -> None:
         """Add a callback for output lines."""
         with self._callbacks_lock:
@@ -734,6 +770,8 @@ class ContainerManager:
             updated = refresh_project_prompts(Path(self.project_dir))
             if updated:
                 logger.info(f"Refreshed prompts from templates: {updated}")
+                # Push to git so container gets the latest when it clones/pulls
+                await self._push_template_updates()
         except Exception as e:
             logger.warning(f"Failed to refresh prompts: {e}")
 
