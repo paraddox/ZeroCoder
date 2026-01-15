@@ -105,29 +105,38 @@ class BeadsSyncManager:
                 timeout=30,
             )
 
-            if result.returncode != 0:
-                # Try a fetch + reset if pull fails
-                fetch_result = await asyncio.to_thread(
-                    subprocess.run,
-                    ["git", "-C", str(self.local_path), "fetch", "origin", "beads-sync"],
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
-                if fetch_result.returncode != 0:
-                    logger.error(f"Git fetch failed for {self.project_name}: {fetch_result.stderr}")
-                reset_result = await asyncio.to_thread(
-                    subprocess.run,
-                    ["git", "-C", str(self.local_path), "reset", "--hard", "origin/beads-sync"],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                )
-                if reset_result.returncode != 0:
-                    logger.error(f"Git reset failed for {self.project_name}: {reset_result.stderr}")
+            if result.returncode == 0:
+                self._last_pull = datetime.now()
+                return True, "Pulled successfully"
 
+            # Pull failed - try fetch + reset as fallback
+            logger.warning(f"Git pull failed for {self.project_name}: {result.stderr}, trying fetch+reset")
+
+            fetch_result = await asyncio.to_thread(
+                subprocess.run,
+                ["git", "-C", str(self.local_path), "fetch", "origin", "beads-sync"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if fetch_result.returncode != 0:
+                logger.error(f"Git fetch failed for {self.project_name}: {fetch_result.stderr}")
+                return False, f"Fetch failed: {fetch_result.stderr}"
+
+            reset_result = await asyncio.to_thread(
+                subprocess.run,
+                ["git", "-C", str(self.local_path), "reset", "--hard", "origin/beads-sync"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if reset_result.returncode != 0:
+                logger.error(f"Git reset failed for {self.project_name}: {reset_result.stderr}")
+                return False, f"Reset failed: {reset_result.stderr}"
+
+            # Fallback succeeded
             self._last_pull = datetime.now()
-            return True, "Pulled successfully"
+            return True, "Pulled via fetch+reset"
 
         except subprocess.TimeoutExpired:
             return False, "Pull timed out"

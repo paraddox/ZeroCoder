@@ -56,37 +56,49 @@ Now claim a feature using distributed lock:
 
 ```bash
 # Try to claim the first ready feature
+# Returns: 0=success (feature ID on stdout), 1=no features, 2=claim failed (retry)
 claim_feature() {
     local feature_id=$(bd ready --json 2>/dev/null | jq -r '.[0].id // empty')
 
     if [ -z "$feature_id" ]; then
-        echo "No features ready to work on"
+        echo "No features ready to work on" >&2  # Errors to stderr, not stdout!
         return 1
     fi
 
-    # Try to claim it
+    # Try to claim it (sync first to get latest state)
+    bd sync 2>/dev/null
     bd update "$feature_id" --status=in_progress 2>/dev/null
-    if [ $? -eq 0 ]; then
-        echo "$feature_id"
+    local update_status=$?
+
+    if [ $update_status -eq 0 ]; then
+        # Push claim immediately to establish lock
+        bd sync 2>/dev/null
+        echo "$feature_id"  # Only the ID goes to stdout
         return 0
     else
-        echo "Feature $feature_id already claimed, trying next..."
+        echo "Feature $feature_id already claimed, trying next..." >&2  # Errors to stderr!
         return 2  # Retry with next
     fi
 }
 
 # Retry loop with backoff
 MAX_RETRIES=5
+FEATURE_ID=""
 for i in $(seq 1 $MAX_RETRIES); do
     FEATURE_ID=$(claim_feature)
-    if [ $? -eq 0 ]; then
+    claim_status=$?  # CRITICAL: Capture exit code IMMEDIATELY after command
+
+    if [ $claim_status -eq 0 ]; then
         break
-    elif [ $? -eq 1 ]; then
+    elif [ $claim_status -eq 1 ]; then
         echo "No work available - exiting"
         exit 0
     fi
+    # claim_status=2 means retry
+    echo "Attempt $i failed, retrying after backoff..."
     sleep $((i * 2))  # Backoff
     bd sync  # Refresh state
+    FEATURE_ID=""  # Reset for next attempt
 done
 
 if [ -z "$FEATURE_ID" ]; then
@@ -114,10 +126,11 @@ chmod +x init.sh 2>/dev/null && ./init.sh || echo "No init.sh, start servers man
 
 **Before writing any code, understand what exists and what's needed.**
 
-1. **Claim your feature:**
+**NOTE:** The feature was already claimed in Step 1.5. The `$FEATURE_ID` variable contains the claimed feature ID.
+
+1. **View your claimed feature details:**
    ```bash
-   bd ready
-   bd update <feature-id> --status=in_progress
+   bd show "$FEATURE_ID"
    ```
 
 2. **Run gap analysis for this feature:**
@@ -160,9 +173,10 @@ chmod +x init.sh 2>/dev/null && ./init.sh || echo "No init.sh, start servers man
 
 **This is your main job. Do this FIRST before any verification.**
 
-You should have already claimed the feature in Step 2.5. If not:
+The feature was claimed in Step 1.5 and stored in `$FEATURE_ID`. Verify it's set:
 ```bash
-bd update <feature-id> --status=in_progress
+echo "Working on feature: $FEATURE_ID"
+bd show "$FEATURE_ID" --json | jq -r '.title'
 ```
 
 #### 3.1 Follow Your Plan
@@ -217,8 +231,9 @@ npm test -- --passWithNoTests 2>/dev/null || echo "No tests configured"
 
 **ONLY after validation passes:**
 ```bash
-bd close <feature-id>
-git add . && git commit -m "Implement: <feature name>"
+FEATURE_TITLE=$(bd show "$FEATURE_ID" --json | jq -r '.title')
+bd close "$FEATURE_ID"
+git add . && git commit -m "Implement: $FEATURE_TITLE"
 ```
 
 ### STEP 4: VERIFY 3 RANDOM CLOSED FEATURES
@@ -278,19 +293,20 @@ If you discovered new patterns, gotchas, or commands that would help future sess
 You are responsible for merging your work to main. Handle any conflicts.
 
 ```bash
-# 1. Commit your work on feature branch
+# Get feature title for commit messages (if not already set)
+FEATURE_TITLE=${FEATURE_TITLE:-$(bd show "$FEATURE_ID" --json | jq -r '.title')}
+
+# 1. Commit your work on feature branch (if not already committed)
 git add .
-git commit -m "Implement: <feature name>"
+git diff --cached --quiet || git commit -m "Implement: $FEATURE_TITLE"
 
 # 2. Fetch latest main and merge INTO your branch (resolve conflicts here)
 git fetch origin main
-git merge origin/main --no-edit
-
-# If conflicts occur:
-# - Review conflicting files
-# - Resolve conflicts (keep your changes + integrate main's changes)
-# - git add <resolved files>
-# - git commit -m "Resolve merge conflicts with main"
+if ! git merge origin/main --no-edit; then
+    echo "Merge conflicts detected. Resolve them:"
+    git diff --name-only --diff-filter=U
+    # After resolving: git add <files> && git commit -m "Resolve merge conflicts"
+fi
 
 # 3. Push your feature branch
 FEATURE_BRANCH="$(git branch --show-current)"
@@ -299,7 +315,7 @@ git push -u origin "$FEATURE_BRANCH"
 # 4. Merge to main (should be clean now - fast-forward or no conflicts)
 git checkout main
 git pull origin main
-git merge "$FEATURE_BRANCH" --no-ff -m "Merge: <feature name>"
+git merge "$FEATURE_BRANCH" --no-ff -m "Merge: $FEATURE_TITLE"
 git push origin main
 
 # 5. Sync beads state

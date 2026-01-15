@@ -85,14 +85,38 @@ class LocalProjectManager:
             return await self.ensure_cloned()
 
         try:
-            # Checkout main and pull
-            await asyncio.to_thread(
+            # Checkout main first
+            checkout_result = await asyncio.to_thread(
                 subprocess.run,
                 ["git", "-C", str(self.local_path), "checkout", "main"],
                 capture_output=True,
+                text=True,
                 timeout=10,
             )
+            if checkout_result.returncode != 0:
+                # Try to handle dirty state by stashing
+                stash_result = await asyncio.to_thread(
+                    subprocess.run,
+                    ["git", "-C", str(self.local_path), "stash", "push", "-m", "auto-stash before pull"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if stash_result.returncode != 0:
+                    return False, f"Checkout failed and could not stash: {checkout_result.stderr}"
 
+                # Retry checkout after stash
+                checkout_result = await asyncio.to_thread(
+                    subprocess.run,
+                    ["git", "-C", str(self.local_path), "checkout", "main"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if checkout_result.returncode != 0:
+                    return False, f"Checkout failed after stash: {checkout_result.stderr}"
+
+            # Pull from origin
             result = await asyncio.to_thread(
                 subprocess.run,
                 ["git", "-C", str(self.local_path), "pull", "origin", "main"],
@@ -154,20 +178,36 @@ class LocalProjectManager:
         """
         try:
             # Add all changes
-            await asyncio.to_thread(
+            add_result = await asyncio.to_thread(
                 subprocess.run,
                 ["git", "-C", str(self.local_path), "add", "."],
                 capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if add_result.returncode != 0:
+                return False, f"Git add failed: {add_result.stderr}"
+
+            # Check if there's anything to commit
+            status_result = await asyncio.to_thread(
+                subprocess.run,
+                ["git", "-C", str(self.local_path), "status", "--porcelain"],
+                capture_output=True,
+                text=True,
                 timeout=10,
             )
 
-            # Commit (may fail if nothing to commit)
-            await asyncio.to_thread(
-                subprocess.run,
-                ["git", "-C", str(self.local_path), "commit", "-m", message],
-                capture_output=True,
-                timeout=10,
-            )
+            if status_result.stdout.strip():
+                # There are changes to commit
+                commit_result = await asyncio.to_thread(
+                    subprocess.run,
+                    ["git", "-C", str(self.local_path), "commit", "-m", message],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if commit_result.returncode != 0:
+                    return False, f"Git commit failed: {commit_result.stderr}"
 
             # Push
             result = await asyncio.to_thread(
@@ -182,7 +222,10 @@ class LocalProjectManager:
                 return False, f"Push failed: {result.stderr}"
 
             # Sync beads
-            await self.sync_beads()
+            sync_success, sync_msg = await self.sync_beads()
+            if not sync_success:
+                logger.warning(f"Beads sync failed after push: {sync_msg}")
+                # Don't fail the whole operation if sync fails - changes are pushed
 
             return True, "Changes pushed successfully"
 

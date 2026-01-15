@@ -59,8 +59,8 @@ def validate_project_name(name: str) -> str:
     return name
 
 
-def get_project_container(project_name: str):
-    """Get the container manager for a project."""
+def get_project_container(project_name: str, container_number: int = 1):
+    """Get the container manager for a project and container number."""
     project_name = validate_project_name(project_name)
     project_dir = _get_project_path(project_name)
     git_url = _get_project_git_url(project_name)
@@ -83,7 +83,7 @@ def get_project_container(project_name: str):
             detail=f"Project directory not found: {project_dir}"
         )
 
-    return get_container_manager(project_name, git_url, project_dir)
+    return get_container_manager(project_name, git_url, container_number, project_dir)
 
 
 @router.get("/status", response_model=AgentStatus)

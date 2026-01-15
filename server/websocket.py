@@ -34,6 +34,17 @@ def _get_project_path(project_name: str) -> Path:
     return get_project_path(project_name)
 
 
+def _get_project_git_url(project_name: str) -> str | None:
+    """Get project git URL from registry."""
+    import sys
+    root = Path(__file__).parent.parent
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+
+    from registry import get_project_git_url
+    return get_project_git_url(project_name)
+
+
 def _get_count_passing_tests():
     """Lazy import of count_passing_tests."""
     global _count_passing_tests
@@ -166,10 +177,15 @@ async def project_websocket(websocket: WebSocket, project_name: str):
         await websocket.close(code=4004, reason="Project directory not found")
         return
 
+    git_url = _get_project_git_url(project_name)
+    if not git_url:
+        await websocket.close(code=4004, reason="Project has no git URL")
+        return
+
     await manager.connect(websocket, project_name)
 
-    # Get container manager and register callbacks
-    container_manager = get_container_manager(project_name, project_dir)
+    # Get container manager and register callbacks (container_number=1 for default)
+    container_manager = get_container_manager(project_name, git_url, 1, project_dir)
 
     async def on_output(line: str):
         """Handle agent output - broadcast to this WebSocket."""

@@ -40,6 +40,17 @@ def _get_project_path(project_name: str) -> Path:
     return get_project_path(project_name)
 
 
+def _get_project_git_url(project_name: str) -> str | None:
+    """Get project git URL from registry."""
+    # Add parent to path for imports
+    _root = Path(__file__).parent.parent.parent
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+
+    from registry import get_project_git_url
+    return get_project_git_url(project_name)
+
+
 router = APIRouter(prefix="/api/projects/{project_name}/features", tags=["features"])
 
 
@@ -62,7 +73,7 @@ def _is_container_running(project_name: str) -> bool:
         return manager is not None and manager.status == "running"
 
 
-async def _ensure_container_running(project_name: str, project_dir: Path) -> None:
+async def _ensure_container_running(project_name: str, project_dir: Path, git_url: str) -> None:
     """
     Ensure the container is running for write operations.
 
@@ -87,8 +98,8 @@ async def _ensure_container_running(project_name: str, project_dir: Path) -> Non
             detail="Container image 'zerocoder-project' not found. Run: docker build -f Dockerfile.project -t zerocoder-project ."
         )
 
-    # Get manager and start container
-    manager = get_container_manager(project_name, project_dir)
+    # Get manager and start container (container_number=1 for default)
+    manager = get_container_manager(project_name, git_url, 1, project_dir)
     success, message = await manager.start_container_only()
 
     if not success:
@@ -169,7 +180,10 @@ async def create_feature(project_name: str, feature: FeatureCreate):
         raise HTTPException(status_code=404, detail="Project directory not found")
 
     # Ensure container is running (auto-start if needed)
-    await _ensure_container_running(project_name, project_dir)
+    git_url = _get_project_git_url(project_name)
+    if not git_url:
+        raise HTTPException(status_code=404, detail="Project has no git URL")
+    await _ensure_container_running(project_name, project_dir, git_url)
 
     # Determine priority
     priority = feature.priority if feature.priority is not None else 999
@@ -255,7 +269,10 @@ async def delete_feature(project_name: str, feature_id: str):
         raise HTTPException(status_code=404, detail="Project directory not found")
 
     # Ensure container is running (auto-start if needed)
-    await _ensure_container_running(project_name, project_dir)
+    git_url = _get_project_git_url(project_name)
+    if not git_url:
+        raise HTTPException(status_code=404, detail="Project has no git URL")
+    await _ensure_container_running(project_name, project_dir, git_url)
 
     try:
         container_client = ContainerBeadsClient(project_name)
@@ -303,7 +320,10 @@ async def skip_feature(project_name: str, feature_id: str):
         raise HTTPException(status_code=404, detail="Project directory not found")
 
     # Ensure container is running (auto-start if needed)
-    await _ensure_container_running(project_name, project_dir)
+    git_url = _get_project_git_url(project_name)
+    if not git_url:
+        raise HTTPException(status_code=404, detail="Project has no git URL")
+    await _ensure_container_running(project_name, project_dir, git_url)
 
     try:
         container_client = ContainerBeadsClient(project_name)
@@ -349,7 +369,10 @@ async def update_feature(project_name: str, feature_id: str, update: FeatureUpda
         raise HTTPException(status_code=404, detail="Project directory not found")
 
     # Ensure container is running (auto-start if needed)
-    await _ensure_container_running(project_name, project_dir)
+    git_url = _get_project_git_url(project_name)
+    if not git_url:
+        raise HTTPException(status_code=404, detail="Project has no git URL")
+    await _ensure_container_running(project_name, project_dir, git_url)
 
     try:
         container_client = ContainerBeadsClient(project_name)
@@ -405,7 +428,10 @@ async def reopen_feature(project_name: str, feature_id: str):
         raise HTTPException(status_code=404, detail="Project directory not found")
 
     # Ensure container is running (auto-start if needed)
-    await _ensure_container_running(project_name, project_dir)
+    git_url = _get_project_git_url(project_name)
+    if not git_url:
+        raise HTTPException(status_code=404, detail="Project has no git URL")
+    await _ensure_container_running(project_name, project_dir, git_url)
 
     try:
         container_client = ContainerBeadsClient(project_name)

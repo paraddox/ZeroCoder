@@ -125,6 +125,7 @@ class ContainerManager:
         self,
         project_name: str,
         git_url: str,
+        container_number: int = 1,  # Container number for parallel execution
         project_dir: Path | None = None,  # For local clone path (wizard/edit)
     ):
         """
@@ -133,14 +134,17 @@ class ContainerManager:
         Args:
             project_name: Name of the project
             git_url: Git URL for the project repository
+            container_number: Container number (1-10) for parallel execution
             project_dir: Optional local clone path for wizard/edit mode
         """
         self.project_name = project_name
         self.git_url = git_url
+        self.container_number = container_number
         # Local clone path for wizard/edit mode
         from registry import get_projects_dir
         self.project_dir = project_dir or get_projects_dir() / project_name
-        self.container_name = f"zerocoder-{project_name}"
+        # Container naming: zerocoder-{project}-{number} for parallel support
+        self.container_name = f"zerocoder-{project_name}-{container_number}"
 
         self._status: Literal["not_created", "running", "stopped", "completed"] = "not_created"
         self.started_at: datetime | None = None
@@ -413,6 +417,260 @@ class ContainerManager:
             logger.warning(f"Failed to read issues file directly: {e}")
             # On read error, assume features exist (safer than assuming none)
             return True
+
+    # =========================================================================
+    # Beads-Sync Branch Management (for parallel container coordination)
+    # =========================================================================
+
+    async def ensure_beads_sync_branch(self) -> tuple[bool, str]:
+        """
+        Ensure beads-sync branch exists on remote (migration for existing projects).
+
+        This is called before agent starts to ensure the beads coordination
+        branch exists. If it doesn't exist, creates it from main.
+
+        Returns:
+            Tuple of (success, message)
+        """
+        if self._status != "running":
+            return False, "Container must be running to check beads-sync branch"
+
+        try:
+            # Check if beads-sync branch exists on remote
+            check_result = subprocess.run(
+                ["docker", "exec", "-u", "coder", self.container_name,
+                 "git", "ls-remote", "--heads", "origin", "beads-sync"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            if check_result.stdout.strip():
+                # Branch exists - just configure beads to use it
+                logger.info(f"beads-sync branch already exists for {self.project_name}")
+                subprocess.run(
+                    ["docker", "exec", "-u", "coder", self.container_name,
+                     "bd", "config", "set", "sync.branch", "beads-sync"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                return True, "beads-sync branch already exists"
+
+            # Branch doesn't exist - create it
+            logger.info(f"Creating beads-sync branch for {self.project_name}")
+            await self._broadcast_output("[System] Creating beads-sync branch for parallel coordination...")
+
+            commands = [
+                ["git", "checkout", "main"],
+                ["git", "pull", "origin", "main"],
+                ["bd", "config", "set", "sync.branch", "beads-sync"],
+                ["git", "checkout", "-b", "beads-sync"],
+                ["git", "push", "-u", "origin", "beads-sync"],
+                ["git", "checkout", "main"],
+                ["bd", "sync"],
+            ]
+
+            for cmd in commands:
+                result = subprocess.run(
+                    ["docker", "exec", "-u", "coder", self.container_name] + cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                if result.returncode != 0:
+                    logger.error(f"Failed to run {' '.join(cmd)}: {result.stderr}")
+                    return False, f"Failed to create beads-sync branch: {result.stderr}"
+
+            logger.info(f"Created beads-sync branch for {self.project_name}")
+            return True, "beads-sync branch created"
+
+        except subprocess.TimeoutExpired:
+            return False, "Timeout checking/creating beads-sync branch"
+        except Exception as e:
+            logger.exception(f"Error ensuring beads-sync branch for {self.project_name}")
+            return False, f"Error: {e}"
+
+    async def pre_agent_sync(self) -> tuple[bool, str]:
+        """
+        Run before agent starts: ensure beads-sync exists, pull latest code, sync beads.
+
+        This ensures the container has the latest code and beads state before
+        the agent starts working.
+
+        Returns:
+            Tuple of (success, message)
+        """
+        if self._status != "running":
+            return False, "Container must be running for pre-agent sync"
+
+        try:
+            await self._broadcast_output("[System] Syncing with remote before starting agent...")
+
+            # 1. Ensure beads-sync branch exists (migration for existing projects)
+            success, msg = await self.ensure_beads_sync_branch()
+            if not success:
+                logger.warning(f"ensure_beads_sync_branch failed: {msg}")
+                # Continue anyway - beads-sync may be optional for some setups
+
+            # 2. Fetch and pull latest from main
+            commands = [
+                (["git", "fetch", "origin"], "Fetching from origin"),
+                (["git", "checkout", "main"], "Checking out main"),
+                (["git", "pull", "origin", "main"], "Pulling latest from main"),
+                (["bd", "sync"], "Syncing beads state"),
+            ]
+
+            for cmd, desc in commands:
+                result = subprocess.run(
+                    ["docker", "exec", "-u", "coder", self.container_name] + cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                if result.returncode != 0:
+                    logger.warning(f"{desc} failed: {result.stderr}")
+                    # Don't fail entirely - some commands may fail benignly
+                    # (e.g., already on main, nothing to pull)
+
+            logger.info(f"Pre-agent sync completed for {self.project_name}")
+            return True, "Pre-agent sync completed"
+
+        except subprocess.TimeoutExpired:
+            return False, "Pre-agent sync timed out"
+        except Exception as e:
+            logger.exception(f"Error in pre-agent sync for {self.project_name}")
+            return False, f"Pre-agent sync error: {e}"
+
+    async def post_agent_cleanup(self) -> tuple[bool, str]:
+        """
+        Run after agent completes: cleanup feature branches.
+
+        The agent has already merged to main and pushed. This just cleans up
+        any leftover feature branches.
+
+        Returns:
+            Tuple of (success, message)
+        """
+        if self._status != "running":
+            return False, "Container must be running for post-agent cleanup"
+
+        try:
+            # List feature branches
+            result = subprocess.run(
+                ["docker", "exec", "-u", "coder", self.container_name,
+                 "git", "branch", "--list", "feature/*"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+
+            if result.returncode != 0 or not result.stdout.strip():
+                return True, "No feature branches to clean up"
+
+            # Clean up each feature branch
+            branches = [b.strip().lstrip("* ") for b in result.stdout.strip().split("\n") if b.strip()]
+            for branch in branches:
+                if not branch:
+                    continue
+
+                # Delete local branch
+                subprocess.run(
+                    ["docker", "exec", "-u", "coder", self.container_name,
+                     "git", "branch", "-d", branch],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+
+                # Delete remote branch (may fail if already deleted)
+                subprocess.run(
+                    ["docker", "exec", "-u", "coder", self.container_name,
+                     "git", "push", "origin", "--delete", branch],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+
+            logger.info(f"Cleaned up {len(branches)} feature branches for {self.project_name}")
+            return True, f"Cleaned up {len(branches)} feature branches"
+
+        except subprocess.TimeoutExpired:
+            return False, "Post-agent cleanup timed out"
+        except Exception as e:
+            logger.exception(f"Error in post-agent cleanup for {self.project_name}")
+            return False, f"Cleanup error: {e}"
+
+    async def recover_stuck_features(self) -> tuple[bool, str]:
+        """
+        Reset any in_progress features to open (recovery after force-stop).
+
+        This should be called on startup for existing projects to recover
+        features that were left in_progress when containers were force-stopped.
+
+        Returns:
+            Tuple of (success, message)
+        """
+        if self._status != "running":
+            return False, "Container must be running for recovery"
+
+        try:
+            # Get in_progress features
+            result = subprocess.run(
+                ["docker", "exec", "-u", "coder", self.container_name,
+                 "bd", "list", "--status=in_progress", "--json"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            if result.returncode != 0 or not result.stdout.strip():
+                return True, "No stuck features to recover"
+
+            try:
+                features = json.loads(result.stdout)
+            except json.JSONDecodeError:
+                return True, "No stuck features to recover"
+
+            if not features:
+                return True, "No stuck features to recover"
+
+            # Reset each to open
+            recovered = 0
+            for feature in features:
+                feature_id = feature.get("id")
+                if not feature_id:
+                    continue
+
+                logger.info(f"Recovering stuck feature: {feature_id}")
+                await self._broadcast_output(f"[System] Recovering stuck feature: {feature_id}")
+
+                update_result = subprocess.run(
+                    ["docker", "exec", "-u", "coder", self.container_name,
+                     "bd", "update", feature_id, "--status=open"],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if update_result.returncode == 0:
+                    recovered += 1
+
+            # Sync after recovery
+            subprocess.run(
+                ["docker", "exec", "-u", "coder", self.container_name, "bd", "sync"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+
+            logger.info(f"Recovered {recovered} stuck features for {self.project_name}")
+            return True, f"Recovered {recovered} stuck features"
+
+        except subprocess.TimeoutExpired:
+            return False, "Recovery timed out"
+        except Exception as e:
+            logger.exception(f"Error recovering stuck features for {self.project_name}")
+            return False, f"Recovery error: {e}"
 
     async def _broadcast_output(self, line: str) -> None:
         """Broadcast output line to all registered callbacks."""
@@ -1302,27 +1560,51 @@ class ContainerManager:
         }
 
 
-# Global registry of container managers per project
-_managers: dict[str, ContainerManager] = {}
+# Global registry of container managers: project -> {container_number -> manager}
+_managers: dict[str, dict[int, ContainerManager]] = {}
 _managers_lock = threading.Lock()
 
 
 def get_container_manager(
     project_name: str,
     git_url: str,
+    container_number: int = 1,
     project_dir: Path | None = None,
 ) -> ContainerManager:
-    """Get or create a container manager for a project (thread-safe)."""
+    """Get or create a container manager for a project and container number (thread-safe)."""
     with _managers_lock:
         if project_name not in _managers:
-            _managers[project_name] = ContainerManager(project_name, git_url, project_dir)
-        return _managers[project_name]
+            _managers[project_name] = {}
+        if container_number not in _managers[project_name]:
+            _managers[project_name][container_number] = ContainerManager(
+                project_name, git_url, container_number, project_dir
+            )
+        return _managers[project_name][container_number]
 
 
-def clear_container_manager(project_name: str) -> None:
-    """Clear cached container manager for a project (for cleanup/reset)."""
+def get_all_container_managers(project_name: str) -> list[ContainerManager]:
+    """Get all container managers for a project (thread-safe)."""
     with _managers_lock:
-        if project_name in _managers:
+        if project_name not in _managers:
+            return []
+        return list(_managers[project_name].values())
+
+
+def clear_container_manager(project_name: str, container_number: int | None = None) -> None:
+    """
+    Clear cached container manager(s) for a project.
+
+    Args:
+        project_name: Name of the project
+        container_number: If provided, clear only that container. If None, clear all.
+    """
+    with _managers_lock:
+        if project_name not in _managers:
+            return
+        if container_number is not None:
+            if container_number in _managers[project_name]:
+                del _managers[project_name][container_number]
+        else:
             del _managers[project_name]
 
 
@@ -1335,10 +1617,13 @@ async def cleanup_idle_containers() -> list[str]:
     """
     stopped = []
 
+    # Collect all managers from nested dict
+    all_managers = []
     with _managers_lock:
-        managers = list(_managers.values())
+        for project_managers in _managers.values():
+            all_managers.extend(project_managers.values())
 
-    for manager in managers:
+    for manager in all_managers:
         if manager.status == "running" and manager.is_idle():
             success, _ = await manager.stop()
             if success:
@@ -1352,16 +1637,19 @@ async def cleanup_all_containers() -> None:
     """Stop all running containers. Called on server shutdown."""
     logger.info("Stopping all zerocoder containers...")
 
+    # Collect all managers from nested dict
+    all_managers = []
     with _managers_lock:
-        managers = list(_managers.values())
+        for project_managers in _managers.values():
+            all_managers.extend(project_managers.values())
 
-    for manager in managers:
+    for manager in all_managers:
         try:
             if manager.status == "running":
                 logger.info(f"Stopping container: {manager.container_name}")
                 await manager.stop()
         except Exception as e:
-            logger.warning(f"Error stopping container for {manager.project_name}: {e}")
+            logger.warning(f"Error stopping container for {manager.project_name}-{manager.container_number}: {e}")
 
     # Also stop any orphaned containers not in our registry
     await stop_orphaned_containers()
@@ -1434,10 +1722,13 @@ async def monitor_agent_health() -> list[str]:
     """
     restarted = []
 
+    # Collect all managers from nested dict
+    all_managers = []
     with _managers_lock:
-        managers = list(_managers.values())
+        for project_managers in _managers.values():
+            all_managers.extend(project_managers.values())
 
-    for manager in managers:
+    for manager in all_managers:
         # Only monitor user-started containers
         if not manager.user_started:
             continue
