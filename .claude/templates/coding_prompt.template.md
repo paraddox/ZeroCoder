@@ -148,11 +148,29 @@ echo "Claimed $FEATURE_ID, working on branch $BRANCH"
 
 **NOTE**: The container manager handles git pull/push and bd sync. Focus on implementing the feature.
 
-### STEP 2: START SERVERS
+### STEP 2: INSTALL DEPENDENCIES + START SERVERS
+
+**First, ensure dependencies are installed:**
 
 ```bash
-chmod +x init.sh 2>/dev/null && ./init.sh || echo "No init.sh, start servers manually"
+# Install dependencies if node_modules doesn't exist
+if [ ! -d "node_modules" ]; then
+    echo "Installing dependencies..."
+    # Detect package manager and install
+    if [ -f "pnpm-lock.yaml" ]; then
+        pnpm install
+    elif [ -f "yarn.lock" ]; then
+        yarn install
+    elif [ -f "package-lock.json" ] || [ -f "package.json" ]; then
+        npm install
+    fi
+fi
+
+# Run init script if it exists
+chmod +x init.sh 2>/dev/null && ./init.sh || echo "No init.sh found"
 ```
+
+**IMPORTANT:** Always ensure dependencies are installed before trying to run servers or tests.
 
 ### STEP 2.5: GAP ANALYSIS + TASK BREAKDOWN (1 MINUTE)
 
