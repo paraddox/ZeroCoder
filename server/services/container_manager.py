@@ -143,7 +143,8 @@ class ContainerManager:
         self._log_task: asyncio.Task | None = None
 
         # Track if user started this container (for auto-restart monitoring)
-        self._user_started: bool = False
+        # Restore from marker file if it exists (survives server restart)
+        self._user_started: bool = self._check_user_started_marker()
         # Flag to prevent health monitor conflicts during restart
         self._restarting: bool = False
         # Track if the last agent was overseer (for completion detection)
@@ -166,6 +167,30 @@ class ContainerManager:
 
         # Check initial container status
         self._sync_status()
+
+    def _get_marker_file_path(self) -> Path:
+        """Get path to the user-started marker file."""
+        return self.project_dir / ".agent_started"
+
+    def _check_user_started_marker(self) -> bool:
+        """Check if user-started marker file exists."""
+        return self._get_marker_file_path().exists()
+
+    def _set_user_started_marker(self) -> None:
+        """Create user-started marker file."""
+        try:
+            self._get_marker_file_path().touch()
+        except Exception as e:
+            logger.warning(f"Failed to create user-started marker: {e}")
+
+    def _remove_user_started_marker(self) -> None:
+        """Remove user-started marker file."""
+        try:
+            marker = self._get_marker_file_path()
+            if marker.exists():
+                marker.unlink()
+        except Exception as e:
+            logger.warning(f"Failed to remove user-started marker: {e}")
 
     def _sync_status(self) -> None:
         """Sync status with actual Docker container state."""
@@ -405,6 +430,7 @@ class ContainerManager:
             # Container already running, just send instruction if provided
             if instruction:
                 self._user_started = True  # Mark as user-started for auto-restart
+                self._set_user_started_marker()
                 return await self.send_instruction(instruction)
             return True, "Container already running"
 
@@ -480,6 +506,7 @@ class ContainerManager:
             self._update_activity()
             self.status = "running"
             self._user_started = True  # Mark as user-started for monitoring
+            self._set_user_started_marker()
 
             # Start log streaming
             self._log_task = asyncio.create_task(self._stream_logs())
@@ -563,6 +590,7 @@ class ContainerManager:
             # User explicitly stopped, so we shouldn't auto-restart
             logger.info(f"[STOP] Resetting _user_started flag for {self.container_name}")
             self._user_started = False
+            self._remove_user_started_marker()
 
             logger.info(f"[STOP] Executing docker stop for {self.container_name}")
             result = subprocess.run(
@@ -838,6 +866,7 @@ class ContainerManager:
                     await self._broadcast_output("[System] Verification complete! All features verified.")
                     await self.stop()
                     self.status = "completed"
+                    self._remove_user_started_marker()
                     return True, "All features verified complete"
                 elif self._last_agent_was_hound:
                     # Hound just ran - now run overseer
@@ -1403,6 +1432,7 @@ async def monitor_agent_health() -> list[str]:
             if not manager.has_open_features():
                 logger.info(f"Container {manager.container_name} stopped, no open features - marking complete")
                 manager.status = "completed"
+                manager._remove_user_started_marker()
                 continue
 
             logger.warning(
