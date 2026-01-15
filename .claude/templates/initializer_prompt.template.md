@@ -26,8 +26,16 @@ First, initialize beads in the project:
 ```bash
 bd init
 ```
+After this is done, run
+
+```bash
+bd doctor
+```
+Fix all warnings and errors that this command reports.
 
 Then, based on `prompts/app_spec.txt`, create features using the `bd create` command. Features are stored in the `.beads/` directory, which is the single source of truth for what needs to be built.
+
+
 
 **Creating Features:**
 

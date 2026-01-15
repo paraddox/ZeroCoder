@@ -77,7 +77,7 @@ def get_coding_prompt(project_dir: Path | None = None) -> str:
 
 def get_coding_prompt_yolo(project_dir: Path | None = None) -> str:
     """Load the YOLO mode coding agent prompt (project-specific if available)."""
-    return load_prompt("coding_prompt_yolo", project_dir)
+    return load_prompt("coding_prompt", project_dir)
 
 
 def get_overseer_prompt(project_dir: Path | None = None) -> str:
@@ -146,7 +146,6 @@ def scaffold_project_prompts(project_dir: Path) -> Path:
     templates = [
         ("app_spec.template.txt", "app_spec.txt"),
         ("coding_prompt.template.md", "coding_prompt.md"),
-        ("coding_prompt_yolo.template.md", "coding_prompt_yolo.md"),
         ("initializer_prompt.template.md", "initializer_prompt.md"),
         ("overseer_prompt.template.md", "overseer_prompt.md"),
     ]
@@ -331,7 +330,7 @@ def refresh_project_prompts(project_dir: Path) -> list[str]:
     if is_existing:
         # Existing repos use different template variants
         templates = [
-            ("coding_prompt_existing.template.md", "coding_prompt.md"),
+            ("coding_prompt.template.md", "coding_prompt.md"),
             ("overseer_prompt_existing.template.md", "overseer_prompt.md"),
             ("hound_prompt.template.md", "hound_prompt.md"),
         ]
@@ -339,7 +338,6 @@ def refresh_project_prompts(project_dir: Path) -> list[str]:
         # New projects with app_spec
         templates = [
             ("coding_prompt.template.md", "coding_prompt.md"),
-            ("coding_prompt_yolo.template.md", "coding_prompt_yolo.md"),
             ("initializer_prompt.template.md", "initializer_prompt.md"),
             ("overseer_prompt.template.md", "overseer_prompt.md"),
             ("hound_prompt.template.md", "hound_prompt.md"),
@@ -443,7 +441,7 @@ def scaffold_existing_repo(project_dir: Path) -> None:
 
     # Template mappings for existing repos
     templates = [
-        ("coding_prompt_existing.template.md", "coding_prompt.md"),
+        ("coding_prompt.template.md", "coding_prompt.md"),
         ("overseer_prompt_existing.template.md", "overseer_prompt.md"),
     ]
 

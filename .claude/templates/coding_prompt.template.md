@@ -33,9 +33,6 @@ cat IMPLEMENTATION_PLAN.md 2>/dev/null || echo "No plan yet - will create in Ste
 # Read recent history (last 3 features for context, not full history)
 echo "=== Recent Implementation History (last 50 lines) ==="
 tail -50 IMPLEMENTATION_HISTORY.md 2>/dev/null || echo "No history yet"
-
-# Read app spec for context
-cat prompts/app_spec.txt
 ```
 
 **AGENTS.md** contains operational knowledge: commands, patterns, gotchas.
@@ -43,6 +40,12 @@ cat prompts/app_spec.txt
 **IMPLEMENTATION_HISTORY.md** contains archived plans - only read recent entries (last 50 lines) to avoid context bloat.
 
 If these files exist, READ THEM CAREFULLY - they save you from rediscovering things.
+
+Run
+```bash
+bd doctor
+```
+Fix all warnings and issues that this reports. if there are any errors/warnings that persist even after taking the steps proposed by the bd doctor command, then you can move on to the next step.
 
 **DO NOT** spend more than 3 minutes on orientation. Get the basics and move on.
 
@@ -208,7 +211,7 @@ fi
 
 If you discovered new patterns, gotchas, or commands that would help future sessions, add them to AGENTS.md.
 
-**Size limit:** Keep AGENTS.md under 100 lines. If it's getting long, consolidate entries or remove outdated information instead of just appending.
+**Size limit:** Keep AGENTS.md under 300 lines. If it's getting long, consolidate entries or remove outdated information instead of just appending.
 
 #### 5.3 Commit, Sync, and Push
 
@@ -270,7 +273,7 @@ bd sync                               # Sync at session end
 ## SESSION FLOW
 
 ```
-Step 1: Read artifacts (AGENTS.md, IMPLEMENTATION_PLAN.md, app_spec.txt)
+Step 1: Read artifacts (AGENTS.md, IMPLEMENTATION_PLAN.md)
 Step 2: Start servers
 Step 2.5: Gap analysis + task breakdown → Create IMPLEMENTATION_PLAN.md
 Step 3: Implement (follow plan, validate, close)
