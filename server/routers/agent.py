@@ -25,7 +25,7 @@ _root = Path(__file__).parent.parent.parent
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
-from registry import get_project_path, get_project_git_url
+from registry import get_project_path, get_project_git_url, get_project_info
 from progress import has_features, has_open_features
 from prompts import (
     get_initializer_prompt,
@@ -34,6 +34,7 @@ from prompts import (
     get_overseer_prompt,
     is_existing_repo_project,
 )
+import asyncio
 
 
 def _get_project_path(project_name: str) -> Path | None:
@@ -212,41 +213,277 @@ async def start_agent(
     )
 
 
-@router.post("/stop", response_model=AgentActionResponse)
-async def stop_agent(project_name: str):
-    """Stop the container for a project (does not remove it)."""
-    manager = get_project_container(project_name)
-    success, message = await manager.stop()
+@router.post("/start-all", response_model=AgentActionResponse)
+async def start_all_containers(project_name: str):
+    """
+    Start project with init container first, then spawn coding containers.
+
+    This orchestrates parallel container startup according to a two-phase plan:
+
+    Phase 1: Run init container (zerocoder-{project}-0)
+    - New project: full initializer prompt to create features from app_spec
+    - Existing project: recovery (in_progress -> open) and sync
+    - Waits for init to complete before proceeding
+
+    Phase 2: Spawn N coding containers (zerocoder-{project}-1..N)
+    - N is determined by target_container_count in project registry
+    - All coding containers start in parallel with the coding prompt
+    """
+    # Check Docker availability first
+    if not check_docker_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Docker is not available. Please ensure Docker is installed and running."
+        )
+
+    if not check_image_exists():
+        raise HTTPException(
+            status_code=503,
+            detail="Container image 'zerocoder-project' not found. Run: docker build -f Dockerfile.project -t zerocoder-project ."
+        )
+
+    # Validate project name
+    project_name = validate_project_name(project_name)
+
+    # Get project info from registry
+    project_info = get_project_info(project_name)
+    if not project_info:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found in registry")
+
+    git_url = project_info.get("git_url")
+    if not git_url:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' has no git URL")
+
+    target_count = project_info.get("target_container_count", 1)
+    is_new = project_info.get("is_new", False)
+
+    # Get project directory
+    project_dir = _get_project_path(project_name)
+    if not project_dir or not project_dir.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Project directory not found for '{project_name}'"
+        )
+
+    # ==========================================================================
+    # PHASE 1: Run init container (container_number=0)
+    # ==========================================================================
+    init_manager = get_container_manager(project_name, git_url, container_number=0, project_dir=project_dir)
+
+    # Determine init instruction based on project state
+    try:
+        if is_new or not has_features(project_dir, project_name):
+            # New project - run full initializer with Opus 4.5
+            instruction = get_initializer_prompt(project_dir)
+            init_manager._force_claude_sdk = True
+            init_manager._forced_model = "claude-opus-4-5-20251101"
+            print(f"[StartAll] Phase 1: Running full initializer for new project {project_name}")
+        else:
+            # Existing project - just run recovery (pre_agent_sync + recover_stuck_features)
+            # The init container will sync and recover any stuck features
+            instruction = None  # Will trigger sync and recovery without full agent run
+            print(f"[StartAll] Phase 1: Running recovery for existing project {project_name}")
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not load initializer prompt: {e}"
+        )
+
+    # Start init container and wait for it to complete
+    if instruction:
+        # Full initializer run
+        success, message = await init_manager.start(instruction=instruction)
+        if not success:
+            return AgentActionResponse(
+                success=False,
+                status=init_manager.status,
+                message=f"Phase 1 (init) failed: {message}",
+            )
+
+        # Wait for init container to finish
+        # The init container runs the initializer which creates features, then exits
+        print(f"[StartAll] Waiting for init container to complete...")
+        while init_manager.is_agent_running():
+            await asyncio.sleep(2)
+
+        print(f"[StartAll] Phase 1 complete. Init container finished.")
+    else:
+        # Recovery only - start container, run sync and recovery, then stop
+        success, message = await init_manager.start_container_only()
+        if not success:
+            return AgentActionResponse(
+                success=False,
+                status=init_manager.status,
+                message=f"Phase 1 (init container start) failed: {message}",
+            )
+
+        # Run pre_agent_sync and recover_stuck_features
+        sync_ok, sync_msg = await init_manager.pre_agent_sync()
+        if not sync_ok:
+            print(f"[StartAll] Pre-agent sync warning: {sync_msg}")
+
+        recovery_ok, recovery_msg = await init_manager.recover_stuck_features()
+        if not recovery_ok:
+            print(f"[StartAll] Recovery warning: {recovery_msg}")
+
+        # Stop init container after recovery
+        await init_manager.stop()
+        print(f"[StartAll] Phase 1 complete. Recovery finished.")
+
+    # ==========================================================================
+    # PHASE 2: Spawn N coding containers in parallel
+    # ==========================================================================
+    print(f"[StartAll] Phase 2: Spawning {target_count} coding container(s)...")
+
+    coding_managers = []
+    for i in range(1, target_count + 1):
+        manager = get_container_manager(project_name, git_url, container_number=i, project_dir=project_dir)
+        coding_managers.append(manager)
+
+    # Get coding prompt for all containers
+    try:
+        coding_prompt = get_coding_prompt(project_dir)
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not load coding prompt: {e}"
+        )
+
+    # Start all coding containers in parallel
+    async def start_coding_container(manager):
+        """Start a single coding container with the coding prompt."""
+        manager._current_agent_type = "coder"
+        manager._force_claude_sdk = False
+        return await manager.start(instruction=coding_prompt)
+
+    results = await asyncio.gather(
+        *[start_coding_container(m) for m in coding_managers],
+        return_exceptions=True
+    )
+
+    # Analyze results
+    successes = 0
+    failures = []
+    for i, result in enumerate(results, start=1):
+        if isinstance(result, Exception):
+            failures.append(f"Container {i}: {str(result)}")
+        elif isinstance(result, tuple):
+            success, msg = result
+            if success:
+                successes += 1
+            else:
+                failures.append(f"Container {i}: {msg}")
+        else:
+            failures.append(f"Container {i}: unexpected result")
+
+    # Determine overall status
+    all_success = successes == target_count
+    status = "running" if all_success else ("error" if successes == 0 else "partial")
+
+    if failures:
+        message = f"Started {successes}/{target_count} coding containers. Failures: {'; '.join(failures)}"
+    else:
+        message = f"Successfully started init + {target_count} coding container(s)"
 
     return AgentActionResponse(
-        success=success,
-        status=manager.status,
+        success=all_success,
+        status=status,
         message=message,
+    )
+
+
+@router.post("/stop", response_model=AgentActionResponse)
+async def stop_agent(project_name: str):
+    """Stop ALL containers for a project (does not remove them)."""
+    from ..services.container_manager import _managers
+
+    project_name = validate_project_name(project_name)
+
+    # Get all managers for this project
+    project_managers = _managers.get(project_name, {})
+    if not project_managers:
+        # Try to stop container 1 as fallback (single container mode)
+        manager = get_project_container(project_name)
+        success, message = await manager.stop()
+        return AgentActionResponse(
+            success=success,
+            status=manager.status,
+            message=message,
+        )
+
+    # Stop all containers in parallel
+    async def stop_container(manager):
+        return await manager.stop()
+
+    results = await asyncio.gather(
+        *[stop_container(m) for m in project_managers.values()],
+        return_exceptions=True
+    )
+
+    # Count successes
+    successes = sum(1 for r in results if isinstance(r, tuple) and r[0])
+    total = len(project_managers)
+
+    return AgentActionResponse(
+        success=successes == total,
+        status="stopped" if successes == total else "partial",
+        message=f"Stopped {successes}/{total} containers",
     )
 
 
 @router.post("/graceful-stop", response_model=AgentActionResponse)
 async def graceful_stop_agent(project_name: str):
     """
-    Request graceful shutdown of agent after current session.
+    Request graceful shutdown of ALL agents for a project.
 
-    The agent will complete its current work before stopping.
+    Each agent will complete its current work before stopping.
     Falls back to force stop after 10 minutes.
     """
-    manager = get_project_container(project_name)
-    success, message = await manager.graceful_stop()
+    from ..services.container_manager import _managers
 
-    # Broadcast status update to WebSocket clients immediately
-    if success:
+    project_name = validate_project_name(project_name)
+
+    # Get all managers for this project
+    project_managers = _managers.get(project_name, {})
+    if not project_managers:
+        # Try single container mode fallback
+        manager = get_project_container(project_name)
+        success, message = await manager.graceful_stop()
+        if success:
+            await websocket_manager.broadcast_to_project(project_name, {
+                "type": "graceful_stop_requested",
+                "graceful_stop_requested": True,
+            })
+        return AgentActionResponse(
+            success=success,
+            status=manager.status,
+            message=message,
+        )
+
+    # Request graceful stop for all containers
+    async def graceful_stop_container(manager):
+        return await manager.graceful_stop()
+
+    results = await asyncio.gather(
+        *[graceful_stop_container(m) for m in project_managers.values()],
+        return_exceptions=True
+    )
+
+    # Count successes
+    successes = sum(1 for r in results if isinstance(r, tuple) and r[0])
+    total = len(project_managers)
+
+    # Broadcast to WebSocket
+    if successes > 0:
         await websocket_manager.broadcast_to_project(project_name, {
             "type": "graceful_stop_requested",
             "graceful_stop_requested": True,
         })
 
     return AgentActionResponse(
-        success=success,
-        status=manager.status,
-        message=message,
+        success=successes == total,
+        status="stopping" if successes > 0 else "error",
+        message=f"Graceful stop requested for {successes}/{total} containers",
     )
 
 

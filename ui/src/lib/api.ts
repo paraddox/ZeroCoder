@@ -189,6 +189,18 @@ export async function startAgent(
   projectName: string,
   yoloMode: boolean = false
 ): Promise<AgentActionResponse> {
+  // Use the new start-all endpoint which orchestrates init + coding containers
+  return fetchJSON(`/projects/${encodeURIComponent(projectName)}/agent/start-all`, {
+    method: 'POST',
+    body: JSON.stringify({ yolo_mode: yoloMode }),
+  })
+}
+
+export async function startSingleAgent(
+  projectName: string,
+  yoloMode: boolean = false
+): Promise<AgentActionResponse> {
+  // Start just a single coding container (for manual control)
   return fetchJSON(`/projects/${encodeURIComponent(projectName)}/agent/start`, {
     method: 'POST',
     body: JSON.stringify({ yolo_mode: yoloMode }),

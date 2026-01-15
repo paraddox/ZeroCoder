@@ -232,9 +232,13 @@ async def poll_all_running_containers() -> list[str]:
     polled = []
 
     with _managers_lock:
-        managers = list(_managers.items())
+        # _managers is now dict[str, dict[int, ContainerManager]]
+        all_managers = []
+        for project_name, container_managers in _managers.items():
+            for container_num, manager in container_managers.items():
+                all_managers.append((project_name, manager))
 
-    for project_name, manager in managers:
+    for project_name, manager in all_managers:
         # Only poll running containers
         if manager.status != "running":
             continue
@@ -243,7 +247,8 @@ async def poll_all_running_containers() -> list[str]:
 
         if data:
             update_feature_cache(project_name, data)
-            polled.append(project_name)
+            if project_name not in polled:
+                polled.append(project_name)
 
     return polled
 

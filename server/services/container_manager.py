@@ -125,7 +125,7 @@ class ContainerManager:
         self,
         project_name: str,
         git_url: str,
-        container_number: int = 1,  # Container number for parallel execution
+        container_number: int = 1,  # Container number for parallel execution (0 = init container)
         project_dir: Path | None = None,  # For local clone path (wizard/edit)
     ):
         """
@@ -134,7 +134,7 @@ class ContainerManager:
         Args:
             project_name: Name of the project
             git_url: Git URL for the project repository
-            container_number: Container number (1-10) for parallel execution
+            container_number: Container number (0 = init, 1-10 = coding containers)
             project_dir: Optional local clone path for wizard/edit mode
         """
         self.project_name = project_name
@@ -143,8 +143,14 @@ class ContainerManager:
         # Local clone path for wizard/edit mode
         from registry import get_projects_dir
         self.project_dir = project_dir or get_projects_dir() / project_name
-        # Container naming: zerocoder-{project}-{number} for parallel support
-        self.container_name = f"zerocoder-{project_name}-{container_number}"
+
+        # Container naming: init container vs coding containers
+        if container_number == 0:  # Init container
+            self.container_name = f"zerocoder-{project_name}-init"
+            self._is_init_container = True
+        else:  # Coding container
+            self.container_name = f"zerocoder-{project_name}-{container_number}"
+            self._is_init_container = False
 
         self._status: Literal["not_created", "running", "stopped", "completed"] = "not_created"
         self.started_at: datetime | None = None
@@ -294,6 +300,11 @@ class ContainerManager:
         self._status = value
         if old_status != value:
             self._notify_status_change(value)
+
+    @property
+    def container_type(self) -> Literal["init", "coding"]:
+        """Get the container type for registry calls."""
+        return "init" if self._is_init_container else "coding"
 
     def _notify_status_change(self, status: str) -> None:
         """Notify all registered callbacks of status change."""
@@ -806,8 +817,67 @@ class ContainerManager:
             # Start log streaming
             self._log_task = asyncio.create_task(self._stream_logs())
 
-            # Send instruction if provided
+            # Handle init container specially
+            if self._is_init_container:
+                # Wait for container to clone the repo (entrypoint clones from GIT_REMOTE_URL)
+                # Check for /project/.git to exist, not just git --version
+                for attempt in range(30):  # 60 seconds total (clone can take time)
+                    await asyncio.sleep(2)
+                    check = subprocess.run(
+                        ["docker", "exec", "-u", "coder", self.container_name,
+                         "test", "-d", "/project/.git"],
+                        capture_output=True,
+                        text=True,
+                    )
+                    if check.returncode == 0:
+                        logger.info(f"Init container {self.container_name}: repo cloned successfully")
+                        break
+                    logger.info(f"Waiting for init container to clone repo (attempt {attempt + 1}/30)")
+                else:
+                    return False, "Init container failed to clone repo after 60 seconds"
+
+                # Pre-agent sync: pull latest code and beads state
+                sync_ok, sync_msg = await self.pre_agent_sync()
+                if not sync_ok:
+                    logger.warning(f"Pre-agent sync failed: {sync_msg}")
+                    # Continue anyway - sync failure shouldn't block
+
+                # Recovery: reset any stuck in_progress features to open
+                recovery_ok, recovery_msg = await self.recover_stuck_features()
+                if not recovery_ok:
+                    logger.warning(f"Feature recovery failed: {recovery_msg}")
+                    # Continue anyway - recovery failure shouldn't block
+
+                if instruction:
+                    # New project - run initializer prompt
+                    logger.info(f"Init container running initializer for {self.project_name}")
+                    await self._broadcast_output("[System] Running project initialization...")
+                    return await self.send_instruction(instruction)
+                else:
+                    # Existing project recovery - just sync and stop
+                    logger.info(f"Init container completed recovery for {self.project_name}")
+                    await self._broadcast_output("[System] Project recovery complete, stopping init container...")
+                    await self.stop()
+                    return True, "Init container completed recovery"
+
+            # Send instruction if provided (for coding containers)
             if instruction:
+                # Wait for container to clone the repo (entrypoint clones from GIT_REMOTE_URL)
+                for attempt in range(30):  # 60 seconds total (clone can take time)
+                    await asyncio.sleep(2)
+                    check = subprocess.run(
+                        ["docker", "exec", "-u", "coder", self.container_name,
+                         "test", "-d", "/project/.git"],
+                        capture_output=True,
+                        text=True,
+                    )
+                    if check.returncode == 0:
+                        logger.info(f"Container {self.container_name}: repo cloned successfully")
+                        break
+                    logger.info(f"Waiting for container to clone repo (attempt {attempt + 1}/30)")
+                else:
+                    return False, "Container failed to clone repo after 60 seconds"
+
                 # Wait for agent app to be available
                 # If forcing Claude SDK (e.g., for initializer), always check for Claude SDK
                 use_opencode = self._is_opencode_model() and not self._force_claude_sdk
@@ -1110,6 +1180,7 @@ class ContainerManager:
         - 131: Context limit reached (restart with fresh context)
 
         Agent flow:
+        - If init container → just stop, never restart
         - If open features exist → restart coding agent
         - If no open features:
           - If last agent was NOT overseer → restart with overseer
@@ -1121,6 +1192,16 @@ class ContainerManager:
         Returns:
             Tuple of (success, message)
         """
+        # Init containers never restart - they complete their task and stop
+        if self._is_init_container:
+            logger.info(f"Init container {self.container_name} completed with exit code {exit_code}")
+            await self._broadcast_output(f"[System] Init container completed (exit code: {exit_code})")
+            await self.stop()
+            if exit_code == 0:
+                return True, "Init container completed successfully"
+            else:
+                return False, f"Init container failed with exit code {exit_code}"
+
         # Handle context limit - exit code 131 (restart with fresh context)
         if exit_code == 131:
             logger.info(f"Context limit reached in {self.container_name}, restarting with fresh context...")
@@ -1571,6 +1652,8 @@ class ContainerManager:
         return {
             "status": self.status,
             "container_name": self.container_name,
+            "container_type": self.container_type,
+            "container_number": self.container_number,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "idle_seconds": self.get_idle_seconds(),
             "agent_running": self.is_agent_running(),
@@ -1590,7 +1673,18 @@ def get_container_manager(
     container_number: int = 1,
     project_dir: Path | None = None,
 ) -> ContainerManager:
-    """Get or create a container manager for a project and container number (thread-safe)."""
+    """
+    Get or create a container manager for a project and container number (thread-safe).
+
+    Args:
+        project_name: Name of the project
+        git_url: Git URL for the project repository
+        container_number: Container number (0 = init container, 1-10 = coding containers)
+        project_dir: Optional local clone path for wizard/edit mode
+
+    Returns:
+        ContainerManager instance for the specified project and container number
+    """
     with _managers_lock:
         if project_name not in _managers:
             _managers[project_name] = {}
@@ -1607,6 +1701,31 @@ def get_all_container_managers(project_name: str) -> list[ContainerManager]:
         if project_name not in _managers:
             return []
         return list(_managers[project_name].values())
+
+
+def get_init_container_manager(
+    project_name: str,
+    git_url: str,
+    project_dir: Path | None = None,
+) -> ContainerManager:
+    """
+    Get or create the init container manager for a project (thread-safe).
+
+    Init containers (container_number=0) are special containers that:
+    - Run EVERY startup before coding containers
+    - Perform recovery (in_progress -> open) for existing projects
+    - Run initializer prompt for new projects
+    - Exit after completing their task (never loop/restart)
+
+    Args:
+        project_name: Name of the project
+        git_url: Git URL for the project repository
+        project_dir: Optional local clone path for wizard/edit mode
+
+    Returns:
+        ContainerManager instance for the init container
+    """
+    return get_container_manager(project_name, git_url, container_number=0, project_dir=project_dir)
 
 
 def clear_container_manager(project_name: str, container_number: int | None = None) -> None:
