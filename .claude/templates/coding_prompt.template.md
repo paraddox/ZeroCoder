@@ -370,10 +370,14 @@ git pull origin main
 git merge "$FEATURE_BRANCH" --no-ff -m "Merge: $FEATURE_TITLE"
 git push origin main
 
-# 5. Sync beads state
+# 5. Delete feature branch (local and remote)
+git branch -d "$FEATURE_BRANCH"
+git push origin --delete "$FEATURE_BRANCH" 2>/dev/null || true
+
+# 6. Sync beads state
 safe_bd_sync
 
-# 6. Exit - container manager will clean up the branch
+# 7. Exit
 ```
 
 **Why agent handles merge**:
