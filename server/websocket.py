@@ -232,15 +232,55 @@ async def project_websocket(websocket: WebSocket, project_name: str):
 
     # Register callbacks for all containers and store them for cleanup
     registered_callbacks: list[tuple] = []  # (manager, output_cb, status_cb)
+    registered_container_nums: set[int] = set()
     for cm in all_managers:
         output_cb = make_output_callback(cm.container_number)
         status_cb = make_status_callback(cm.container_number)
         cm.add_output_callback(output_cb)
         cm.add_status_callback(status_cb)
         registered_callbacks.append((cm, output_cb, status_cb))
+        registered_container_nums.add(cm.container_number)
 
-    # Start progress polling task
+    # Background task to register callbacks for newly created containers
+    async def register_new_container_callbacks():
+        """Periodically check for new containers and register callbacks."""
+        logger.info(f"[WS] Started callback registration task for {project_name}")
+        while True:
+            try:
+                await asyncio.sleep(2)  # Check every 2 seconds
+
+                current_managers = get_all_container_managers(project_name)
+                if current_managers:
+                    logger.info(f"[WS] Found {len(current_managers)} managers, registered: {registered_container_nums}")
+                for cm in current_managers:
+                    if cm.container_number not in registered_container_nums:
+                        # New container found - register callbacks
+                        output_cb = make_output_callback(cm.container_number)
+                        status_cb = make_status_callback(cm.container_number)
+                        cm.add_output_callback(output_cb)
+                        cm.add_status_callback(status_cb)
+                        registered_callbacks.append((cm, output_cb, status_cb))
+                        registered_container_nums.add(cm.container_number)
+
+                        logger.info(f"Registered callbacks for new container {cm.container_number}")
+
+                        # Send updated containers list to UI
+                        containers = _list_project_containers(project_name)
+                        await websocket.send_json({
+                            "type": "containers",
+                            "containers": [
+                                {"number": c["container_number"], "type": c["container_type"]}
+                                for c in containers
+                            ],
+                        })
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"Error checking for new containers: {e}")
+
+    # Start background tasks
     poll_task = asyncio.create_task(poll_progress(websocket, project_name, project_dir))
+    callback_registration_task = asyncio.create_task(register_new_container_callbacks())
 
     try:
         # Send initial status
@@ -291,10 +331,15 @@ async def project_websocket(websocket: WebSocket, project_name: str):
                 break
 
     finally:
-        # Clean up
+        # Clean up background tasks
         poll_task.cancel()
+        callback_registration_task.cancel()
         try:
             await poll_task
+        except asyncio.CancelledError:
+            pass
+        try:
+            await callback_registration_task
         except asyncio.CancelledError:
             pass
 
