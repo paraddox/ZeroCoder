@@ -2,8 +2,12 @@
 Project Registry Module
 =======================
 
-Cross-platform project registry for storing project name to path mappings.
+Cross-platform project registry for storing project name to git URL mappings.
 Uses SQLite database stored at ~/.zerocoder/registry.db.
+
+Local clones are stored at:
+- ~/.zerocoder/projects/{name}/ - Full clone for wizard and edit mode
+- ~/.zerocoder/beads-sync/{name}/ - beads-sync branch clone for task state
 """
 
 import logging
@@ -14,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text, create_engine
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
@@ -58,8 +62,38 @@ class Project(Base):
     __tablename__ = "projects"
 
     name = Column(String(50), primary_key=True, index=True)
-    path = Column(String, nullable=False)  # POSIX format for cross-platform
+    git_url = Column(String, nullable=False)  # git@github.com:user/repo.git or https://...
+    is_new = Column(Boolean, default=True)  # True until wizard completed
+    target_container_count = Column(Integer, default=1)  # 1-10 parallel agents
     created_at = Column(DateTime, nullable=False)
+
+    @property
+    def local_path(self) -> Path:
+        """Get the local clone path for this project."""
+        return get_projects_dir() / self.name
+
+    @property
+    def beads_sync_path(self) -> Path:
+        """Get the beads-sync clone path for this project."""
+        return get_beads_sync_dir() / self.name
+
+
+class Container(Base):
+    """SQLAlchemy model for container instances."""
+    __tablename__ = "containers"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    project_name = Column(String(50), ForeignKey("projects.name", ondelete="CASCADE"), nullable=False, index=True)
+    container_number = Column(Integer, nullable=False)
+    container_type = Column(String(20), default='coding')  # 'init' or 'coding'
+    docker_container_id = Column(String(100), nullable=True)
+    status = Column(String(20), default='created')  # 'created', 'running', 'stopping', 'stopped'
+    current_feature = Column(String(50), nullable=True)  # beads-42
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint('project_name', 'container_number', 'container_type', name='uq_container_identity'),
+    )
 
 
 class FeatureCache(Base):
@@ -129,6 +163,30 @@ def get_config_dir() -> Path:
     return config_dir
 
 
+def get_projects_dir() -> Path:
+    """
+    Get the projects directory for local clones.
+
+    Returns:
+        Path to ~/.zerocoder/projects/ (created if it doesn't exist)
+    """
+    projects_dir = get_config_dir() / "projects"
+    projects_dir.mkdir(parents=True, exist_ok=True)
+    return projects_dir
+
+
+def get_beads_sync_dir() -> Path:
+    """
+    Get the beads-sync directory for beads-sync branch clones.
+
+    Returns:
+        Path to ~/.zerocoder/beads-sync/ (created if it doesn't exist)
+    """
+    beads_sync_dir = get_config_dir() / "beads-sync"
+    beads_sync_dir.mkdir(parents=True, exist_ok=True)
+    return beads_sync_dir
+
+
 def get_registry_path() -> Path:
     """Get the path to the registry database."""
     return get_config_dir() / "registry.db"
@@ -178,16 +236,17 @@ def _get_session():
 # Project CRUD Functions
 # =============================================================================
 
-def register_project(name: str, path: Path) -> None:
+def register_project(name: str, git_url: str, is_new: bool = True) -> None:
     """
     Register a new project in the registry.
 
     Args:
         name: The project name (unique identifier).
-        path: The absolute path to the project directory.
+        git_url: Git repository URL (https:// or git@).
+        is_new: True if this is a new project needing wizard setup.
 
     Raises:
-        ValueError: If project name is invalid or path is not absolute.
+        ValueError: If project name is invalid or git_url is invalid.
         RegistryError: If a project with that name already exists.
     """
     # Validate name
@@ -197,8 +256,9 @@ def register_project(name: str, path: Path) -> None:
             "and underscores (1-50 chars)."
         )
 
-    # Ensure path is absolute
-    path = Path(path).resolve()
+    # Validate git URL
+    if not (git_url.startswith('https://') or git_url.startswith('git@')):
+        raise ValueError("Invalid git URL. Must start with https:// or git@")
 
     with _get_session() as session:
         existing = session.query(Project).filter(Project.name == name).first()
@@ -208,12 +268,14 @@ def register_project(name: str, path: Path) -> None:
 
         project = Project(
             name=name,
-            path=path.as_posix(),
+            git_url=git_url,
+            is_new=is_new,
+            target_container_count=1,
             created_at=datetime.now()
         )
         session.add(project)
 
-    logger.info("Registered project '%s' at path: %s", name, path)
+    logger.info("Registered project '%s' with git URL: %s", name, git_url)
 
 
 def unregister_project(name: str) -> bool:
@@ -240,13 +302,13 @@ def unregister_project(name: str) -> bool:
 
 def get_project_path(name: str) -> Path | None:
     """
-    Look up a project's path by name.
+    Look up a project's local clone path by name.
 
     Args:
         name: The project name.
 
     Returns:
-        The project Path, or None if not found.
+        The project local clone Path, or None if not found.
     """
     _, SessionLocal = _get_engine()
     session = SessionLocal()
@@ -254,7 +316,28 @@ def get_project_path(name: str) -> Path | None:
         project = session.query(Project).filter(Project.name == name).first()
         if project is None:
             return None
-        return Path(project.path)
+        return get_projects_dir() / name
+    finally:
+        session.close()
+
+
+def get_project_git_url(name: str) -> str | None:
+    """
+    Look up a project's git URL by name.
+
+    Args:
+        name: The project name.
+
+    Returns:
+        The project git URL, or None if not found.
+    """
+    _, SessionLocal = _get_engine()
+    session = SessionLocal()
+    try:
+        project = session.query(Project).filter(Project.name == name).first()
+        if project is None:
+            return None
+        return project.git_url
     finally:
         session.close()
 
@@ -272,7 +355,10 @@ def list_registered_projects() -> dict[str, dict[str, Any]]:
         projects = session.query(Project).all()
         return {
             p.name: {
-                "path": p.path,
+                "git_url": p.git_url,
+                "is_new": p.is_new,
+                "target_container_count": p.target_container_count,
+                "local_path": (get_projects_dir() / p.name).as_posix(),
                 "created_at": p.created_at.isoformat() if p.created_at else None
             }
             for p in projects
@@ -298,32 +384,80 @@ def get_project_info(name: str) -> dict[str, Any] | None:
         if project is None:
             return None
         return {
-            "path": project.path,
+            "git_url": project.git_url,
+            "is_new": project.is_new,
+            "target_container_count": project.target_container_count,
+            "local_path": (get_projects_dir() / project.name).as_posix(),
             "created_at": project.created_at.isoformat() if project.created_at else None
         }
     finally:
         session.close()
 
 
-def update_project_path(name: str, new_path: Path) -> bool:
+def update_project_git_url(name: str, new_git_url: str) -> bool:
     """
-    Update a project's path (for relocating projects).
+    Update a project's git URL.
 
     Args:
         name: The project name.
-        new_path: The new absolute path.
+        new_git_url: The new git URL.
 
     Returns:
         True if updated, False if project wasn't found.
     """
-    new_path = Path(new_path).resolve()
+    if not (new_git_url.startswith('https://') or new_git_url.startswith('git@')):
+        raise ValueError("Invalid git URL. Must start with https:// or git@")
 
     with _get_session() as session:
         project = session.query(Project).filter(Project.name == name).first()
         if not project:
             return False
 
-        project.path = new_path.as_posix()
+        project.git_url = new_git_url
+
+    return True
+
+
+def mark_project_initialized(name: str) -> bool:
+    """
+    Mark a project as initialized (wizard completed).
+
+    Args:
+        name: The project name.
+
+    Returns:
+        True if updated, False if project wasn't found.
+    """
+    with _get_session() as session:
+        project = session.query(Project).filter(Project.name == name).first()
+        if not project:
+            return False
+
+        project.is_new = False
+
+    return True
+
+
+def update_target_container_count(name: str, count: int) -> bool:
+    """
+    Update a project's target container count.
+
+    Args:
+        name: The project name.
+        count: The target container count (1-10).
+
+    Returns:
+        True if updated, False if project wasn't found.
+    """
+    if not 1 <= count <= 10:
+        raise ValueError("Container count must be between 1 and 10")
+
+    with _get_session() as session:
+        project = session.query(Project).filter(Project.name == name).first()
+        if not project:
+            return False
+
+        project.target_container_count = count
 
     return True
 
@@ -363,9 +497,28 @@ def validate_project_path(path: Path) -> tuple[bool, str]:
     return True, ""
 
 
+def validate_git_url(git_url: str) -> tuple[bool, str]:
+    """
+    Validate that a git URL is properly formatted.
+
+    Args:
+        git_url: The git URL to validate.
+
+    Returns:
+        Tuple of (is_valid, error_message).
+    """
+    if not git_url:
+        return False, "Git URL cannot be empty"
+
+    if not (git_url.startswith('https://') or git_url.startswith('git@')):
+        return False, "Git URL must start with https:// or git@"
+
+    return True, ""
+
+
 def cleanup_stale_projects() -> list[str]:
     """
-    Remove projects from registry whose paths no longer exist.
+    Remove projects from registry whose local clones no longer exist.
 
     Returns:
         List of removed project names.
@@ -375,8 +528,8 @@ def cleanup_stale_projects() -> list[str]:
     with _get_session() as session:
         projects = session.query(Project).all()
         for project in projects:
-            path = Path(project.path)
-            if not path.exists():
+            local_path = get_projects_dir() / project.name
+            if not local_path.exists():
                 session.delete(project)
                 removed.append(project.name)
 
@@ -388,7 +541,7 @@ def cleanup_stale_projects() -> list[str]:
 
 def list_valid_projects() -> list[dict[str, Any]]:
     """
-    List all projects that have valid, accessible paths.
+    List all projects that have valid, accessible local clones.
 
     Returns:
         List of project info dicts with additional 'name' field.
@@ -399,14 +552,182 @@ def list_valid_projects() -> list[dict[str, Any]]:
         projects = session.query(Project).all()
         valid = []
         for p in projects:
-            path = Path(p.path)
-            is_valid, _ = validate_project_path(path)
+            local_path = get_projects_dir() / p.name
+            is_valid, _ = validate_project_path(local_path)
             if is_valid:
                 valid.append({
                     "name": p.name,
-                    "path": p.path,
+                    "git_url": p.git_url,
+                    "is_new": p.is_new,
+                    "target_container_count": p.target_container_count,
+                    "local_path": local_path.as_posix(),
                     "created_at": p.created_at.isoformat() if p.created_at else None
                 })
         return valid
     finally:
         session.close()
+
+
+# =============================================================================
+# Container CRUD Functions
+# =============================================================================
+
+def create_container(project_name: str, container_number: int, container_type: str = 'coding') -> int:
+    """
+    Create a new container record.
+
+    Args:
+        project_name: The project this container belongs to.
+        container_number: The container number (1-10).
+        container_type: 'init' or 'coding'.
+
+    Returns:
+        The created container's ID.
+    """
+    with _get_session() as session:
+        container = Container(
+            project_name=project_name,
+            container_number=container_number,
+            container_type=container_type,
+            status='created',
+            created_at=datetime.now()
+        )
+        session.add(container)
+        session.flush()
+        return container.id
+
+
+def get_container(project_name: str, container_number: int, container_type: str = 'coding') -> dict[str, Any] | None:
+    """
+    Get a container record by project, number, and type.
+
+    Returns:
+        Container info dict, or None if not found.
+    """
+    _, SessionLocal = _get_engine()
+    session = SessionLocal()
+    try:
+        container = session.query(Container).filter(
+            Container.project_name == project_name,
+            Container.container_number == container_number,
+            Container.container_type == container_type
+        ).first()
+
+        if not container:
+            return None
+
+        return {
+            "id": container.id,
+            "project_name": container.project_name,
+            "container_number": container.container_number,
+            "container_type": container.container_type,
+            "docker_container_id": container.docker_container_id,
+            "status": container.status,
+            "current_feature": container.current_feature,
+            "created_at": container.created_at.isoformat() if container.created_at else None
+        }
+    finally:
+        session.close()
+
+
+def list_project_containers(project_name: str, container_type: str | None = None) -> list[dict[str, Any]]:
+    """
+    List all containers for a project.
+
+    Args:
+        project_name: The project name.
+        container_type: Filter by type ('init', 'coding'), or None for all.
+
+    Returns:
+        List of container info dicts.
+    """
+    _, SessionLocal = _get_engine()
+    session = SessionLocal()
+    try:
+        query = session.query(Container).filter(Container.project_name == project_name)
+        if container_type:
+            query = query.filter(Container.container_type == container_type)
+
+        containers = query.order_by(Container.container_number).all()
+        return [
+            {
+                "id": c.id,
+                "project_name": c.project_name,
+                "container_number": c.container_number,
+                "container_type": c.container_type,
+                "docker_container_id": c.docker_container_id,
+                "status": c.status,
+                "current_feature": c.current_feature,
+                "created_at": c.created_at.isoformat() if c.created_at else None
+            }
+            for c in containers
+        ]
+    finally:
+        session.close()
+
+
+def update_container_status(
+    project_name: str,
+    container_number: int,
+    container_type: str = 'coding',
+    status: str | None = None,
+    docker_container_id: str | None = None,
+    current_feature: str | None = None
+) -> bool:
+    """
+    Update a container's status and/or docker ID.
+
+    Returns:
+        True if updated, False if not found.
+    """
+    with _get_session() as session:
+        container = session.query(Container).filter(
+            Container.project_name == project_name,
+            Container.container_number == container_number,
+            Container.container_type == container_type
+        ).first()
+
+        if not container:
+            return False
+
+        if status is not None:
+            container.status = status
+        if docker_container_id is not None:
+            container.docker_container_id = docker_container_id
+        if current_feature is not None:
+            container.current_feature = current_feature
+
+    return True
+
+
+def delete_container(project_name: str, container_number: int, container_type: str = 'coding') -> bool:
+    """
+    Delete a container record.
+
+    Returns:
+        True if deleted, False if not found.
+    """
+    with _get_session() as session:
+        container = session.query(Container).filter(
+            Container.project_name == project_name,
+            Container.container_number == container_number,
+            Container.container_type == container_type
+        ).first()
+
+        if not container:
+            return False
+
+        session.delete(container)
+    return True
+
+
+def delete_all_project_containers(project_name: str) -> int:
+    """
+    Delete all container records for a project.
+
+    Returns:
+        Number of containers deleted.
+    """
+    with _get_session() as session:
+        deleted = session.query(Container).filter(Container.project_name == project_name).delete()
+    return deleted

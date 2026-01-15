@@ -49,6 +49,61 @@ Fix all warnings and issues that this reports. if there are any errors/warnings 
 
 **DO NOT** spend more than 3 minutes on orientation. Get the basics and move on.
 
+### STEP 1.5: CLAIM FEATURE (Distributed Lock)
+
+The container manager has already pulled latest code and synced beads.
+Now claim a feature using distributed lock:
+
+```bash
+# Try to claim the first ready feature
+claim_feature() {
+    local feature_id=$(bd ready --json 2>/dev/null | jq -r '.[0].id // empty')
+
+    if [ -z "$feature_id" ]; then
+        echo "No features ready to work on"
+        return 1
+    fi
+
+    # Try to claim it
+    bd update "$feature_id" --status=in_progress 2>/dev/null
+    if [ $? -eq 0 ]; then
+        echo "$feature_id"
+        return 0
+    else
+        echo "Feature $feature_id already claimed, trying next..."
+        return 2  # Retry with next
+    fi
+}
+
+# Retry loop with backoff
+MAX_RETRIES=5
+for i in $(seq 1 $MAX_RETRIES); do
+    FEATURE_ID=$(claim_feature)
+    if [ $? -eq 0 ]; then
+        break
+    elif [ $? -eq 1 ]; then
+        echo "No work available - exiting"
+        exit 0
+    fi
+    sleep $((i * 2))  # Backoff
+    bd sync  # Refresh state
+done
+
+if [ -z "$FEATURE_ID" ]; then
+    echo "Could not claim any feature after $MAX_RETRIES attempts"
+    exit 0
+fi
+
+# Create feature branch
+FEATURE_TITLE=$(bd show "$FEATURE_ID" --json | jq -r '.title' | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd '[:alnum:]-' | cut -c1-30)
+BRANCH="feature/${FEATURE_ID}-${FEATURE_TITLE}"
+git checkout -b "$BRANCH"
+
+echo "Claimed $FEATURE_ID, working on branch $BRANCH"
+```
+
+**NOTE**: The container manager handles git pull/push and bd sync. Focus on implementing the feature.
+
 ### STEP 2: START SERVERS
 
 ```bash
@@ -166,24 +221,29 @@ bd close <feature-id>
 git add . && git commit -m "Implement: <feature name>"
 ```
 
-### STEP 4: VERIFY 3 OTHER FEATURES (AFTER IMPLEMENTING)
+### STEP 4: VERIFY 3 RANDOM CLOSED FEATURES
 
-**Only do this AFTER completing Step 3.**
+After implementing your feature, verify 3 randomly selected closed features.
 
-Quick regression check on 3 previously CLOSED features (NOT the one you just finished):
+**IMPORTANT**: Pick RANDOM features to avoid all parallel agents checking the same ones.
 
 ```bash
-bd list --status=closed --limit 4
+# Get 3 random closed features (not the one you just implemented)
+CLOSED_FEATURES=$(bd list --status=closed --json | jq -r '.[].id' | grep -v "$FEATURE_ID" | shuf | head -3)
+
+for feature_id in $CLOSED_FEATURES; do
+    echo "Verifying: $feature_id"
+    bd show "$feature_id"
+    # Quick functional check - does it still work?
+    # If broken, note it but do NOT change status
+done
 ```
 
-Pick 3 features (skip the one you just closed) and quickly verify they still work.
-
-**⚠️ VERIFICATION RULES:**
-- **ONLY verify CLOSED features** - NEVER verify open or in_progress features
-- **NEVER close a feature during verification** - You can only close a feature you implemented in Step 3
-- If a verified feature is broken, note it and fix it, but do NOT change its status
+**Rules**:
+- Only verify CLOSED features
+- Pick randomly using `shuf` to distribute verification across agents
+- If a feature is broken, note it but do NOT reopen (that's Hound's job)
 - Spend MAX 5 minutes total on verification
-- Do NOT get stuck in verification mode
 
 ### STEP 5: UPDATE ARTIFACTS + END SESSION
 
@@ -213,17 +273,44 @@ If you discovered new patterns, gotchas, or commands that would help future sess
 
 **Size limit:** Keep AGENTS.md under 300 lines. If it's getting long, consolidate entries or remove outdated information instead of just appending.
 
-#### 5.3 Commit, Sync, and Push
+#### 5.3 Merge, Push, and Sync (Agent Handles Conflicts)
+
+You are responsible for merging your work to main. Handle any conflicts.
 
 ```bash
-git add . && git commit -m "Implement: <feature name>"
+# 1. Commit your work on feature branch
+git add .
+git commit -m "Implement: <feature name>"
+
+# 2. Fetch latest main and merge INTO your branch (resolve conflicts here)
+git fetch origin main
+git merge origin/main --no-edit
+
+# If conflicts occur:
+# - Review conflicting files
+# - Resolve conflicts (keep your changes + integrate main's changes)
+# - git add <resolved files>
+# - git commit -m "Resolve merge conflicts with main"
+
+# 3. Push your feature branch
+git push -u origin "$(git branch --show-current)"
+
+# 4. Merge to main (should be clean now - fast-forward or no conflicts)
+git checkout main
+git pull origin main
+git merge "$(git branch --show-current)" --no-ff -m "Merge: <feature name>"
+git push origin main
+
+# 5. Sync beads state
 bd sync
 
-# Push to remote if configured
-if git remote | grep -q origin; then
-    git push origin main
-fi
+# 6. Exit - container manager will clean up the branch
 ```
+
+**Why agent handles merge**:
+- You understand the code context
+- You can resolve conflicts intelligently
+- Container manager only handles cleanup after you exit
 
 **IMPORTANT: Exit now. Do NOT start another feature.**
 The system will automatically start a fresh session for the next task.

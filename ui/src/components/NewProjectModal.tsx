@@ -1,27 +1,21 @@
 /**
  * New Project Modal Component
  *
- * Multi-step modal for creating new projects:
- * 1. Enter project name
- * 2. Select project folder
- * 3. Choose spec method (Claude or manual)
- * 4a. If Claude: Show SpecCreationChat
- * 4b. If manual: Create project and close
- *
- * Also supports resuming an interrupted wizard via resumeState prop.
+ * Two flows:
+ * 1. New Project: mode → details (name + git URL) → method (Claude/manual) → wizard
+ * 2. Existing Project: mode → details (name + git URL) → done
  */
 
 import { useState, useEffect, useCallback } from 'react'
-import { X, Bot, FileEdit, ArrowRight, ArrowLeft, Loader2, CheckCircle2, Folder } from 'lucide-react'
-import { useCreateProject } from '../hooks/useProjects'
+import { X, Bot, FileEdit, ArrowRight, ArrowLeft, Loader2, CheckCircle2, GitBranch, Plus, FolderGit2 } from 'lucide-react'
+import { useCreateProject, useAddExistingRepo } from '../hooks/useProjects'
 import { SpecCreationChat } from './SpecCreationChat'
-import { FolderBrowser } from './FolderBrowser'
 import { startAgent, updateWizardStatus, deleteWizardStatus } from '../lib/api'
 import type { WizardStatus, WizardStep, SpecMethod as SpecMethodType } from '../lib/types'
 
 type InitializerStatus = 'idle' | 'starting' | 'error'
-
-type Step = 'name' | 'folder' | 'method' | 'chat' | 'complete'
+type ProjectMode = 'new' | 'existing'
+type Step = 'mode' | 'details' | 'method' | 'chat' | 'complete'
 type SpecMethod = 'claude' | 'manual'
 
 interface NewProjectModalProps {
@@ -40,9 +34,10 @@ export function NewProjectModal({
   resumeProjectName,
   resumeState,
 }: NewProjectModalProps) {
-  const [step, setStep] = useState<Step>('name')
+  const [step, setStep] = useState<Step>('mode')
+  const [mode, setMode] = useState<ProjectMode>('new')
   const [projectName, setProjectName] = useState('')
-  const [projectPath, setProjectPath] = useState<string | null>(null)
+  const [gitUrl, setGitUrl] = useState('')
   const [specMethod, setSpecMethod] = useState<SpecMethod | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [initializerStatus, setInitializerStatus] = useState<InitializerStatus>('idle')
@@ -51,6 +46,7 @@ export function NewProjectModal({
   const [isResuming, setIsResuming] = useState(false)
 
   const createProject = useCreateProject()
+  const addExistingRepo = useAddExistingRepo()
 
   // Initialize state from resume data
   useEffect(() => {
@@ -59,8 +55,8 @@ export function NewProjectModal({
       setProjectName(resumeProjectName)
       // Map wizard step to modal step
       const stepMap: Record<WizardStep, Step> = {
-        'name': 'name',
-        'folder': 'folder',
+        'mode': 'mode',
+        'details': 'details',
         'method': 'method',
         'chat': 'chat',
       }
@@ -80,7 +76,7 @@ export function NewProjectModal({
     if (newStep === 'complete') return
 
     try {
-      const wizardStep: WizardStep = newStep === 'chat' ? 'chat' : newStep
+      const wizardStep: WizardStep = newStep === 'chat' ? 'chat' : newStep as WizardStep
       await updateWizardStatus(projectName.trim(), {
         step: wizardStep,
         spec_method: (method ?? specMethod) as SpecMethodType | null,
@@ -95,55 +91,79 @@ export function NewProjectModal({
 
   if (!isOpen) return null
 
-  const handleNameSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    const trimmed = projectName.trim()
+  const handleModeSelect = (selectedMode: ProjectMode) => {
+    setMode(selectedMode)
+    setStep('details')
+  }
 
-    if (!trimmed) {
+  const handleDetailsSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const trimmedName = projectName.trim()
+    const trimmedUrl = gitUrl.trim()
+
+    if (!trimmedName) {
       setError('Please enter a project name')
       return
     }
 
-    if (!/^[a-zA-Z0-9_-]+$/.test(trimmed)) {
+    if (!/^[a-zA-Z0-9_-]+$/.test(trimmedName)) {
       setError('Project name can only contain letters, numbers, hyphens, and underscores')
       return
     }
 
+    if (!trimmedUrl) {
+      setError('Please enter a git repository URL')
+      return
+    }
+
+    // Basic git URL validation
+    if (!trimmedUrl.startsWith('git@') && !trimmedUrl.startsWith('https://') && !trimmedUrl.startsWith('http://')) {
+      setError('Please enter a valid git URL (SSH or HTTPS)')
+      return
+    }
+
     setError(null)
-    setStep('folder')
-    await persistWizardState('folder')
-  }
 
-  const handleFolderSelect = async (path: string) => {
-    // Append project name to the selected path
-    const fullPath = path.endsWith('/') ? `${path}${projectName.trim()}` : `${path}/${projectName.trim()}`
-    setProjectPath(fullPath)
-    setStep('method')
-    await persistWizardState('method')
-  }
-
-  const handleFolderCancel = () => {
-    setStep('name')
+    if (mode === 'existing') {
+      // Create project with existing repo (is_new = false)
+      try {
+        await addExistingRepo.mutateAsync({
+          name: trimmedName,
+          gitUrl: trimmedUrl,
+        })
+        setStep('complete')
+        setTimeout(() => {
+          onProjectCreated(trimmedName)
+          handleClose()
+        }, 1500)
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : 'Failed to add project')
+      }
+    } else {
+      // New project - go to method selection
+      setStep('method')
+      await persistWizardState('method')
+    }
   }
 
   const handleMethodSelect = async (method: SpecMethod) => {
     setSpecMethod(method)
 
-    // For resuming, we may not have projectPath but the project already exists
-    if (!projectPath && !isResuming) {
-      setError('Please select a project folder first')
-      setStep('folder')
+    // For resuming, we may not have gitUrl but the project already exists
+    if (!gitUrl.trim() && !isResuming) {
+      setError('Please enter a git repository URL')
+      setStep('details')
       return
     }
 
     if (method === 'manual') {
       // Create project immediately with manual method (skip if resuming)
       try {
-        if (!isResuming && projectPath) {
+        if (!isResuming) {
           const project = await createProject.mutateAsync({
             name: projectName.trim(),
-            path: projectPath,
-            specMethod: 'manual',
+            gitUrl: gitUrl.trim(),
+            isNew: true,
           })
           // Clean up wizard status on completion
           await deleteWizardStatus(project.name).catch(() => {})
@@ -159,11 +179,11 @@ export function NewProjectModal({
     } else {
       // Create project then show chat (skip creation if resuming)
       try {
-        if (!isResuming && projectPath) {
+        if (!isResuming) {
           await createProject.mutateAsync({
             name: projectName.trim(),
-            path: projectPath,
-            specMethod: 'claude',
+            gitUrl: gitUrl.trim(),
+            isNew: true,
           })
         }
         setStep('chat')
@@ -216,9 +236,10 @@ export function NewProjectModal({
   }
 
   const handleClose = () => {
-    setStep('name')
+    setStep('mode')
+    setMode('new')
     setProjectName('')
-    setProjectPath(null)
+    setGitUrl('')
     setSpecMethod(null)
     setError(null)
     setInitializerStatus('idle')
@@ -230,11 +251,12 @@ export function NewProjectModal({
 
   const handleBack = () => {
     if (step === 'method') {
-      setStep('folder')
+      setStep('details')
       setSpecMethod(null)
-    } else if (step === 'folder') {
-      setStep('name')
-      setProjectPath(null)
+    } else if (step === 'details') {
+      setStep('mode')
+      setProjectName('')
+      setGitUrl('')
     }
   }
 
@@ -255,47 +277,6 @@ export function NewProjectModal({
     )
   }
 
-  // Folder step uses larger modal
-  if (step === 'folder') {
-    return (
-      <div className="modal-backdrop" onClick={handleClose}>
-        <div
-          className="modal w-full max-w-3xl max-h-[85vh] flex flex-col"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {/* Header */}
-          <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)]">
-            <div className="flex items-center gap-3">
-              <Folder size={24} className="text-[var(--color-accent)]" />
-              <div>
-                <h2 className="font-medium text-xl text-[var(--color-text)]">
-                  Select Project Location
-                </h2>
-                <p className="text-sm text-[var(--color-text-secondary)]">
-                  A folder named <span className="font-medium font-mono">{projectName}</span> will be created inside the selected directory
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={handleClose}
-              className="btn btn-ghost p-2"
-            >
-              <X size={20} />
-            </button>
-          </div>
-
-          {/* Folder Browser */}
-          <div className="flex-1 overflow-hidden">
-            <FolderBrowser
-              onSelect={handleFolderSelect}
-              onCancel={handleFolderCancel}
-            />
-          </div>
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div className="modal-backdrop" onClick={handleClose}>
       <div
@@ -305,9 +286,10 @@ export function NewProjectModal({
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)]">
           <h2 className="font-medium text-xl text-[var(--color-text)]">
-            {step === 'name' && 'Create New Project'}
+            {step === 'mode' && 'Add Project'}
+            {step === 'details' && (mode === 'new' ? 'New Project' : 'Add Existing Project')}
             {step === 'method' && 'Choose Setup Method'}
-            {step === 'complete' && 'Project Created!'}
+            {step === 'complete' && 'Project Added!'}
           </h2>
           <button
             onClick={handleClose}
@@ -319,10 +301,73 @@ export function NewProjectModal({
 
         {/* Content */}
         <div className="p-6">
-          {/* Step 1: Project Name */}
-          {step === 'name' && (
-            <form onSubmit={handleNameSubmit}>
-              <div className="mb-6">
+          {/* Step 1: Mode Selection */}
+          {step === 'mode' && (
+            <div>
+              <p className="text-[var(--color-text-secondary)] mb-6">
+                What would you like to do?
+              </p>
+
+              <div className="space-y-4">
+                {/* New Project option */}
+                <button
+                  onClick={() => handleModeSelect('new')}
+                  className={`
+                    w-full text-left p-4
+                    border border-[var(--color-border)]
+                    bg-[var(--color-bg)]
+                    rounded-lg
+                    hover:bg-[var(--color-bg-elevated)]
+                    hover:border-[var(--color-accent)]
+                    transition-all duration-150
+                  `}
+                >
+                  <div className="flex items-start gap-4">
+                    <div className="p-2 bg-[var(--color-accent)] rounded-md">
+                      <Plus size={24} className="text-[var(--color-text-inverse)]" />
+                    </div>
+                    <div className="flex-1">
+                      <span className="font-medium text-lg text-[var(--color-text)]">New Project</span>
+                      <p className="text-sm text-[var(--color-text-secondary)] mt-1">
+                        Create a new application from scratch with AI-assisted specification.
+                      </p>
+                    </div>
+                  </div>
+                </button>
+
+                {/* Existing Project option */}
+                <button
+                  onClick={() => handleModeSelect('existing')}
+                  className={`
+                    w-full text-left p-4
+                    border border-[var(--color-border)]
+                    bg-[var(--color-bg)]
+                    rounded-lg
+                    hover:bg-[var(--color-bg-elevated)]
+                    hover:border-[var(--color-accent)]
+                    transition-all duration-150
+                  `}
+                >
+                  <div className="flex items-start gap-4">
+                    <div className="p-2 bg-[var(--color-warning)] rounded-md">
+                      <FolderGit2 size={24} className="text-[var(--color-text)]" />
+                    </div>
+                    <div className="flex-1">
+                      <span className="font-medium text-lg text-[var(--color-text)]">Existing Project</span>
+                      <p className="text-sm text-[var(--color-text-secondary)] mt-1">
+                        Add an existing repository that already has beads issues configured.
+                      </p>
+                    </div>
+                  </div>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Step 2: Project Details (Name + Git URL) */}
+          {step === 'details' && (
+            <form onSubmit={handleDetailsSubmit}>
+              <div className="mb-4">
                 <label className="block font-medium mb-2 text-[var(--color-text)]">
                   Project Name
                 </label>
@@ -332,11 +377,29 @@ export function NewProjectModal({
                   onChange={(e) => setProjectName(e.target.value)}
                   placeholder="my-awesome-app"
                   className="input"
-                  pattern="^[a-zA-Z0-9_-]+$"
                   autoFocus
                 />
                 <p className="text-sm text-[var(--color-text-secondary)] mt-2">
                   Use letters, numbers, hyphens, and underscores only.
+                </p>
+              </div>
+
+              <div className="mb-6">
+                <label className="block font-medium mb-2 text-[var(--color-text)]">
+                  <span className="flex items-center gap-2">
+                    <GitBranch size={16} />
+                    Git Repository URL
+                  </span>
+                </label>
+                <input
+                  type="text"
+                  value={gitUrl}
+                  onChange={(e) => setGitUrl(e.target.value)}
+                  placeholder="git@github.com:user/repo.git"
+                  className="input"
+                />
+                <p className="text-sm text-[var(--color-text-secondary)] mt-2">
+                  SSH (git@) or HTTPS URL to your repository
                 </p>
               </div>
 
@@ -346,20 +409,36 @@ export function NewProjectModal({
                 </div>
               )}
 
-              <div className="flex justify-end">
+              {(createProject.isPending || addExistingRepo.isPending) && (
+                <div className="mb-4 flex items-center justify-center gap-2 text-[var(--color-text-secondary)]">
+                  <Loader2 size={16} className="animate-spin" />
+                  <span>{mode === 'existing' ? 'Adding project...' : 'Creating project...'}</span>
+                </div>
+              )}
+
+              <div className="flex justify-between">
+                <button
+                  type="button"
+                  onClick={handleBack}
+                  className="btn btn-ghost"
+                  disabled={createProject.isPending || addExistingRepo.isPending}
+                >
+                  <ArrowLeft size={16} />
+                  Back
+                </button>
                 <button
                   type="submit"
                   className="btn btn-primary"
-                  disabled={!projectName.trim()}
+                  disabled={!projectName.trim() || !gitUrl.trim() || createProject.isPending || addExistingRepo.isPending}
                 >
-                  Next
+                  {mode === 'new' ? 'Next' : 'Add Project'}
                   <ArrowRight size={16} />
                 </button>
               </div>
             </form>
           )}
 
-          {/* Step 2: Spec Method */}
+          {/* Step 3: Spec Method (New projects only) */}
           {step === 'method' && (
             <div>
               <p className="text-[var(--color-text-secondary)] mb-6">
@@ -455,7 +534,7 @@ export function NewProjectModal({
             </div>
           )}
 
-          {/* Step 3: Complete */}
+          {/* Step 4: Complete */}
           {step === 'complete' && (
             <div className="text-center py-8">
               <div className="inline-flex items-center justify-center w-16 h-16 bg-[var(--color-done)] rounded-full mb-4">
@@ -465,7 +544,9 @@ export function NewProjectModal({
                 {projectName}
               </h3>
               <p className="text-[var(--color-text-secondary)]">
-                Your project has been created successfully!
+                {mode === 'existing'
+                  ? 'Your project has been added successfully!'
+                  : 'Your project has been created successfully!'}
               </p>
               <div className="mt-4 flex items-center justify-center gap-2">
                 <Loader2 size={16} className="animate-spin" />

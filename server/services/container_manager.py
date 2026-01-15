@@ -124,17 +124,22 @@ class ContainerManager:
     def __init__(
         self,
         project_name: str,
-        project_dir: Path,
+        git_url: str,
+        project_dir: Path | None = None,  # For local clone path (wizard/edit)
     ):
         """
         Initialize the container manager.
 
         Args:
             project_name: Name of the project
-            project_dir: Absolute path to the project directory
+            git_url: Git URL for the project repository
+            project_dir: Optional local clone path for wizard/edit mode
         """
         self.project_name = project_name
-        self.project_dir = project_dir
+        self.git_url = git_url
+        # Local clone path for wizard/edit mode
+        from registry import get_projects_dir
+        self.project_dir = project_dir or get_projects_dir() / project_name
         self.container_name = f"zerocoder-{project_name}"
 
         self._status: Literal["not_created", "running", "stopped", "completed"] = "not_created"
@@ -375,16 +380,16 @@ class ContainerManager:
         return self._user_started
 
     def has_open_features(self) -> bool:
-        """Check if project has open features remaining using cached stats."""
-        from .feature_poller import get_cached_stats
+        """Check if project has open features remaining using BeadsSyncManager."""
+        from .beads_sync_manager import get_beads_sync_manager
 
         try:
-            stats = get_cached_stats(self.project_name)
-            open_count = stats.get("pending", 0) + stats.get("in_progress", 0)
+            manager = get_beads_sync_manager(self.project_name, self.git_url)
+            stats = manager.get_stats()
+            open_count = stats.get("open", 0) + stats.get("in_progress", 0)
             return open_count > 0
         except Exception as e:
-            logger.warning(f"Failed to check open features from cache: {e}")
-            # Fallback to direct file read (may fail due to permissions)
+            logger.warning(f"Failed to check open features: {e}")
             return self._has_open_features_direct()
 
     def _has_open_features_direct(self) -> bool:
@@ -491,8 +496,9 @@ class ContainerManager:
                 cmd = [
                     "docker", "run", "-d",
                     "--name", self.container_name,
-                    "-v", f"{self.project_dir}:/project",
                 ]
+                # Pass git URL for cloning (container clones from git instead of volume mount)
+                cmd.extend(["-e", f"GIT_REMOTE_URL={self.git_url}"])
                 # Pass OAuth token if available
                 oauth_token = os.getenv("CLAUDE_CODE_OAUTH_TOKEN")
                 if oauth_token:
@@ -525,14 +531,6 @@ class ContainerManager:
                     expanded_path = os.path.expanduser(ssh_key_path)
                     if os.path.exists(expanded_path):
                         cmd.extend(["-v", f"{expanded_path}:/tmp/ssh_key:ro"])
-                # Construct remote URL from base + project name
-                git_remote_base = os.getenv("GIT_REMOTE_BASE")
-                if git_remote_base:
-                    # Ensure base ends with / or :
-                    if not git_remote_base.endswith('/') and not git_remote_base.endswith(':'):
-                        git_remote_base += '/'
-                    git_remote_url = f"{git_remote_base}{self.project_name}.git"
-                    cmd.extend(["-e", f"GIT_REMOTE_URL={git_remote_url}"])
                 cmd.append(CONTAINER_IMAGE)
 
                 result = subprocess.run(cmd, capture_output=True, text=True)
@@ -1233,8 +1231,9 @@ class ContainerManager:
                 cmd = [
                     "docker", "run", "-d",
                     "--name", self.container_name,
-                    "-v", f"{self.project_dir}:/project",
                 ]
+                # Pass git URL for cloning (container clones from git instead of volume mount)
+                cmd.extend(["-e", f"GIT_REMOTE_URL={self.git_url}"])
                 # Pass OAuth token if available
                 oauth_token = os.getenv("CLAUDE_CODE_OAUTH_TOKEN")
                 if oauth_token:
@@ -1267,14 +1266,6 @@ class ContainerManager:
                     expanded_path = os.path.expanduser(ssh_key_path)
                     if os.path.exists(expanded_path):
                         cmd.extend(["-v", f"{expanded_path}:/tmp/ssh_key:ro"])
-                # Construct remote URL from base + project name
-                git_remote_base = os.getenv("GIT_REMOTE_BASE")
-                if git_remote_base:
-                    # Ensure base ends with / or :
-                    if not git_remote_base.endswith('/') and not git_remote_base.endswith(':'):
-                        git_remote_base += '/'
-                    git_remote_url = f"{git_remote_base}{self.project_name}.git"
-                    cmd.extend(["-e", f"GIT_REMOTE_URL={git_remote_url}"])
                 cmd.append(CONTAINER_IMAGE)
 
                 result = subprocess.run(cmd, capture_output=True, text=True)
@@ -1316,12 +1307,13 @@ _managers_lock = threading.Lock()
 
 def get_container_manager(
     project_name: str,
-    project_dir: Path,
+    git_url: str,
+    project_dir: Path | None = None,
 ) -> ContainerManager:
     """Get or create a container manager for a project (thread-safe)."""
     with _managers_lock:
         if project_name not in _managers:
-            _managers[project_name] = ContainerManager(project_name, project_dir)
+            _managers[project_name] = ContainerManager(project_name, git_url, project_dir)
         return _managers[project_name]
 
 

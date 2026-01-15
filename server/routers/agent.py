@@ -25,7 +25,7 @@ _root = Path(__file__).parent.parent.parent
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
-from registry import get_project_path
+from registry import get_project_path, get_project_git_url
 from progress import has_features, has_open_features
 from prompts import (
     get_initializer_prompt,
@@ -36,9 +36,14 @@ from prompts import (
 )
 
 
-def _get_project_path(project_name: str) -> Path:
+def _get_project_path(project_name: str) -> Path | None:
     """Get project path from registry."""
     return get_project_path(project_name)
+
+
+def _get_project_git_url(project_name: str) -> str | None:
+    """Get project git URL from registry."""
+    return get_project_git_url(project_name)
 
 
 router = APIRouter(prefix="/api/projects/{project_name}/agent", tags=["agent"])
@@ -58,11 +63,18 @@ def get_project_container(project_name: str):
     """Get the container manager for a project."""
     project_name = validate_project_name(project_name)
     project_dir = _get_project_path(project_name)
+    git_url = _get_project_git_url(project_name)
 
     if not project_dir:
         raise HTTPException(
             status_code=404,
             detail=f"Project '{project_name}' not found in registry"
+        )
+
+    if not git_url:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Project '{project_name}' has no git URL"
         )
 
     if not project_dir.exists():
@@ -71,7 +83,7 @@ def get_project_container(project_name: str):
             detail=f"Project directory not found: {project_dir}"
         )
 
-    return get_container_manager(project_name, project_dir)
+    return get_container_manager(project_name, git_url, project_dir)
 
 
 @router.get("/status", response_model=AgentStatus)
@@ -150,7 +162,7 @@ async def start_agent(
         )
 
     manager = get_project_container(project_name)
-    project_dir = _get_project_path(project_name)
+    project_dir = manager.project_dir  # Use manager's validated project_dir
 
     # Determine the instruction to send
     instruction = request.instruction
@@ -315,7 +327,7 @@ async def start_container_only(project_name: str):
 
 # Legacy endpoints for backwards compatibility
 @router.post("/pause", response_model=AgentActionResponse)
-async def pause_agent(project_name: str):
+async def pause_agent(_project_name: str):
     """
     Pause endpoint (deprecated).
 
@@ -328,7 +340,7 @@ async def pause_agent(project_name: str):
 
 
 @router.post("/resume", response_model=AgentActionResponse)
-async def resume_agent(project_name: str):
+async def resume_agent(_project_name: str):
     """
     Resume endpoint (deprecated).
 

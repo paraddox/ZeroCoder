@@ -9,7 +9,7 @@ import base64
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 # ============================================================================
 # Project Schemas
@@ -18,7 +18,8 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 class ProjectCreate(BaseModel):
     """Request schema for creating a new project."""
     name: str = Field(..., min_length=1, max_length=50, pattern=r'^[a-zA-Z0-9_-]+$')
-    path: str = Field(..., min_length=1, description="Absolute path to project directory")
+    git_url: str = Field(..., min_length=1, description="Git repository URL (https:// or git@)")
+    is_new: bool = Field(default=True, description="True if this is a new project needing wizard setup")
     spec_method: Literal["claude", "manual"] = "claude"
 
 
@@ -33,10 +34,13 @@ class ProjectStats(BaseModel):
 class ProjectSummary(BaseModel):
     """Summary of a project for list view."""
     name: str
-    path: str
+    git_url: str
+    local_path: str
+    is_new: bool = True
     has_spec: bool
     wizard_incomplete: bool = False
     stats: ProjectStats
+    target_container_count: int = 1
     agent_status: str | None = None
     agent_running: bool | None = None
     agent_model: str | None = None  # Model for coder/overseer agents
@@ -45,10 +49,13 @@ class ProjectSummary(BaseModel):
 class ProjectDetail(BaseModel):
     """Detailed project information."""
     name: str
-    path: str
+    git_url: str
+    local_path: str
+    is_new: bool = True
     has_spec: bool
     stats: ProjectStats
     prompts_dir: str
+    target_container_count: int = 1
     agent_model: str | None = None  # Model for coder/overseer agents
 
 
@@ -89,16 +96,26 @@ class WizardStatus(BaseModel):
 class AddExistingRepoRequest(BaseModel):
     """Request schema for adding an existing repository."""
     name: str = Field(..., min_length=1, max_length=50, pattern=r'^[a-zA-Z0-9_-]+$')
-    source_type: Literal["git_url", "local_folder"]
-    git_url: str | None = None
-    path: str = Field(..., min_length=1, description="Destination for clone, or existing folder path")
+    git_url: str = Field(..., min_length=1, description="Git repository URL (https:// or git@)")
 
-    @model_validator(mode='after')
-    def validate_git_url(self):
-        """Ensure git_url is provided when source_type is git_url."""
-        if self.source_type == "git_url" and not self.git_url:
-            raise ValueError("git_url is required when source_type is git_url")
-        return self
+
+class ContainerCountUpdate(BaseModel):
+    """Request to update target container count."""
+    target_count: int = Field(..., ge=1, le=10)
+
+
+# ============================================================================
+# Container Schemas
+# ============================================================================
+
+class ContainerStatus(BaseModel):
+    """Container instance status."""
+    id: int
+    container_number: int
+    container_type: Literal["init", "coding"]
+    status: Literal["created", "running", "stopping", "stopped"]
+    current_feature: str | None = None
+    docker_container_id: str | None = None
 
 
 # ============================================================================
@@ -285,45 +302,19 @@ FileAttachment = ImageAttachment | TextAttachment
 
 
 # ============================================================================
-# Filesystem Schemas
+# Task Schemas (Edit Mode)
 # ============================================================================
 
-class DriveInfo(BaseModel):
-    """Information about a drive (Windows only)."""
-    letter: str
-    label: str
-    available: bool = True
+class TaskCreate(BaseModel):
+    """Request schema for creating a task in edit mode."""
+    title: str = Field(..., min_length=1, max_length=200)
+    description: str = Field(default="", max_length=5000)
+    priority: int = Field(default=2, ge=0, le=4)
+    task_type: str = Field(default="feature", pattern=r'^(feature|task|bug)$')
 
 
-class DirectoryEntry(BaseModel):
-    """An entry in a directory listing."""
-    name: str
-    path: str  # POSIX format
-    is_directory: bool
-    is_hidden: bool = False
-    size: int | None = None  # Bytes, for files
-    has_children: bool = False  # True if directory has subdirectories
-
-
-class DirectoryListResponse(BaseModel):
-    """Response for directory listing."""
-    current_path: str  # POSIX format
-    parent_path: str | None
-    entries: list[DirectoryEntry]
-    drives: list[DriveInfo] | None = None  # Windows only
-
-
-class PathValidationResponse(BaseModel):
-    """Response for path validation."""
-    valid: bool
-    exists: bool
-    is_directory: bool
-    can_read: bool
-    can_write: bool
-    message: str = ""
-
-
-class CreateDirectoryRequest(BaseModel):
-    """Request to create a new directory."""
-    parent_path: str
-    name: str = Field(..., min_length=1, max_length=255)
+class TaskUpdate(BaseModel):
+    """Request schema for updating a task in edit mode."""
+    status: str | None = Field(default=None, pattern=r'^(open|in_progress|closed)$')
+    priority: int | None = Field(default=None, ge=0, le=4)
+    title: str | None = Field(default=None, min_length=1, max_length=200)

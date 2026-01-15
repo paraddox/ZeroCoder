@@ -5,9 +5,14 @@
 # - Claude models: Uses Python-based agent_app.py
 # - GLM-4.7 model: Uses TypeScript-based opencode_agent_app.ts
 #
+# Environment variables:
+# - GIT_REMOTE_URL: Git repository URL to clone (required)
+# - ANTHROPIC_API_KEY: API key for Claude
+# - Other API keys as needed
+#
 # Usage:
 #   docker build -f Dockerfile.project -t zerocoder-project .
-#   docker run -d --name zerocoder-{project} -v /path/to/project:/project zerocoder-project
+#   docker run -d --name zerocoder-{project} -e GIT_REMOTE_URL=git@github.com:user/repo.git zerocoder-project
 
 FROM python:3.11-slim-bookworm
 
@@ -94,9 +99,9 @@ COPY agent_app.py /app/agent_app.py
 COPY container_scripts/feature_status.py /app/feature_status.py
 COPY container_scripts/beads_commands.py /app/beads_commands.py
 
-# Configure git for beads operations (for root, during build)
-RUN git config --global user.email "docker@zerocoder.local" \
-    && git config --global user.name "ZeroCoder Docker" \
+# Configure git for container operations (for root, during build)
+RUN git config --global user.email "agent@zerocoder.local" \
+    && git config --global user.name "ZeroCoder Agent" \
     && git config --global init.defaultBranch main
 
 # Create directories for coder user
@@ -107,16 +112,16 @@ RUN mkdir -p /home/coder/.claude \
 
 # Configure git for coder user and set permissive umask
 USER coder
-RUN git config --global user.email "docker@zerocoder.local" \
-    && git config --global user.name "ZeroCoder Docker" \
+RUN git config --global user.email "agent@zerocoder.local" \
+    && git config --global user.name "ZeroCoder Agent" \
     && git config --global init.defaultBranch main \
     && echo "umask 002" >> ~/.bashrc \
     && echo "umask 002" >> ~/.profile
 
-# Switch back to root for runtime volume mounting
+# Switch back to root for runtime operations
 USER root
 
-# Working directory is the mounted project
+# Working directory is the project directory (cloned at runtime)
 WORKDIR /project
 
 # Create entrypoint script
@@ -171,6 +176,24 @@ if [ -f /tmp/ssh_key ]; then
     chmod 644 /home/coder/.ssh/known_hosts
     chown coder:coder /home/coder/.ssh/known_hosts
     echo "[$(date -Iseconds)] SSH key configured for git operations" >> /var/log/agent.log
+fi
+
+# Clone or pull repository from GIT_REMOTE_URL
+if [ -n "\$GIT_REMOTE_URL" ]; then
+    if [ ! -d "/project/.git" ]; then
+        echo "[$(date -Iseconds)] Cloning repository from \$GIT_REMOTE_URL..." >> /var/log/agent.log
+        git clone "\$GIT_REMOTE_URL" /project
+        cd /project
+        chmod -R a+rwX /project 2>/dev/null || true
+        echo "[$(date -Iseconds)] Repository cloned successfully" >> /var/log/agent.log
+    else
+        echo "[$(date -Iseconds)] Repository already cloned, pulling latest..." >> /var/log/agent.log
+        cd /project
+        git fetch origin
+        git checkout main
+        git pull origin main
+        echo "[$(date -Iseconds)] Repository updated successfully" >> /var/log/agent.log
+    fi
 fi
 
 # Keep container running by tailing the agent log

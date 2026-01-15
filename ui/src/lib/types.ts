@@ -21,16 +21,19 @@ export const AGENT_MODELS: { id: AgentModel; name: string; badge?: string; badge
 
 export interface ProjectSummary {
   name: string
-  path: string
+  git_url: string
+  local_path: string  // ~/.zerocoder/projects/{name}
+  is_new: boolean     // False once wizard completed
   has_spec: boolean
   wizard_incomplete: boolean
   stats: ProjectStats
+  target_container_count: number
   agent_status?: AgentStatus
   agent_running?: boolean
   agent_model?: AgentModel
 }
 
-export interface ProjectDetail extends ProjectSummary {
+export interface ProjectDetail extends Omit<ProjectSummary, 'wizard_incomplete'> {
   prompts_dir: string
 }
 
@@ -38,33 +41,17 @@ export interface ProjectSettings {
   agent_model: AgentModel
 }
 
-// Filesystem types
-export interface DriveInfo {
-  letter: string
-  label: string
-  available?: boolean
-}
+// Container types
+export type ContainerType = 'init' | 'coding'
+export type ContainerStatusType = 'created' | 'running' | 'stopping' | 'stopped'
 
-export interface DirectoryEntry {
-  name: string
-  path: string
-  is_directory: boolean
-  has_children: boolean
-}
-
-export interface DirectoryListResponse {
-  current_path: string
-  parent_path: string | null
-  entries: DirectoryEntry[]
-  drives: DriveInfo[] | null
-}
-
-export interface PathValidationResponse {
-  valid: boolean
-  exists: boolean
-  is_directory: boolean
-  can_write: boolean
-  message: string
+export interface ContainerInfo {
+  id: number
+  container_number: number
+  container_type: ContainerType
+  status: ContainerStatusType
+  current_feature: string | null
+  docker_container_id: string | null
 }
 
 export interface ProjectPrompts {
@@ -80,7 +67,7 @@ export interface WizardStatusMessage {
   timestamp: string
 }
 
-export type WizardStep = 'name' | 'folder' | 'method' | 'chat'
+export type WizardStep = 'mode' | 'details' | 'method' | 'chat'
 export type SpecMethod = 'claude' | 'manual'
 
 export interface WizardStatus {

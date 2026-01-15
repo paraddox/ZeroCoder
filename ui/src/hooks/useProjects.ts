@@ -29,8 +29,20 @@ export function useCreateProject() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: ({ name, path, specMethod }: { name: string; path: string; specMethod?: 'claude' | 'manual' }) =>
-      api.createProject(name, path, specMethod),
+    mutationFn: ({ name, gitUrl, isNew }: { name: string; gitUrl: string; isNew?: boolean }) =>
+      api.createProject(name, gitUrl, isNew),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['projects'] })
+    },
+  })
+}
+
+export function useAddExistingRepo() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ name, gitUrl }: { name: string; gitUrl: string }) =>
+      api.addExistingRepo({ name, git_url: gitUrl }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['projects'] })
     },

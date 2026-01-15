@@ -8,12 +8,15 @@ Uses project registry for path lookups instead of fixed generations/ directory.
 
 import re
 import shutil
+import subprocess
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 
 from ..schemas import (
     AddExistingRepoRequest,
+    ContainerCountUpdate,
+    ContainerStatus,
     ProjectCreate,
     ProjectDetail,
     ProjectPrompts,
@@ -21,7 +24,13 @@ from ..schemas import (
     ProjectSettingsUpdate,
     ProjectStats,
     ProjectSummary,
+    TaskCreate,
+    TaskUpdate,
     WizardStatus,
+)
+from ..services.local_project_manager import (
+    LocalProjectManager,
+    get_local_project_manager,
 )
 
 # Default model for coder/overseer agents
@@ -69,12 +78,30 @@ def _get_registry_functions():
 
     from registry import (
         get_project_path,
+        get_project_git_url,
+        get_project_info,
+        get_projects_dir,
         list_registered_projects,
+        list_project_containers,
         register_project,
         unregister_project,
         validate_project_path,
+        mark_project_initialized,
+        update_target_container_count,
     )
-    return register_project, unregister_project, get_project_path, list_registered_projects, validate_project_path
+    return (
+        register_project,
+        unregister_project,
+        get_project_path,
+        get_project_git_url,
+        get_project_info,
+        get_projects_dir,
+        list_registered_projects,
+        validate_project_path,
+        mark_project_initialized,
+        update_target_container_count,
+        list_project_containers,
+    )
 
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -153,409 +180,6 @@ def write_agent_config(project_dir: Path, agent_model: str) -> None:
     config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
 
 
-@router.get("", response_model=list[ProjectSummary])
-async def list_projects():
-    """List all registered projects."""
-    _init_imports()
-    _, _, _, list_registered_projects, validate_project_path = _get_registry_functions()
-
-    # Import get_project_container for agent status
-    from .agent import get_project_container
-
-    projects = list_registered_projects()
-    result = []
-
-    for name, info in projects.items():
-        project_dir = Path(info["path"])
-
-        # Skip if path no longer exists
-        is_valid, _ = validate_project_path(project_dir)
-        if not is_valid:
-            continue
-
-        has_spec = _has_project_prompts(project_dir)
-        stats = get_project_stats(project_dir)
-        wizard_incomplete = check_wizard_incomplete(project_dir, has_spec)
-
-        # Get agent status for this project
-        agent_status = None
-        agent_running = None
-        try:
-            manager = get_project_container(name)
-            status_dict = manager.get_status_dict()
-            agent_status = status_dict["status"]
-            agent_running = status_dict.get("agent_running", False)
-        except Exception:
-            # If container manager not found or error, leave as None
-            pass
-
-        # Get agent model from config
-        agent_model = read_agent_model(project_dir)
-
-        result.append(ProjectSummary(
-            name=name,
-            path=info["path"],
-            has_spec=has_spec,
-            wizard_incomplete=wizard_incomplete,
-            stats=stats,
-            agent_status=agent_status,
-            agent_running=agent_running,
-            agent_model=agent_model,
-        ))
-
-    return result
-
-
-@router.post("", response_model=ProjectSummary)
-async def create_project(project: ProjectCreate):
-    """Create a new project at the specified path."""
-    _init_imports()
-    register_project, _, get_project_path, _, _ = _get_registry_functions()
-
-    name = validate_project_name(project.name)
-    project_path = Path(project.path).resolve()
-
-    # Check if project name already registered
-    existing = get_project_path(name)
-    if existing:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Project '{name}' already exists at {existing}"
-        )
-
-    # Security: Check if path is in a blocked location
-    from .filesystem import is_path_blocked
-    if is_path_blocked(project_path):
-        raise HTTPException(
-            status_code=403,
-            detail="Cannot create project in system or sensitive directory"
-        )
-
-    # Validate the path is usable
-    if project_path.exists():
-        if not project_path.is_dir():
-            raise HTTPException(
-                status_code=400,
-                detail="Path exists but is not a directory"
-            )
-    else:
-        # Create the directory
-        try:
-            project_path.mkdir(parents=True, exist_ok=True)
-        except OSError as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to create directory: {e}"
-            )
-
-    # Scaffold prompts
-    _scaffold_project_prompts(project_path)
-
-    # Register in registry
-    try:
-        register_project(name, project_path)
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to register project: {e}"
-        )
-
-    return ProjectSummary(
-        name=name,
-        path=project_path.as_posix(),
-        has_spec=False,  # Just created, no spec yet
-        stats=ProjectStats(passing=0, total=0, percentage=0.0),
-    )
-
-
-@router.get("/{name}", response_model=ProjectDetail)
-async def get_project(name: str):
-    """Get detailed information about a project."""
-    _init_imports()
-    _, _, get_project_path, _, _ = _get_registry_functions()
-
-    name = validate_project_name(name)
-    project_dir = get_project_path(name)
-
-    if not project_dir:
-        raise HTTPException(status_code=404, detail=f"Project '{name}' not found in registry")
-
-    if not project_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Project directory no longer exists: {project_dir}")
-
-    has_spec = _has_project_prompts(project_dir)
-    stats = get_project_stats(project_dir)
-    prompts_dir = _get_project_prompts_dir(project_dir)
-    agent_model = read_agent_model(project_dir)
-
-    return ProjectDetail(
-        name=name,
-        path=project_dir.as_posix(),
-        has_spec=has_spec,
-        stats=stats,
-        prompts_dir=str(prompts_dir),
-        agent_model=agent_model,
-    )
-
-
-@router.delete("/{name}")
-async def delete_project(name: str, delete_files: bool = False):
-    """
-    Delete a project from the registry.
-
-    Args:
-        name: Project name to delete
-        delete_files: If True, also delete the project directory and files
-    """
-    _init_imports()
-    _, unregister_project, get_project_path, _, _ = _get_registry_functions()
-
-    name = validate_project_name(name)
-    project_dir = get_project_path(name)
-
-    if not project_dir:
-        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
-
-    # Check if agent is running
-    lock_file = project_dir / ".agent.lock"
-    if lock_file.exists():
-        raise HTTPException(
-            status_code=409,
-            detail="Cannot delete project while agent is running. Stop the agent first."
-        )
-
-    # Optionally delete files
-    if delete_files and project_dir.exists():
-        try:
-            shutil.rmtree(project_dir)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to delete project files: {e}")
-
-    # Clear cached container manager to avoid stale state
-    from ..services.container_manager import clear_container_manager
-    clear_container_manager(name)
-
-    # Unregister from registry
-    unregister_project(name)
-
-    return {
-        "success": True,
-        "message": f"Project '{name}' deleted" + (" (files removed)" if delete_files else " (files preserved)")
-    }
-
-
-@router.get("/{name}/prompts", response_model=ProjectPrompts)
-async def get_project_prompts(name: str):
-    """Get the content of project prompt files."""
-    _init_imports()
-    _, _, get_project_path, _, _ = _get_registry_functions()
-
-    name = validate_project_name(name)
-    project_dir = get_project_path(name)
-
-    if not project_dir:
-        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
-
-    if not project_dir.exists():
-        raise HTTPException(status_code=404, detail="Project directory not found")
-
-    prompts_dir = _get_project_prompts_dir(project_dir)
-
-    def read_file(filename: str) -> str:
-        filepath = prompts_dir / filename
-        if filepath.exists():
-            try:
-                return filepath.read_text(encoding="utf-8")
-            except Exception:
-                return ""
-        return ""
-
-    return ProjectPrompts(
-        app_spec=read_file("app_spec.txt"),
-        initializer_prompt=read_file("initializer_prompt.md"),
-        coding_prompt=read_file("coding_prompt.md"),
-    )
-
-
-@router.put("/{name}/prompts")
-async def update_project_prompts(name: str, prompts: ProjectPromptsUpdate):
-    """Update project prompt files."""
-    _init_imports()
-    _, _, get_project_path, _, _ = _get_registry_functions()
-
-    name = validate_project_name(name)
-    project_dir = get_project_path(name)
-
-    if not project_dir:
-        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
-
-    if not project_dir.exists():
-        raise HTTPException(status_code=404, detail="Project directory not found")
-
-    prompts_dir = _get_project_prompts_dir(project_dir)
-    prompts_dir.mkdir(parents=True, exist_ok=True)
-
-    def write_file(filename: str, content: str | None):
-        if content is not None:
-            filepath = prompts_dir / filename
-            filepath.write_text(content, encoding="utf-8")
-
-    write_file("app_spec.txt", prompts.app_spec)
-    write_file("initializer_prompt.md", prompts.initializer_prompt)
-    write_file("coding_prompt.md", prompts.coding_prompt)
-
-    return {"success": True, "message": "Prompts updated"}
-
-
-@router.get("/{name}/stats", response_model=ProjectStats)
-async def get_project_stats_endpoint(name: str):
-    """Get current progress statistics for a project."""
-    _init_imports()
-    _, _, get_project_path, _, _ = _get_registry_functions()
-
-    name = validate_project_name(name)
-    project_dir = get_project_path(name)
-
-    if not project_dir:
-        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
-
-    if not project_dir.exists():
-        raise HTTPException(status_code=404, detail="Project directory not found")
-
-    return get_project_stats(project_dir)
-
-
-@router.get("/{name}/wizard-status", response_model=WizardStatus | None)
-async def get_wizard_status(name: str):
-    """Get the wizard status for a project, if it exists."""
-    import json
-    _, _, get_project_path, _, _ = _get_registry_functions()
-
-    name = validate_project_name(name)
-    project_dir = get_project_path(name)
-
-    if not project_dir:
-        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
-
-    wizard_file = get_wizard_status_path(project_dir)
-    if not wizard_file.exists():
-        return None
-
-    try:
-        data = json.loads(wizard_file.read_text(encoding="utf-8"))
-        return WizardStatus(**data)
-    except (json.JSONDecodeError, ValueError) as e:
-        raise HTTPException(status_code=500, detail=f"Invalid wizard status file: {e}")
-
-
-@router.put("/{name}/wizard-status", response_model=WizardStatus)
-async def update_wizard_status(name: str, status: WizardStatus):
-    """Create or update the wizard status for a project."""
-    import json
-    _, _, get_project_path, _, _ = _get_registry_functions()
-
-    name = validate_project_name(name)
-    project_dir = get_project_path(name)
-
-    if not project_dir:
-        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
-
-    if not project_dir.exists():
-        raise HTTPException(status_code=404, detail="Project directory not found")
-
-    wizard_file = get_wizard_status_path(project_dir)
-    wizard_file.parent.mkdir(parents=True, exist_ok=True)
-
-    wizard_file.write_text(
-        json.dumps(status.model_dump(), default=str, indent=2),
-        encoding="utf-8"
-    )
-
-    return status
-
-
-@router.delete("/{name}/wizard-status")
-async def delete_wizard_status(name: str):
-    """Delete the wizard status for a project (called on wizard completion)."""
-    _, _, get_project_path, _, _ = _get_registry_functions()
-
-    name = validate_project_name(name)
-    project_dir = get_project_path(name)
-
-    if not project_dir:
-        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
-
-    wizard_file = get_wizard_status_path(project_dir)
-    if wizard_file.exists():
-        wizard_file.unlink()
-
-    return {"success": True, "message": "Wizard status cleared"}
-
-
-# ============================================================================
-# Project Settings (Agent Model)
-# ============================================================================
-
-@router.patch("/{name}/settings")
-async def update_project_settings(name: str, settings: ProjectSettingsUpdate):
-    """Update project settings (agent model, etc.)."""
-    _, _, get_project_path, _, _ = _get_registry_functions()
-
-    name = validate_project_name(name)
-    project_dir = get_project_path(name)
-
-    if not project_dir:
-        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
-
-    if not project_dir.exists():
-        raise HTTPException(status_code=404, detail="Project directory not found")
-
-    # Validate the model ID
-    valid_models = ["claude-opus-4-5-20251101", "claude-sonnet-4-5-20250514", "glm-4-7"]
-    if settings.agent_model not in valid_models:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid model. Must be one of: {', '.join(valid_models)}"
-        )
-
-    # Write the config
-    write_agent_config(project_dir, settings.agent_model)
-
-    return {
-        "success": True,
-        "message": f"Agent model set to {settings.agent_model}",
-        "agent_model": settings.agent_model
-    }
-
-
-@router.get("/{name}/settings")
-async def get_project_settings(name: str):
-    """Get project settings (agent model, etc.)."""
-    _, _, get_project_path, _, _ = _get_registry_functions()
-
-    name = validate_project_name(name)
-    project_dir = get_project_path(name)
-
-    if not project_dir:
-        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
-
-    if not project_dir.exists():
-        raise HTTPException(status_code=404, detail="Project directory not found")
-
-    agent_model = read_agent_model(project_dir)
-
-    return {
-        "agent_model": agent_model
-    }
-
-
-# ============================================================================
-# Add Existing Repo
-# ============================================================================
-
-import subprocess
-
-
 def clone_repository(git_url: str, destination: Path) -> tuple[bool, str]:
     """
     Clone a git repository to the specified destination.
@@ -626,19 +250,447 @@ def init_beads_if_needed(project_dir: Path) -> tuple[bool, str]:
         return False, f"Beads init error: {str(e)}"
 
 
+@router.get("", response_model=list[ProjectSummary])
+async def list_projects():
+    """List all registered projects."""
+    _init_imports()
+    (
+        _, _, _, _, _, _,
+        list_registered_projects, validate_project_path, _, _
+    ) = _get_registry_functions()
+
+    # Import get_project_container for agent status
+    from .agent import get_project_container
+
+    projects = list_registered_projects()
+    result = []
+
+    for name, info in projects.items():
+        local_path = Path(info["local_path"])
+
+        # Skip if local clone doesn't exist
+        if not local_path.exists():
+            continue
+
+        has_spec = _has_project_prompts(local_path)
+        stats = get_project_stats(local_path)
+        wizard_incomplete = check_wizard_incomplete(local_path, has_spec)
+
+        # Get agent status for this project
+        agent_status = None
+        agent_running = None
+        try:
+            manager = get_project_container(name)
+            status_dict = manager.get_status_dict()
+            agent_status = status_dict["status"]
+            agent_running = status_dict.get("agent_running", False)
+        except Exception:
+            # If container manager not found or error, leave as None
+            pass
+
+        # Get agent model from config
+        agent_model = read_agent_model(local_path)
+
+        result.append(ProjectSummary(
+            name=name,
+            git_url=info["git_url"],
+            local_path=info["local_path"],
+            is_new=info["is_new"],
+            has_spec=has_spec,
+            wizard_incomplete=wizard_incomplete,
+            stats=stats,
+            target_container_count=info["target_container_count"],
+            agent_status=agent_status,
+            agent_running=agent_running,
+            agent_model=agent_model,
+        ))
+
+    return result
+
+
+@router.post("", response_model=ProjectSummary)
+async def create_project(project: ProjectCreate):
+    """Create a new project by cloning a git repository."""
+    _init_imports()
+    (
+        register_project, _, get_project_path, _, _, get_projects_dir,
+        _, _, _, _
+    ) = _get_registry_functions()
+
+    name = validate_project_name(project.name)
+    local_path = get_projects_dir() / name
+
+    # Check if project name already registered
+    existing = get_project_path(name)
+    if existing and existing.exists():
+        raise HTTPException(
+            status_code=409,
+            detail=f"Project '{name}' already exists"
+        )
+
+    # Clone the repository
+    if not local_path.exists():
+        success, msg = clone_repository(project.git_url, local_path)
+        if not success:
+            raise HTTPException(status_code=500, detail=msg)
+
+    # Scaffold prompts
+    _scaffold_project_prompts(local_path)
+
+    # Register in registry
+    try:
+        register_project(name, project.git_url, is_new=project.is_new)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to register project: {e}"
+        )
+
+    return ProjectSummary(
+        name=name,
+        git_url=project.git_url,
+        local_path=local_path.as_posix(),
+        is_new=project.is_new,
+        has_spec=False,
+        stats=ProjectStats(passing=0, total=0, percentage=0.0),
+        target_container_count=1,
+    )
+
+
+@router.get("/{name}", response_model=ProjectDetail)
+async def get_project(name: str):
+    """Get detailed information about a project."""
+    _init_imports()
+    (
+        _, _, get_project_path, _, get_project_info, _,
+        _, _, _, _
+    ) = _get_registry_functions()
+
+    name = validate_project_name(name)
+    info = get_project_info(name)
+
+    if not info:
+        raise HTTPException(status_code=404, detail=f"Project '{name}' not found in registry")
+
+    local_path = Path(info["local_path"])
+    if not local_path.exists():
+        raise HTTPException(status_code=404, detail=f"Project directory no longer exists: {local_path}")
+
+    has_spec = _has_project_prompts(local_path)
+    stats = get_project_stats(local_path)
+    prompts_dir = _get_project_prompts_dir(local_path)
+    agent_model = read_agent_model(local_path)
+
+    return ProjectDetail(
+        name=name,
+        git_url=info["git_url"],
+        local_path=info["local_path"],
+        is_new=info["is_new"],
+        has_spec=has_spec,
+        stats=stats,
+        prompts_dir=str(prompts_dir),
+        target_container_count=info["target_container_count"],
+        agent_model=agent_model,
+    )
+
+
+@router.delete("/{name}")
+async def delete_project(name: str, delete_files: bool = False):
+    """
+    Delete a project from the registry.
+
+    Args:
+        name: Project name to delete
+        delete_files: If True, also delete the project directory and files
+    """
+    _init_imports()
+    (
+        _, unregister_project, get_project_path, _, _, _,
+        _, _, _, _
+    ) = _get_registry_functions()
+
+    name = validate_project_name(name)
+    project_dir = get_project_path(name)
+
+    if not project_dir:
+        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+
+    # Check if agent is running
+    lock_file = project_dir / ".agent.lock"
+    if lock_file.exists():
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot delete project while agent is running. Stop the agent first."
+        )
+
+    # Optionally delete files
+    if delete_files and project_dir.exists():
+        try:
+            shutil.rmtree(project_dir)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to delete project files: {e}")
+
+    # Clear cached container manager to avoid stale state
+    from ..services.container_manager import clear_container_manager
+    clear_container_manager(name)
+
+    # Unregister from registry
+    unregister_project(name)
+
+    return {
+        "success": True,
+        "message": f"Project '{name}' deleted" + (" (files removed)" if delete_files else " (files preserved)")
+    }
+
+
+@router.get("/{name}/prompts", response_model=ProjectPrompts)
+async def get_project_prompts(name: str):
+    """Get the content of project prompt files."""
+    _init_imports()
+    (
+        _, _, get_project_path, _, _, _,
+        _, _, _, _
+    ) = _get_registry_functions()
+
+    name = validate_project_name(name)
+    project_dir = get_project_path(name)
+
+    if not project_dir:
+        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+
+    if not project_dir.exists():
+        raise HTTPException(status_code=404, detail="Project directory not found")
+
+    prompts_dir = _get_project_prompts_dir(project_dir)
+
+    def read_file(filename: str) -> str:
+        filepath = prompts_dir / filename
+        if filepath.exists():
+            try:
+                return filepath.read_text(encoding="utf-8")
+            except Exception:
+                return ""
+        return ""
+
+    return ProjectPrompts(
+        app_spec=read_file("app_spec.txt"),
+        initializer_prompt=read_file("initializer_prompt.md"),
+        coding_prompt=read_file("coding_prompt.md"),
+    )
+
+
+@router.put("/{name}/prompts")
+async def update_project_prompts(name: str, prompts: ProjectPromptsUpdate):
+    """Update project prompt files."""
+    _init_imports()
+    (
+        _, _, get_project_path, _, _, _,
+        _, _, _, _
+    ) = _get_registry_functions()
+
+    name = validate_project_name(name)
+    project_dir = get_project_path(name)
+
+    if not project_dir:
+        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+
+    if not project_dir.exists():
+        raise HTTPException(status_code=404, detail="Project directory not found")
+
+    prompts_dir = _get_project_prompts_dir(project_dir)
+    prompts_dir.mkdir(parents=True, exist_ok=True)
+
+    def write_file(filename: str, content: str | None):
+        if content is not None:
+            filepath = prompts_dir / filename
+            filepath.write_text(content, encoding="utf-8")
+
+    write_file("app_spec.txt", prompts.app_spec)
+    write_file("initializer_prompt.md", prompts.initializer_prompt)
+    write_file("coding_prompt.md", prompts.coding_prompt)
+
+    return {"success": True, "message": "Prompts updated"}
+
+
+@router.get("/{name}/stats", response_model=ProjectStats)
+async def get_project_stats_endpoint(name: str):
+    """Get current progress statistics for a project."""
+    _init_imports()
+    (
+        _, _, get_project_path, _, _, _,
+        _, _, _, _
+    ) = _get_registry_functions()
+
+    name = validate_project_name(name)
+    project_dir = get_project_path(name)
+
+    if not project_dir:
+        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+
+    if not project_dir.exists():
+        raise HTTPException(status_code=404, detail="Project directory not found")
+
+    return get_project_stats(project_dir)
+
+
+@router.get("/{name}/wizard-status", response_model=WizardStatus | None)
+async def get_wizard_status(name: str):
+    """Get the wizard status for a project, if it exists."""
+    import json
+    (
+        _, _, get_project_path, _, _, _,
+        _, _, _, _
+    ) = _get_registry_functions()
+
+    name = validate_project_name(name)
+    project_dir = get_project_path(name)
+
+    if not project_dir:
+        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+
+    wizard_file = get_wizard_status_path(project_dir)
+    if not wizard_file.exists():
+        return None
+
+    try:
+        data = json.loads(wizard_file.read_text(encoding="utf-8"))
+        return WizardStatus(**data)
+    except (json.JSONDecodeError, ValueError) as e:
+        raise HTTPException(status_code=500, detail=f"Invalid wizard status file: {e}")
+
+
+@router.put("/{name}/wizard-status", response_model=WizardStatus)
+async def update_wizard_status(name: str, status: WizardStatus):
+    """Create or update the wizard status for a project."""
+    import json
+    (
+        _, _, get_project_path, _, _, _,
+        _, _, _, _
+    ) = _get_registry_functions()
+
+    name = validate_project_name(name)
+    project_dir = get_project_path(name)
+
+    if not project_dir:
+        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+
+    if not project_dir.exists():
+        raise HTTPException(status_code=404, detail="Project directory not found")
+
+    wizard_file = get_wizard_status_path(project_dir)
+    wizard_file.parent.mkdir(parents=True, exist_ok=True)
+
+    wizard_file.write_text(
+        json.dumps(status.model_dump(), default=str, indent=2),
+        encoding="utf-8"
+    )
+
+    return status
+
+
+@router.delete("/{name}/wizard-status")
+async def delete_wizard_status(name: str):
+    """Delete the wizard status for a project (called on wizard completion)."""
+    (
+        _, _, get_project_path, _, _, _,
+        _, _, _, _
+    ) = _get_registry_functions()
+
+    name = validate_project_name(name)
+    project_dir = get_project_path(name)
+
+    if not project_dir:
+        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+
+    wizard_file = get_wizard_status_path(project_dir)
+    if wizard_file.exists():
+        wizard_file.unlink()
+
+    return {"success": True, "message": "Wizard status cleared"}
+
+
+# ============================================================================
+# Project Settings (Agent Model)
+# ============================================================================
+
+@router.patch("/{name}/settings")
+async def update_project_settings(name: str, settings: ProjectSettingsUpdate):
+    """Update project settings (agent model, etc.)."""
+    (
+        _, _, get_project_path, _, _, _,
+        _, _, _, _
+    ) = _get_registry_functions()
+
+    name = validate_project_name(name)
+    project_dir = get_project_path(name)
+
+    if not project_dir:
+        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+
+    if not project_dir.exists():
+        raise HTTPException(status_code=404, detail="Project directory not found")
+
+    # Validate the model ID
+    valid_models = ["claude-opus-4-5-20251101", "claude-sonnet-4-5-20250514", "glm-4-7"]
+    if settings.agent_model not in valid_models:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid model. Must be one of: {', '.join(valid_models)}"
+        )
+
+    # Write the config
+    write_agent_config(project_dir, settings.agent_model)
+
+    return {
+        "success": True,
+        "message": f"Agent model set to {settings.agent_model}",
+        "agent_model": settings.agent_model
+    }
+
+
+@router.get("/{name}/settings")
+async def get_project_settings(name: str):
+    """Get project settings (agent model, etc.)."""
+    (
+        _, _, get_project_path, _, _, _,
+        _, _, _, _
+    ) = _get_registry_functions()
+
+    name = validate_project_name(name)
+    project_dir = get_project_path(name)
+
+    if not project_dir:
+        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+
+    if not project_dir.exists():
+        raise HTTPException(status_code=404, detail="Project directory not found")
+
+    agent_model = read_agent_model(project_dir)
+
+    return {
+        "agent_model": agent_model
+    }
+
+
+# ============================================================================
+# Add Existing Repo
+# ============================================================================
+
 @router.post("/add-existing", response_model=ProjectSummary)
 async def add_existing_repo(request: AddExistingRepoRequest):
     """
     Add an existing repository to the project registry.
 
-    - If source_type is git_url: Clone the repository to the specified path
-    - If source_type is local_folder: Use the existing folder directly
+    - Clone the repository to ~/.zerocoder/projects/{name}/
     - Check if .beads/ exists; if not, initialize beads
     - Scaffold minimal prompt files (preserving existing CLAUDE.md and .claude/)
-    - Register in the project registry
+    - Register in the project registry with is_new=False (no wizard)
     """
     _init_imports()
-    register_project, _, get_project_path, _, _ = _get_registry_functions()
+    (
+        register_project, _, get_project_path, _, _, get_projects_dir,
+        _, _, _, _
+    ) = _get_registry_functions()
 
     # Import scaffold function for existing repos
     import sys
@@ -648,60 +700,33 @@ async def add_existing_repo(request: AddExistingRepoRequest):
     from prompts import scaffold_existing_repo
 
     name = validate_project_name(request.name)
-    project_path = Path(request.path).resolve()
+    local_path = get_projects_dir() / name
 
     # Check if project name already registered
     existing = get_project_path(name)
-    if existing:
+    if existing and existing.exists():
         raise HTTPException(
             status_code=409,
-            detail=f"Project '{name}' already exists at {existing}"
+            detail=f"Project '{name}' already exists"
         )
 
-    # Security: Check if path is in a blocked location
-    from .filesystem import is_path_blocked
-    if is_path_blocked(project_path):
-        raise HTTPException(
-            status_code=403,
-            detail="Cannot add project in system or sensitive directory"
-        )
-
-    # Handle based on source type
-    if request.source_type == "git_url":
-        # Clone repository
-        if project_path.exists():
-            raise HTTPException(
-                status_code=400,
-                detail=f"Destination already exists: {project_path}"
-            )
-
-        success, msg = clone_repository(request.git_url, project_path)
+    # Clone the repository
+    if not local_path.exists():
+        success, msg = clone_repository(request.git_url, local_path)
         if not success:
             raise HTTPException(status_code=500, detail=msg)
-    else:
-        # Local folder - must exist
-        if not project_path.exists():
-            raise HTTPException(
-                status_code=400,
-                detail=f"Folder does not exist: {project_path}"
-            )
-        if not project_path.is_dir():
-            raise HTTPException(
-                status_code=400,
-                detail=f"Path is not a directory: {project_path}"
-            )
 
     # Initialize beads if needed
-    success, msg = init_beads_if_needed(project_path)
+    success, msg = init_beads_if_needed(local_path)
     if not success:
         raise HTTPException(status_code=500, detail=msg)
 
     # Scaffold minimal prompts (preserving existing files)
-    scaffold_existing_repo(project_path)
+    scaffold_existing_repo(local_path)
 
-    # Register in registry
+    # Register with is_new=False (existing project, no wizard)
     try:
-        register_project(name, project_path)
+        register_project(name, request.git_url, is_new=False)
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -709,12 +734,347 @@ async def add_existing_repo(request: AddExistingRepoRequest):
         )
 
     # Get stats (beads should be initialized now)
-    stats = get_project_stats(project_path)
+    stats = get_project_stats(local_path)
 
     return ProjectSummary(
         name=name,
-        path=project_path.as_posix(),
+        git_url=request.git_url,
+        local_path=local_path.as_posix(),
+        is_new=False,
         has_spec=False,  # Existing repos don't have app_spec
         wizard_incomplete=False,
         stats=stats,
+        target_container_count=1,
     )
+
+
+# ============================================================================
+# Container Count Management
+# ============================================================================
+
+@router.put("/{name}/containers/count")
+async def update_container_count(name: str, body: ContainerCountUpdate):
+    """Update target container count for a project."""
+    (
+        _, _, get_project_path, _, _, _,
+        _, _, _, update_target_container_count
+    ) = _get_registry_functions()
+
+    name = validate_project_name(name)
+
+    if not get_project_path(name):
+        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+
+    success = update_target_container_count(name, body.target_count)
+
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to update container count")
+
+    return {"success": True, "target_count": body.target_count}
+
+
+@router.get("/{name}/containers", response_model=list[ContainerStatus])
+async def list_containers(name: str):
+    """List all containers for a project."""
+    (
+        _, _, get_project_path, _, _, _,
+        _, _, _, _, list_project_containers
+    ) = _get_registry_functions()
+
+    name = validate_project_name(name)
+
+    if not get_project_path(name):
+        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+
+    containers = list_project_containers(name)
+
+    return [
+        ContainerStatus(
+            id=c["id"],
+            container_number=c["container_number"],
+            container_type=c["container_type"],
+            status=c["status"],
+            current_feature=c.get("current_feature"),
+            docker_container_id=c.get("docker_container_id"),
+        )
+        for c in containers
+    ]
+
+
+@router.post("/{name}/stop")
+async def stop_all_containers(name: str, graceful: bool = True):
+    """
+    Stop all containers for a project.
+
+    Args:
+        name: Project name
+        graceful: If True, request graceful shutdown; if False, force stop
+    """
+    from .agent import get_project_container
+
+    (
+        _, _, get_project_path, _, _, _,
+        _, _, _, _, list_project_containers
+    ) = _get_registry_functions()
+
+    name = validate_project_name(name)
+
+    if not get_project_path(name):
+        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+
+    containers = list_project_containers(name)
+
+    if not containers:
+        return {"success": True, "message": "No containers to stop", "stopped": 0}
+
+    stopped = 0
+    errors = []
+
+    for container in containers:
+        try:
+            manager = get_project_container(name)
+            if graceful:
+                success, message = await manager.graceful_stop()
+            else:
+                success, message = await manager.stop()
+
+            if success:
+                stopped += 1
+            else:
+                errors.append(f"Container {container['container_number']}: {message}")
+        except Exception as e:
+            errors.append(f"Container {container['container_number']}: {str(e)}")
+
+    result = {
+        "success": len(errors) == 0,
+        "message": f"Stopped {stopped} container(s)",
+        "stopped": stopped,
+    }
+
+    if errors:
+        result["errors"] = errors
+
+    return result
+
+
+# ============================================================================
+# Edit Mode Endpoints
+# ============================================================================
+
+# Track projects in edit mode (in-memory for simplicity)
+_edit_mode_projects: set[str] = set()
+
+
+@router.post("/{name}/edit/start")
+async def start_edit_mode(name: str):
+    """
+    Enter edit mode for a project.
+
+    Edit mode allows creating, updating, and deleting tasks without
+    running agents. Fails if any agents are currently running.
+    """
+    from .agent import get_project_container
+
+    (
+        _, _, get_project_path, get_project_git_url, _, _,
+        _, _, _, _, _
+    ) = _get_registry_functions()
+
+    name = validate_project_name(name)
+    project_dir = get_project_path(name)
+
+    if not project_dir:
+        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+
+    # Check if agents are running
+    try:
+        manager = get_project_container(name)
+        status_dict = manager.get_status_dict()
+        if status_dict.get("agent_running", False):
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot enter edit mode while agents are running. Stop agents first."
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        # Container doesn't exist yet, which is fine
+        pass
+
+    # Check if already in edit mode
+    if name in _edit_mode_projects:
+        return {"success": True, "message": "Already in edit mode", "edit_mode": True}
+
+    # Get git URL for LocalProjectManager
+    git_url = get_project_git_url(name)
+    if not git_url:
+        raise HTTPException(status_code=500, detail="Project has no git URL configured")
+
+    # Pull latest and sync beads
+    project_manager = get_local_project_manager(name, git_url)
+    success, message = await project_manager.pull_latest()
+    if not success:
+        raise HTTPException(status_code=500, detail=f"Failed to pull latest: {message}")
+
+    success, message = await project_manager.sync_beads()
+    if not success:
+        # Sync failure is not fatal - beads might not be initialized
+        pass
+
+    _edit_mode_projects.add(name)
+
+    return {"success": True, "message": "Edit mode started", "edit_mode": True}
+
+
+@router.post("/{name}/edit/save")
+async def save_and_exit_edit_mode(name: str, commit_message: str = "Update tasks"):
+    """
+    Save changes and exit edit mode.
+
+    Commits all changes and pushes to remote.
+    """
+    (
+        _, _, get_project_path, get_project_git_url, _, _,
+        _, _, _, _, _
+    ) = _get_registry_functions()
+
+    name = validate_project_name(name)
+
+    if not get_project_path(name):
+        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+
+    if name not in _edit_mode_projects:
+        raise HTTPException(status_code=400, detail="Project is not in edit mode")
+
+    git_url = get_project_git_url(name)
+    if not git_url:
+        raise HTTPException(status_code=500, detail="Project has no git URL configured")
+
+    # Push changes
+    project_manager = get_local_project_manager(name, git_url)
+    success, message = await project_manager.push_changes(commit_message)
+
+    if not success:
+        raise HTTPException(status_code=500, detail=f"Failed to save changes: {message}")
+
+    _edit_mode_projects.discard(name)
+
+    return {"success": True, "message": "Changes saved and edit mode exited", "edit_mode": False}
+
+
+@router.post("/{name}/tasks")
+async def create_task(name: str, task: TaskCreate):
+    """
+    Create a new task for a project.
+
+    Project must be in edit mode.
+    """
+    (
+        _, _, get_project_path, get_project_git_url, _, _,
+        _, _, _, _, _
+    ) = _get_registry_functions()
+
+    name = validate_project_name(name)
+
+    if not get_project_path(name):
+        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+
+    if name not in _edit_mode_projects:
+        raise HTTPException(
+            status_code=400,
+            detail="Project must be in edit mode to create tasks. Call POST /{name}/edit/start first."
+        )
+
+    git_url = get_project_git_url(name)
+    if not git_url:
+        raise HTTPException(status_code=500, detail="Project has no git URL configured")
+
+    project_manager = get_local_project_manager(name, git_url)
+    success, message, task_id = await project_manager.create_task(
+        title=task.title,
+        description=task.description,
+        priority=task.priority,
+        task_type=task.task_type,
+    )
+
+    if not success:
+        raise HTTPException(status_code=500, detail=message)
+
+    return {"success": True, "message": message, "task_id": task_id}
+
+
+@router.patch("/{name}/tasks/{task_id}")
+async def update_task(name: str, task_id: str, task: TaskUpdate):
+    """
+    Update an existing task.
+
+    Project must be in edit mode.
+    """
+    (
+        _, _, get_project_path, get_project_git_url, _, _,
+        _, _, _, _, _
+    ) = _get_registry_functions()
+
+    name = validate_project_name(name)
+
+    if not get_project_path(name):
+        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+
+    if name not in _edit_mode_projects:
+        raise HTTPException(
+            status_code=400,
+            detail="Project must be in edit mode to update tasks. Call POST /{name}/edit/start first."
+        )
+
+    git_url = get_project_git_url(name)
+    if not git_url:
+        raise HTTPException(status_code=500, detail="Project has no git URL configured")
+
+    project_manager = get_local_project_manager(name, git_url)
+    success, message = await project_manager.update_task(
+        task_id=task_id,
+        status=task.status,
+        priority=task.priority,
+        title=task.title,
+    )
+
+    if not success:
+        raise HTTPException(status_code=500, detail=message)
+
+    return {"success": True, "message": message}
+
+
+@router.delete("/{name}/tasks/{task_id}")
+async def delete_task(name: str, task_id: str):
+    """
+    Delete a task.
+
+    Project must be in edit mode.
+    """
+    (
+        _, _, get_project_path, get_project_git_url, _, _,
+        _, _, _, _, _
+    ) = _get_registry_functions()
+
+    name = validate_project_name(name)
+
+    if not get_project_path(name):
+        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+
+    if name not in _edit_mode_projects:
+        raise HTTPException(
+            status_code=400,
+            detail="Project must be in edit mode to delete tasks. Call POST /{name}/edit/start first."
+        )
+
+    git_url = get_project_git_url(name)
+    if not git_url:
+        raise HTTPException(status_code=500, detail="Project has no git URL configured")
+
+    project_manager = get_local_project_manager(name, git_url)
+    success, message = await project_manager.delete_task(task_id)
+
+    if not success:
+        raise HTTPException(status_code=500, detail=message)
+
+    return {"success": True, "message": message}

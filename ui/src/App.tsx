@@ -4,6 +4,7 @@ import { useProjectWebSocket } from './hooks/useWebSocket'
 import { useFeatureSound } from './hooks/useFeatureSound'
 import { useCelebration } from './hooks/useCelebration'
 import { useTheme } from './hooks/useTheme'
+import { useContainers, useUpdateContainerCount, useStartAgent, useStopAgent, useGracefulStopAgent } from './hooks/useContainers'
 
 const STORAGE_KEY = 'zerocoder-selected-project'
 import { ProjectTabs } from './components/ProjectTabs'
@@ -20,6 +21,8 @@ import { AssistantPanel } from './components/AssistantPanel'
 import { IncompleteProjectModal } from './components/IncompleteProjectModal'
 import { NewProjectModal } from './components/NewProjectModal'
 import { DeleteProjectModal } from './components/DeleteProjectModal'
+import { ContainerControl } from './components/ContainerControl'
+import { ContainerList } from './components/ContainerList'
 import { Loader2, Sun, Moon } from 'lucide-react'
 import type { Feature, ProjectSummary, WizardStatus } from './lib/types'
 
@@ -58,9 +61,16 @@ function App() {
   const { data: projects, isLoading: projectsLoading, refetch: refetchProjects } = useProjects()
   const { data: features } = useFeatures(selectedProject)
   const { data: agentStatusData } = useAgentStatus(selectedProject)
+  const { data: containers, isLoading: containersLoading } = useContainers(selectedProject)
   const reopenFeature = useReopenFeature(selectedProject ?? '')
   const wsState = useProjectWebSocket(selectedProject)
   const { theme, toggleTheme } = useTheme()
+
+  // Container control mutations
+  const updateContainerCount = useUpdateContainerCount(selectedProject ?? '')
+  const startAgent = useStartAgent(selectedProject ?? '')
+  const stopAgent = useStopAgent(selectedProject ?? '')
+  const gracefulStopAgent = useGracefulStopAgent(selectedProject ?? '')
 
   // Play sounds when features move between columns
   useFeatureSound(features)
@@ -130,6 +140,41 @@ function App() {
   const handleReopenFeature = useCallback((feature: Feature) => {
     reopenFeature.mutate(feature.id)
   }, [reopenFeature])
+
+  // Container control handlers
+  const handleContainerCountChange = useCallback(async (count: number) => {
+    await updateContainerCount.mutateAsync(count)
+  }, [updateContainerCount])
+
+  const handleStartAgent = useCallback(async () => {
+    await startAgent.mutateAsync(false)
+  }, [startAgent])
+
+  const handleStopAgent = useCallback(async () => {
+    await stopAgent.mutateAsync()
+  }, [stopAgent])
+
+  const handleGracefulStop = useCallback(async () => {
+    await gracefulStopAgent.mutateAsync()
+  }, [gracefulStopAgent])
+
+  const handleEditTasks = useCallback(() => {
+    // Open edit tasks mode - could open a modal or navigate to edit view
+    // For now, open assistant panel which allows task management
+    setAssistantOpen(true)
+  }, [])
+
+  const handleViewContainerLogs = useCallback((containerId: number) => {
+    // Expand log viewer and filter by container
+    setLogViewerExpanded(true)
+    // TODO: Add container ID filtering to log viewer
+    console.log('View logs for container:', containerId)
+  }, [])
+
+  // Get current project data for container count
+  const currentProject = projects?.find(p => p.name === selectedProject)
+  const targetContainerCount = currentProject?.target_container_count ?? 1
+  const runningContainerCount = containers?.filter(c => c.status === 'running').length ?? 0
 
   // Validate stored project exists (clear if project was deleted)
   useEffect(() => {
@@ -273,6 +318,29 @@ function App() {
           </div>
         ) : (
           <div className="space-y-6">
+            {/* Container Control - slider and buttons for parallel agents */}
+            <ContainerControl
+              projectName={selectedProject}
+              targetCount={targetContainerCount}
+              runningCount={runningContainerCount}
+              agentRunning={agentStatusData?.agent_running ?? false}
+              gracefulStopRequested={wsState.gracefulStopRequested}
+              onTargetChange={handleContainerCountChange}
+              onStart={handleStartAgent}
+              onStopNow={handleStopAgent}
+              onGracefulStop={handleGracefulStop}
+              onEditTasks={handleEditTasks}
+            />
+
+            {/* Container List - show running containers */}
+            {containers && containers.length > 0 && (
+              <ContainerList
+                containers={containers}
+                onViewLogs={handleViewContainerLogs}
+                isLoading={containersLoading}
+              />
+            )}
+
             {/* Agent Log Viewer - replaces both AgentThought and DebugLogViewer */}
             <AgentLogViewer
               logs={wsState.logs}

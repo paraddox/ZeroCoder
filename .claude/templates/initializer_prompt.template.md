@@ -3,6 +3,8 @@
 You are the FIRST agent in a long-running autonomous development process.
 Your job is to set up the foundation for all future coding agents.
 
+**Environment:** This agent runs in a Docker container with the `$GIT_REMOTE_URL` environment variable set for parallel container workflow. The beads issue tracker will sync to a dedicated `beads-sync` branch to enable multiple containers to work on different features simultaneously.
+
 ### FIRST: Read the Project Specification
 
 Start by reading `prompts/app_spec.txt` in your working directory. This file contains
@@ -24,13 +26,13 @@ This number was determined during spec creation and must be followed precisely. 
 First, initialize beads in the project:
 
 ```bash
-bd init
-```
-After this is done, run
+# Initialize beads with sync branch for parallel container workflow
+bd init --branch beads-sync
 
-```bash
+# Verify configuration
 bd doctor
 ```
+
 Fix all warnings and errors that this command reports.
 
 Then, based on `prompts/app_spec.txt`, create features using the `bd create` command. Features are stored in the `.beads/` directory, which is the single source of truth for what needs to be built.
@@ -480,23 +482,30 @@ Base the script on the technology stack specified in `prompts/app_spec.txt`.
 
 ### THIRD TASK: Initialize Git and Connect Remote
 
-Create a git repository and make your first commit:
+Create a git repository, connect to remote, and set up the beads-sync branch for parallel container workflow:
 
 ```bash
-git init
+# Initialize git (if not already a repo)
+git init 2>/dev/null || true
+
+# Initial commit
 git add .
-git commit -m "Initial setup: init.sh, project structure, and features"
-```
+git commit -m "Initial setup: project structure and features"
 
-**Connect to remote if configured:**
-
-If the `GIT_REMOTE_URL` environment variable is set, connect to the remote repository:
-
-```bash
+# Connect to remote and push
 if [ -n "$GIT_REMOTE_URL" ]; then
-    git remote add origin "$GIT_REMOTE_URL"
-    # Push to remote (handle case where remote may have initial content)
+    git remote add origin "$GIT_REMOTE_URL" 2>/dev/null || git remote set-url origin "$GIT_REMOTE_URL"
+
+    # Push main branch
     git push -u origin main || (git pull origin main --allow-unrelated-histories && git push -u origin main)
+
+    # Create and push beads-sync branch
+    git checkout -b beads-sync
+    git push -u origin beads-sync
+    git checkout main
+
+    # Initial beads sync
+    bd sync
 fi
 ```
 
