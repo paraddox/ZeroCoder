@@ -87,13 +87,15 @@ safe_bd_sync() {
 # FEATURE CLAIMING
 # =============================================================================
 
-# Try to claim the first ready feature
+# Try to claim a random OPEN feature (not in_progress)
 # Returns: 0=success (feature ID on stdout), 1=no features, 2=claim failed (retry)
 claim_feature() {
-    local feature_id=$(safe_bd_json ready --json | jq -r '.[0].id // empty')
+    # CRITICAL: Filter for status=open only! bd ready includes in_progress which causes race conditions
+    # Use shuf to randomize so parallel agents don't all claim the same feature
+    local feature_id=$(safe_bd_json ready --json | jq -r '[.[] | select(.status == "open")][].id' | shuf | head -1)
 
     if [ -z "$feature_id" ]; then
-        echo "No features ready to work on" >&2  # Errors to stderr, not stdout!
+        echo "No open features ready to work on" >&2  # Errors to stderr, not stdout!
         return 1
     fi
 
