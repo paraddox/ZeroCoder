@@ -761,8 +761,8 @@ class ContainerManager:
                 try:
                     from registry import update_container_status
                     update_container_status(
-                        project_name=self._project_name,
-                        container_number=self._container_number,
+                        project_name=self.project_name,
+                        container_number=self.container_number,
                         status='running'
                     )
                 except Exception as e:
@@ -823,9 +823,9 @@ class ContainerManager:
                 try:
                     from registry import create_container, update_container_status
                     create_container(
-                        project_name=self._project_name,
-                        container_number=self._container_number,
-                        container_type=self._container_type
+                        project_name=self.project_name,
+                        container_number=self.container_number,
+                        container_type=self.container_type
                     )
                     # Get docker container ID
                     inspect_result = subprocess.run(
@@ -834,8 +834,8 @@ class ContainerManager:
                     )
                     docker_id = inspect_result.stdout.strip() if inspect_result.returncode == 0 else None
                     update_container_status(
-                        project_name=self._project_name,
-                        container_number=self._container_number,
+                        project_name=self.project_name,
+                        container_number=self.container_number,
                         docker_container_id=docker_id,
                         status='running'
                     )
@@ -1025,8 +1025,8 @@ class ContainerManager:
             try:
                 from registry import update_container_status
                 update_container_status(
-                    project_name=self._project_name,
-                    container_number=self._container_number,
+                    project_name=self.project_name,
+                    container_number=self.container_number,
                     status='stopped'
                 )
             except Exception as e:
@@ -1044,8 +1044,8 @@ class ContainerManager:
             try:
                 from registry import update_container_status
                 update_container_status(
-                    project_name=self._project_name,
-                    container_number=self._container_number,
+                    project_name=self.project_name,
+                    container_number=self.container_number,
                     status='stopped'
                 )
             except Exception as e:

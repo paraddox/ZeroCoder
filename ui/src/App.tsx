@@ -182,10 +182,10 @@ function App() {
     setAssistantOpen(true)
   }, [])
 
-  const handleViewContainerLogs = useCallback((containerId: number) => {
+  const handleViewContainerLogs = useCallback((containerNumber: number) => {
     // Expand log viewer and filter by container
     setLogViewerExpanded(true)
-    setLogContainerFilter(containerId)
+    setLogContainerFilter(containerNumber)
   }, [])
 
   // Get current project data for container count

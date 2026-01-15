@@ -3,7 +3,7 @@ import type { ContainerInfo, ContainerStatusType } from '../lib/types'
 
 interface ContainerListProps {
   containers: ContainerInfo[]
-  onViewLogs: (containerId: number) => void
+  onViewLogs: (containerNumber: number) => void
   isLoading?: boolean
 }
 
@@ -118,7 +118,7 @@ export function ContainerList({ containers, onViewLogs, isLoading = false }: Con
 
                   {/* View Logs Button */}
                   <button
-                    onClick={() => onViewLogs(container.id)}
+                    onClick={() => onViewLogs(container.container_number)}
                     className="btn btn-secondary btn-icon"
                     title="View Logs"
                   >
