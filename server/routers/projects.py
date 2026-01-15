@@ -265,7 +265,7 @@ async def list_projects():
     _init_imports()
     (
         _, _, _, _, _, _,
-        list_registered_projects, validate_project_path, _, _
+        list_registered_projects, validate_project_path, _, _, _
     ) = _get_registry_functions()
 
     # Import get_project_container for agent status
@@ -323,7 +323,7 @@ async def create_project(project: ProjectCreate):
     _init_imports()
     (
         register_project, _, get_project_path, _, _, get_projects_dir,
-        _, _, _, _
+        _, _, _, _, _
     ) = _get_registry_functions()
 
     name = validate_project_name(project.name)
@@ -372,7 +372,7 @@ async def get_project(name: str):
     _init_imports()
     (
         _, _, get_project_path, _, get_project_info, _,
-        _, _, _, _
+        _, _, _, _, _
     ) = _get_registry_functions()
 
     name = validate_project_name(name)
@@ -415,7 +415,7 @@ async def delete_project(name: str, delete_files: bool = False):
     _init_imports()
     (
         _, unregister_project, get_project_path, _, _, _,
-        _, _, _, _
+        _, _, _, _, _
     ) = _get_registry_functions()
 
     name = validate_project_name(name)
@@ -458,7 +458,7 @@ async def get_project_prompts(name: str):
     _init_imports()
     (
         _, _, get_project_path, _, _, _,
-        _, _, _, _
+        _, _, _, _, _
     ) = _get_registry_functions()
 
     name = validate_project_name(name)
@@ -494,7 +494,7 @@ async def update_project_prompts(name: str, prompts: ProjectPromptsUpdate):
     _init_imports()
     (
         _, _, get_project_path, _, _, _,
-        _, _, _, _
+        _, _, _, _, _
     ) = _get_registry_functions()
 
     name = validate_project_name(name)
@@ -527,7 +527,7 @@ async def get_project_stats_endpoint(name: str):
     _init_imports()
     (
         _, _, get_project_path, _, _, _,
-        _, _, _, _
+        _, _, _, _, _
     ) = _get_registry_functions()
 
     name = validate_project_name(name)
@@ -548,7 +548,7 @@ async def get_wizard_status(name: str):
     import json
     (
         _, _, get_project_path, _, _, _,
-        _, _, _, _
+        _, _, _, _, _
     ) = _get_registry_functions()
 
     name = validate_project_name(name)
@@ -574,7 +574,7 @@ async def update_wizard_status(name: str, status: WizardStatus):
     import json
     (
         _, _, get_project_path, _, _, _,
-        _, _, _, _
+        _, _, _, _, _
     ) = _get_registry_functions()
 
     name = validate_project_name(name)
@@ -602,7 +602,7 @@ async def delete_wizard_status(name: str):
     """Delete the wizard status for a project (called on wizard completion)."""
     (
         _, _, get_project_path, _, _, _,
-        _, _, _, _
+        _, _, _, _, _
     ) = _get_registry_functions()
 
     name = validate_project_name(name)
@@ -627,7 +627,7 @@ async def update_project_settings(name: str, settings: ProjectSettingsUpdate):
     """Update project settings (agent model, etc.)."""
     (
         _, _, get_project_path, _, _, _,
-        _, _, _, _
+        _, _, _, _, _
     ) = _get_registry_functions()
 
     name = validate_project_name(name)
@@ -662,7 +662,7 @@ async def get_project_settings(name: str):
     """Get project settings (agent model, etc.)."""
     (
         _, _, get_project_path, _, _, _,
-        _, _, _, _
+        _, _, _, _, _
     ) = _get_registry_functions()
 
     name = validate_project_name(name)
@@ -698,7 +698,7 @@ async def add_existing_repo(request: AddExistingRepoRequest):
     _init_imports()
     (
         register_project, _, get_project_path, _, _, get_projects_dir,
-        _, _, _, _
+        _, _, _, _, _
     ) = _get_registry_functions()
 
     # Import scaffold function for existing repos
@@ -766,7 +766,7 @@ async def update_container_count(name: str, body: ContainerCountUpdate):
     """Update target container count for a project."""
     (
         _, _, get_project_path, _, _, _,
-        _, _, _, update_target_container_count
+        _, _, _, update_target_container_count, _
     ) = _get_registry_functions()
 
     name = validate_project_name(name)
