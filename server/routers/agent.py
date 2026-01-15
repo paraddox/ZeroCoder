@@ -258,6 +258,15 @@ async def start_all_containers(project_name: str):
     target_count = project_info.get("target_container_count", 1)
     is_new = project_info.get("is_new", False)
 
+    # Register with BeadsSyncManager to ensure we can pull beads-sync data
+    try:
+        from ..services.beads_sync_manager import get_beads_sync_manager
+        beads_manager = get_beads_sync_manager(project_name, git_url)
+        await beads_manager.ensure_cloned()
+    except Exception as e:
+        # Non-fatal - beads sync might not be set up yet for new projects
+        print(f"[StartAll] Beads sync init warning (continuing): {e}")
+
     # Get project directory
     project_dir = _get_project_path(project_name)
     if not project_dir or not project_dir.exists():

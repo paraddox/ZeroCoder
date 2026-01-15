@@ -227,17 +227,181 @@ def clear_beads_sync_manager(project_name: str) -> None:
             del _sync_managers[project_name]
 
 
-async def pull_all_beads_sync() -> dict[str, bool]:
+def get_cached_stats(project_name: str) -> dict:
     """
-    Pull latest for all registered projects.
+    Get cached stats for a project from beads-sync.
+
+    This is a convenience function for use by progress.py and other modules
+    that don't have the git_url handy.
+
+    Returns:
+        Dict with open, in_progress, closed (done), total, percentage
+    """
+    with _sync_managers_lock:
+        if project_name in _sync_managers:
+            stats = _sync_managers[project_name].get_stats()
+            # Map to feature_poller-compatible format
+            return {
+                "pending": stats.get("open", 0),
+                "in_progress": stats.get("in_progress", 0),
+                "done": stats.get("closed", 0),
+                "total": stats.get("total", 0),
+                "percentage": stats.get("percentage", 0.0),
+            }
+
+    # Manager not found - try to create one from registry
+    try:
+        import sys
+        from pathlib import Path
+        root = Path(__file__).parent.parent.parent
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+
+        from registry import get_project_git_url
+        git_url = get_project_git_url(project_name)
+        if git_url:
+            manager = get_beads_sync_manager(project_name, git_url)
+            stats = manager.get_stats()
+            return {
+                "pending": stats.get("open", 0),
+                "in_progress": stats.get("in_progress", 0),
+                "done": stats.get("closed", 0),
+                "total": stats.get("total", 0),
+                "percentage": stats.get("percentage", 0.0),
+            }
+    except Exception as e:
+        logger.debug(f"Failed to get stats for {project_name}: {e}")
+
+    return {"pending": 0, "in_progress": 0, "done": 0, "total": 0, "percentage": 0.0}
+
+
+def get_cached_features(project_name: str) -> list[dict]:
+    """
+    Get cached features for a project from beads-sync.
+
+    This is a convenience function for use by progress.py and other modules.
+    Returns features in the format expected by the UI (compatible with feature_poller).
+
+    Returns:
+        List of feature dicts with id, priority, category, name, description, steps, passes, in_progress
+    """
+    with _sync_managers_lock:
+        if project_name in _sync_managers:
+            return _tasks_to_features(_sync_managers[project_name].get_tasks())
+
+    # Manager not found - try to create one from registry
+    try:
+        import sys
+        from pathlib import Path
+        root = Path(__file__).parent.parent.parent
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+
+        from registry import get_project_git_url
+        git_url = get_project_git_url(project_name)
+        if git_url:
+            manager = get_beads_sync_manager(project_name, git_url)
+            return _tasks_to_features(manager.get_tasks())
+    except Exception as e:
+        logger.debug(f"Failed to get features for {project_name}: {e}")
+
+    return []
+
+
+def _tasks_to_features(tasks: list[dict]) -> list[dict]:
+    """Convert beads tasks to feature format for UI compatibility."""
+    import re
+
+    features = []
+    for task in tasks:
+        # Extract category from labels (first label)
+        labels = task.get("labels", [])
+        category = labels[0] if labels else ""
+
+        # Parse steps from body if available
+        body = task.get("body", "")
+        steps = []
+        if body:
+            step_matches = re.findall(r'^\d+\.\s*(.+)$', body, re.MULTILINE)
+            if step_matches:
+                steps = step_matches
+
+        status = task.get("status", "open")
+
+        features.append({
+            "id": task.get("id", ""),
+            "priority": task.get("priority", 999),
+            "category": category,
+            "name": task.get("title", ""),
+            "description": body,
+            "steps": steps,
+            "passes": status == "closed",
+            "in_progress": status == "in_progress",
+        })
+
+    return features
+
+
+async def initialize_all_projects() -> dict[str, bool]:
+    """
+    Clone beads-sync branches for all registered projects on server startup.
+
+    This ensures we have local copies of beads data for all projects
+    before the polling loop starts.
 
     Returns:
         Dict mapping project name to success status
     """
+    import sys
+    from pathlib import Path
+    root = Path(__file__).parent.parent.parent
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+
+    from registry import list_all_projects, get_project_git_url
+
     results = {}
-    for project_name, manager in _sync_managers.items():
-        success, _ = await manager.pull_latest()
-        results[project_name] = success
+    projects = list_all_projects()
+    logger.info(f"Initializing beads-sync for {len(projects)} registered projects")
+
+    for project in projects:
+        project_name = project["name"]
+        git_url = get_project_git_url(project_name)
+        if git_url:
+            manager = get_beads_sync_manager(project_name, git_url)
+            success, message = await manager.ensure_cloned()
+            results[project_name] = success
+            if success:
+                logger.debug(f"Beads-sync initialized for {project_name}: {message}")
+            else:
+                logger.info(f"Beads-sync init for {project_name}: {message}")
+        else:
+            logger.debug(f"Skipping {project_name}: no git URL")
+
+    successes = sum(1 for v in results.values() if v)
+    logger.info(f"Beads-sync initialization complete: {successes}/{len(results)} successful")
+    return results
+
+
+async def pull_all_beads_sync() -> dict[str, bool]:
+    """
+    Pull latest for projects with active containers only.
+
+    Returns:
+        Dict mapping project name to success status
+    """
+    from .container_manager import get_projects_with_active_containers
+
+    active_projects = get_projects_with_active_containers()
+    if not active_projects:
+        return {}
+
+    results = {}
+    for project_name in active_projects:
+        if project_name in _sync_managers:
+            success, _ = await _sync_managers[project_name].pull_latest()
+            results[project_name] = success
+
     return results
 
 

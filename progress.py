@@ -28,7 +28,7 @@ def has_features(project_dir: Path, project_name: str | None = None) -> bool:
     # Try cache first if project_name provided (avoids permission issues)
     if project_name:
         try:
-            from server.services.feature_poller import get_cached_stats
+            from server.services.beads_sync_manager import get_cached_stats
 
             stats = get_cached_stats(project_name)
             total = stats.get("total", 0)
@@ -84,7 +84,7 @@ def has_open_features(project_dir: Path, project_name: str | None = None) -> boo
     # Try cache first if project_name provided (avoids permission issues)
     if project_name:
         try:
-            from server.services.feature_poller import get_cached_stats
+            from server.services.beads_sync_manager import get_cached_stats
 
             stats = get_cached_stats(project_name)
             open_count = stats.get("pending", 0) + stats.get("in_progress", 0)
@@ -116,7 +116,7 @@ def count_passing_tests(project_dir: Path, project_name: str | None = None) -> t
     """
     Count passing, in_progress, and total tests.
 
-    Uses cached data from feature_poller. This avoids permission issues
+    Uses cached data from beads_sync_manager. This avoids permission issues
     when container is running (files may be owned by container user).
 
     Args:
@@ -129,7 +129,7 @@ def count_passing_tests(project_dir: Path, project_name: str | None = None) -> t
     # Try cache if project_name provided
     if project_name:
         try:
-            from server.services.feature_poller import get_cached_stats
+            from server.services.beads_sync_manager import get_cached_stats
 
             stats = get_cached_stats(project_name)
             if stats.get("total", 0) > 0:
@@ -184,7 +184,7 @@ def get_all_passing_features(project_dir: Path, project_name: str | None = None)
     # Try cache if project_name provided
     if project_name:
         try:
-            from server.services.feature_poller import get_cached_features
+            from server.services.beads_sync_manager import get_cached_features
 
             cached = get_cached_features(project_name)
             passing = []

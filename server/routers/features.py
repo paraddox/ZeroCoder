@@ -20,11 +20,7 @@ from ..schemas import (
     FeatureUpdate,
 )
 from ..services.container_beads import ContainerBeadsClient
-from ..services.feature_poller import (
-    get_cached_features,
-    poll_container_features,
-    update_feature_cache,
-)
+from ..services.beads_sync_manager import get_cached_features, get_beads_sync_manager
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +119,41 @@ def feature_to_response(feature: dict) -> FeatureResponse:
     )
 
 
+def beads_task_to_feature(task: dict) -> dict:
+    """
+    Convert a beads task to feature format.
+
+    Beads tasks have: id, title, status, priority, labels, body
+    Features need: id, priority, category, name, description, steps, passes, in_progress
+    """
+    # Extract category from labels (first label)
+    labels = task.get("labels", [])
+    category = labels[0] if labels else ""
+
+    # Parse steps from body if available
+    body = task.get("body", "")
+    steps = []
+    if body:
+        # Try to extract numbered steps from body
+        import re
+        step_matches = re.findall(r'^\d+\.\s*(.+)$', body, re.MULTILINE)
+        if step_matches:
+            steps = step_matches
+
+    status = task.get("status", "open")
+
+    return {
+        "id": task.get("id", ""),
+        "priority": task.get("priority", 999),
+        "category": category,
+        "name": task.get("title", ""),
+        "description": body,
+        "steps": steps,
+        "passes": status == "closed",
+        "in_progress": status == "in_progress",
+    }
+
+
 @router.get("", response_model=FeatureListResponse)
 async def list_features(project_name: str):
     """
@@ -133,7 +164,7 @@ async def list_features(project_name: str):
     - in_progress: features currently being worked on
     - done: passes=True
 
-    Uses cached data from polling. Updates every 30 seconds when container running.
+    Uses beads-sync data from local clone at ~/.zerocoder/beads-sync/{project}/.
     """
     project_name = validate_project_name(project_name)
     project_dir = _get_project_path(project_name)
@@ -144,14 +175,28 @@ async def list_features(project_name: str):
     if not project_dir.exists():
         raise HTTPException(status_code=404, detail="Project directory not found")
 
-    # Always read from cache - populated by feature_poller when container running
-    cached_features = get_cached_features(project_name)
+    # Try to get features from beads-sync manager first
+    features = []
+    git_url = _get_project_git_url(project_name)
+    if git_url:
+        try:
+            from ..services.beads_sync_manager import get_beads_sync_manager
+            sync_manager = get_beads_sync_manager(project_name, git_url)
+            tasks = sync_manager.get_tasks()
+            if tasks:
+                features = [beads_task_to_feature(t) for t in tasks]
+        except Exception as e:
+            logger.warning(f"Failed to get features from beads-sync for {project_name}: {e}")
+
+    # Fall back to cache lookup if beads-sync didn't return data
+    if not features:
+        features = get_cached_features(project_name)
 
     pending = []
     in_progress = []
     done = []
 
-    for f in cached_features:
+    for f in features:
         feature_response = feature_to_response(f)
         if f.get("passes"):
             done.append(feature_response)
@@ -201,14 +246,14 @@ async def create_feature(project_name: str, feature: FeatureCreate):
         if not feature_id:
             raise HTTPException(status_code=500, detail="Failed to create feature")
 
-        # Trigger immediate feature poll to sync to host cache
-        container_name = f"zerocoder-{project_name}"
+        # Trigger immediate beads-sync refresh
         try:
-            data = await poll_container_features(container_name, project_name)
-            if data:
-                update_feature_cache(project_name, data)
+            git_url = _get_project_git_url(project_name)
+            if git_url:
+                sync_manager = get_beads_sync_manager(project_name, git_url)
+                await sync_manager.pull_latest()
         except Exception as e:
-            logger.warning(f"Failed to refresh feature cache: {e}")
+            logger.warning(f"Failed to refresh beads-sync: {e}")
 
         # Get the created feature
         created = await container_client.get_feature(feature_id)
@@ -287,14 +332,14 @@ async def delete_feature(project_name: str, feature_id: str):
         if not success:
             raise HTTPException(status_code=500, detail="Failed to delete feature")
 
-        # Trigger immediate feature poll to sync to host cache
-        container_name = f"zerocoder-{project_name}"
+        # Trigger immediate beads-sync refresh
         try:
-            data = await poll_container_features(container_name, project_name)
-            if data:
-                update_feature_cache(project_name, data)
+            git_url = _get_project_git_url(project_name)
+            if git_url:
+                sync_manager = get_beads_sync_manager(project_name, git_url)
+                await sync_manager.pull_latest()
         except Exception as e:
-            logger.warning(f"Failed to refresh feature cache: {e}")
+            logger.warning(f"Failed to refresh beads-sync: {e}")
 
         return {"success": True, "message": f"Feature {feature_id} deleted"}
     except RuntimeError as e:
@@ -335,14 +380,14 @@ async def skip_feature(project_name: str, feature_id: str):
         if "error" in result:
             raise HTTPException(status_code=400, detail=result["error"])
 
-        # Trigger immediate feature poll to sync to host cache
-        container_name = f"zerocoder-{project_name}"
+        # Trigger immediate beads-sync refresh
         try:
-            data = await poll_container_features(container_name, project_name)
-            if data:
-                update_feature_cache(project_name, data)
+            git_url = _get_project_git_url(project_name)
+            if git_url:
+                sync_manager = get_beads_sync_manager(project_name, git_url)
+                await sync_manager.pull_latest()
         except Exception as e:
-            logger.warning(f"Failed to refresh feature cache: {e}")
+            logger.warning(f"Failed to refresh beads-sync: {e}")
 
         return {"success": True, "message": f"Feature {feature_id} moved to end of queue"}
     except RuntimeError as e:
@@ -395,14 +440,14 @@ async def update_feature(project_name: str, feature_id: str, update: FeatureUpda
         if not updated:
             raise HTTPException(status_code=500, detail="Failed to update feature")
 
-        # Trigger immediate feature poll to sync to host cache
-        container_name = f"zerocoder-{project_name}"
+        # Trigger immediate beads-sync refresh
         try:
-            data = await poll_container_features(container_name, project_name)
-            if data:
-                update_feature_cache(project_name, data)
+            git_url = _get_project_git_url(project_name)
+            if git_url:
+                sync_manager = get_beads_sync_manager(project_name, git_url)
+                await sync_manager.pull_latest()
         except Exception as e:
-            logger.warning(f"Failed to refresh feature cache: {e}")
+            logger.warning(f"Failed to refresh beads-sync: {e}")
 
         return feature_to_response(updated)
     except RuntimeError as e:
@@ -450,14 +495,14 @@ async def reopen_feature(project_name: str, feature_id: str):
         if not reopened:
             raise HTTPException(status_code=500, detail="Failed to reopen feature")
 
-        # Trigger immediate feature poll to sync to host cache
-        container_name = f"zerocoder-{project_name}"
+        # Trigger immediate beads-sync refresh
         try:
-            data = await poll_container_features(container_name, project_name)
-            if data:
-                update_feature_cache(project_name, data)
+            git_url = _get_project_git_url(project_name)
+            if git_url:
+                sync_manager = get_beads_sync_manager(project_name, git_url)
+                await sync_manager.pull_latest()
         except Exception as e:
-            logger.warning(f"Failed to refresh feature cache: {e}")
+            logger.warning(f"Failed to refresh beads-sync: {e}")
 
         return {"success": True, "message": f"Feature {feature_id} reopened"}
     except RuntimeError as e:

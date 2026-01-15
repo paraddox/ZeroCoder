@@ -367,6 +367,7 @@ function App() {
               onClearLogs={wsState.clearLogs}
               containerFilter={logContainerFilter}
               onContainerFilterChange={setLogContainerFilter}
+              registeredContainers={wsState.containers}
             />
 
             {/* Initializing Features State - show when agent is running but no features yet */}

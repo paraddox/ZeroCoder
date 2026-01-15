@@ -38,33 +38,41 @@ server = Server("issue-creator")
 
 
 def _is_container_running(project_name: str) -> bool:
-    """Check if the container is running for this project."""
+    """Check if any container is running for this project."""
     from server.services.container_manager import _managers, _managers_lock
 
     with _managers_lock:
-        manager = _managers.get(project_name)
-        return manager is not None and manager.status == "running"
+        if project_name not in _managers:
+            return False
+        # Check if any container for this project is running
+        for manager in _managers[project_name].values():
+            if manager.status == "running":
+                return True
+        return False
 
 
 async def _trigger_feature_refresh(project_name: str) -> None:
     """
-    Trigger an immediate feature poll to sync container data to host cache.
+    Trigger an immediate beads-sync pull to refresh local cache.
     Called after creating an issue so UI updates immediately.
     """
-    from server.services.feature_poller import poll_container_features, update_feature_cache
-
-    container_name = f"zerocoder-{project_name}"
+    from server.services.beads_sync_manager import get_beads_sync_manager
+    from registry import get_project_git_url
 
     try:
-        data = await poll_container_features(container_name, project_name)
-        if data:
-            update_feature_cache(project_name, data)
-            logger.info(f"Feature cache refreshed for {project_name}")
+        git_url = get_project_git_url(project_name)
+        if git_url:
+            sync_manager = get_beads_sync_manager(project_name, git_url)
+            success, _ = await sync_manager.pull_latest()
+            if success:
+                logger.info(f"Beads-sync refreshed for {project_name}")
+            else:
+                logger.warning(f"Beads-sync pull returned no data for {project_name}")
         else:
-            logger.warning(f"Feature poll returned no data for {project_name}")
+            logger.warning(f"No git URL found for project {project_name}")
     except Exception as e:
         # Don't fail the issue creation if refresh fails
-        logger.warning(f"Failed to refresh feature cache: {e}")
+        logger.warning(f"Failed to refresh beads-sync: {e}")
 
 
 async def ensure_container_running(project_name: str, project_dir: Path) -> tuple[bool, str]:

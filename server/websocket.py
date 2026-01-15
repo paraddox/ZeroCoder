@@ -58,6 +58,17 @@ def _get_count_passing_tests():
     return _count_passing_tests
 
 
+def _list_project_containers(project_name: str) -> list[dict]:
+    """Get list of registered containers for a project."""
+    import sys
+    root = Path(__file__).parent.parent
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+
+    from registry import list_project_containers
+    return list_project_containers(project_name)
+
+
 class ConnectionManager:
     """Manages WebSocket connections per project."""
 
@@ -248,6 +259,16 @@ async def project_websocket(websocket: WebSocket, project_name: str):
             "in_progress": in_progress,
             "total": total,
             "percentage": round(percentage, 1),
+        })
+
+        # Send registered containers list
+        containers = _list_project_containers(project_name)
+        await websocket.send_json({
+            "type": "containers",
+            "containers": [
+                {"number": c["container_number"], "type": c["container_type"]}
+                for c in containers
+            ],
         })
 
         # Keep connection alive and handle incoming messages

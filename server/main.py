@@ -41,7 +41,7 @@ from .services.container_manager import (
     restore_managers_from_registry,
     start_agent_health_monitor,
 )
-from .services.feature_poller import start_feature_poller
+from .services.beads_sync_manager import initialize_all_projects, start_beads_sync_poller
 from .websocket import project_websocket
 
 # Idle container check interval (seconds)
@@ -111,10 +111,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Failed to restore container managers: {e}")
 
+    # Initialize beads-sync for all registered projects
+    try:
+        await initialize_all_projects()
+    except Exception as e:
+        logger.warning(f"Failed to initialize beads-sync: {e}")
+
     # Startup - start background monitors
     idle_monitor_task = asyncio.create_task(idle_container_monitor())
     health_monitor_task = asyncio.create_task(start_agent_health_monitor())
-    feature_poller_task = asyncio.create_task(start_feature_poller())
+    beads_sync_task = asyncio.create_task(start_beads_sync_poller())
 
     yield
 
@@ -123,7 +129,7 @@ async def lifespan(app: FastAPI):
 
     idle_monitor_task.cancel()
     health_monitor_task.cancel()
-    feature_poller_task.cancel()
+    beads_sync_task.cancel()
     try:
         await idle_monitor_task
     except asyncio.CancelledError:
@@ -133,7 +139,7 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
     try:
-        await feature_poller_task
+        await beads_sync_task
     except asyncio.CancelledError:
         pass
 

@@ -11,6 +11,11 @@ export interface LogEntry {
   container_number?: number
 }
 
+export interface ContainerInfo {
+  number: number
+  type: 'init' | 'coding'
+}
+
 interface WebSocketState {
   progress: {
     passing: number
@@ -20,6 +25,7 @@ interface WebSocketState {
   }
   agentStatus: AgentStatus
   logs: LogEntry[]
+  containers: ContainerInfo[]
   isConnected: boolean
   gracefulStopRequested: boolean
 }
@@ -31,6 +37,7 @@ export function useProjectWebSocket(projectName: string | null) {
     progress: { passing: 0, in_progress: 0, total: 0, percentage: 0 },
     agentStatus: 'stopped',
     logs: [],
+    containers: [],
     isConnected: false,
     gracefulStopRequested: false,
   })
@@ -111,6 +118,13 @@ export function useProjectWebSocket(projectName: string | null) {
               setState(prev => ({
                 ...prev,
                 gracefulStopRequested: message.graceful_stop_requested,
+              }))
+              break
+
+            case 'containers':
+              setState(prev => ({
+                ...prev,
+                containers: message.containers as ContainerInfo[],
               }))
               break
 

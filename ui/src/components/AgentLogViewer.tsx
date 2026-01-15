@@ -9,7 +9,7 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { Brain, Sparkles, ChevronUp, ChevronDown, Trash2, GripHorizontal } from 'lucide-react'
 import type { AgentStatus } from '../lib/types'
-import type { LogEntry } from '../hooks/useWebSocket'
+import type { LogEntry, ContainerInfo } from '../hooks/useWebSocket'
 
 const IDLE_TIMEOUT = 30000 // 30 seconds
 const MIN_HEIGHT = 150
@@ -26,6 +26,7 @@ interface AgentLogViewerProps {
   onHeightChange?: (height: number) => void
   containerFilter?: number | null
   onContainerFilterChange?: (container: number | null) => void
+  registeredContainers?: ContainerInfo[]
 }
 
 type LogLevel = 'error' | 'warn' | 'debug' | 'info'
@@ -129,9 +130,15 @@ export function AgentLogViewer({
   onHeightChange,
   containerFilter,
   onContainerFilterChange,
+  registeredContainers,
 }: AgentLogViewerProps) {
-  // Get unique container numbers from logs
+  // Get available container numbers - prefer registered containers, fall back to logs
   const availableContainers = useMemo(() => {
+    // Use registered containers if provided
+    if (registeredContainers && registeredContainers.length > 0) {
+      return registeredContainers.map(c => c.number).sort((a, b) => a - b)
+    }
+    // Fallback to deriving from logs
     const containers = new Set<number>()
     logs.forEach(log => {
       if (log.container_number !== undefined) {
@@ -139,7 +146,7 @@ export function AgentLogViewer({
       }
     })
     return Array.from(containers).sort((a, b) => a - b)
-  }, [logs])
+  }, [registeredContainers, logs])
 
   // Filter logs by container if filter is set
   const filteredLogs = useMemo(() => {

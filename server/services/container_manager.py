@@ -1705,6 +1705,22 @@ def get_all_container_managers(project_name: str) -> list[ContainerManager]:
         return list(_managers[project_name].values())
 
 
+def get_projects_with_active_containers() -> list[str]:
+    """
+    Return list of project names that have at least one running container.
+
+    Used by beads_sync_manager to only poll active projects.
+    """
+    with _managers_lock:
+        active_projects = set()
+        for project_name, containers in _managers.items():
+            for manager in containers.values():
+                if manager.status == "running":
+                    active_projects.add(project_name)
+                    break  # Found one running container, move to next project
+        return list(active_projects)
+
+
 def get_init_container_manager(
     project_name: str,
     git_url: str,
