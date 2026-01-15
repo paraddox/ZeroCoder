@@ -757,6 +757,16 @@ class ContainerManager:
                 )
                 if result.returncode != 0:
                     return False, f"Failed to start container: {result.stderr}"
+                # Update registry status
+                try:
+                    from registry import update_container_status
+                    update_container_status(
+                        project_name=self._project_name,
+                        container_number=self._container_number,
+                        status='running'
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to update container status in database: {e}")
             else:
                 # Ensure Docker image exists (build if necessary)
                 image_ok, image_msg = ensure_image_exists()
@@ -808,6 +818,30 @@ class ContainerManager:
                 result = subprocess.run(cmd, capture_output=True, text=True)
                 if result.returncode != 0:
                     return False, f"Failed to create container: {result.stderr}"
+
+                # Register new container in database
+                try:
+                    from registry import create_container, update_container_status
+                    create_container(
+                        project_name=self._project_name,
+                        container_number=self._container_number,
+                        container_type=self._container_type
+                    )
+                    # Get docker container ID
+                    inspect_result = subprocess.run(
+                        ["docker", "inspect", "--format", "{{.Id}}", self.container_name],
+                        capture_output=True, text=True
+                    )
+                    docker_id = inspect_result.stdout.strip() if inspect_result.returncode == 0 else None
+                    update_container_status(
+                        project_name=self._project_name,
+                        container_number=self._container_number,
+                        docker_container_id=docker_id,
+                        status='running'
+                    )
+                    logger.info(f"Registered container {self.container_name} in database")
+                except Exception as e:
+                    logger.warning(f"Failed to register container in database: {e}")
 
             self.started_at = datetime.now()
             self._update_activity()
@@ -920,7 +954,10 @@ class ContainerManager:
                     logger.warning(f"Feature recovery failed: {recovery_msg}")
                     # Continue anyway - recovery failure shouldn't block agent
 
-                return await self.send_instruction(instruction)
+                # Start agent in background task (non-blocking)
+                # This allows the API to return immediately while agent runs
+                asyncio.create_task(self._run_agent_with_monitoring(instruction))
+                return True, f"Container started and agent spawned"
 
             return True, f"Container {self.container_name} started"
 
@@ -984,6 +1021,16 @@ class ContainerManager:
 
             logger.info(f"[STOP] Successfully stopped {self.container_name}")
             self.status = "stopped"
+            # Update registry status
+            try:
+                from registry import update_container_status
+                update_container_status(
+                    project_name=self._project_name,
+                    container_number=self._container_number,
+                    status='stopped'
+                )
+            except Exception as e:
+                logger.warning(f"Failed to update container status in database: {e}")
             return True, f"Container {self.container_name} stopped"
 
         except subprocess.TimeoutExpired:
@@ -993,6 +1040,16 @@ class ContainerManager:
                 capture_output=True
             )
             self.status = "stopped"
+            # Update registry status
+            try:
+                from registry import update_container_status
+                update_container_status(
+                    project_name=self._project_name,
+                    container_number=self._container_number,
+                    status='stopped'
+                )
+            except Exception as e:
+                logger.warning(f"Failed to update container status in database: {e}")
             return True, f"Container {self.container_name} killed (timeout)"
         except Exception as e:
             logger.exception("Failed to stop container")
@@ -1168,6 +1225,26 @@ class ContainerManager:
         except Exception as e:
             logger.exception("Failed to send instruction")
             return False, f"Failed to send instruction: {e}"
+
+    async def _run_agent_with_monitoring(self, instruction: str) -> None:
+        """
+        Run agent in background and handle exit.
+
+        This method is spawned as a background task by start() to allow
+        non-blocking container startup. It runs the agent instruction and
+        handles the exit code (which may trigger restarts or completion).
+
+        Args:
+            instruction: The instruction to send to the agent
+        """
+        try:
+            success, message = await self.send_instruction(instruction)
+            if not success:
+                logger.error(f"Agent instruction failed: {message}")
+                await self._broadcast_output(f"[System] Agent failed: {message}")
+        except Exception as e:
+            logger.exception(f"Error running agent: {e}")
+            await self._broadcast_output(f"[System] Agent error: {e}")
 
     async def _handle_agent_exit(self, exit_code: int) -> tuple[bool, str]:
         """

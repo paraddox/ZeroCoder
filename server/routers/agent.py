@@ -6,10 +6,14 @@ API endpoints for agent/container control (start/stop/send instruction).
 Uses ContainerManager for per-project Docker containers.
 """
 
+import asyncio
+import logging
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, HTTPException
 
@@ -398,17 +402,28 @@ async def start_all_containers(project_name: str):
             detail=f"Could not load coding prompt: {e}"
         )
 
-    # Start all coding containers in parallel
+    # Start coding containers with staggered delays to prevent race conditions
+    # Each container needs time to claim a feature and sync before next starts
+    STAGGER_DELAY_SECONDS = 10
+
     async def start_coding_container(manager):
         """Start a single coding container with the coding prompt."""
         manager._current_agent_type = "coder"
         manager._force_claude_sdk = False
         return await manager.start(instruction=coding_prompt)
 
-    results = await asyncio.gather(
-        *[start_coding_container(m) for m in coding_managers],
-        return_exceptions=True
-    )
+    results = []
+    for i, manager in enumerate(coding_managers):
+        if i > 0:
+            # Wait between container starts to allow beads-sync coordination
+            logger.info(f"[StartAll] Waiting {STAGGER_DELAY_SECONDS}s before starting container {i+1}...")
+            await asyncio.sleep(STAGGER_DELAY_SECONDS)
+        try:
+            logger.info(f"[StartAll] Starting coding container {i+1}...")
+            result = await start_coding_container(manager)
+            results.append(result)
+        except Exception as e:
+            results.append(e)
 
     # Analyze results
     successes = 0

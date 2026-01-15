@@ -406,24 +406,41 @@ async def pull_all_beads_sync() -> dict[str, bool]:
 
 
 # Background polling task
-POLL_INTERVAL_SECONDS = 15
+POLL_INTERVAL_IDLE = 15  # seconds when no containers running
+POLL_INTERVAL_ACTIVE = 5  # seconds when containers are running
+
+
+def _has_running_containers() -> bool:
+    """Check if any containers are running."""
+    try:
+        from server.services.container_manager import get_all_managers
+        managers = get_all_managers()
+        return any(m.status == "running" for m in managers.values())
+    except Exception:
+        return False
 
 
 async def start_beads_sync_poller() -> None:
     """
     Start a background task that polls beads-sync for all projects.
 
+    Uses dynamic polling interval:
+    - 5 seconds when containers are running (for faster UI updates)
+    - 15 seconds when idle (to reduce resource usage)
+
     This should be called when the server starts.
     """
-    logger.info(f"Starting beads-sync poller (interval: {POLL_INTERVAL_SECONDS}s)")
+    logger.info(f"Starting beads-sync poller (idle: {POLL_INTERVAL_IDLE}s, active: {POLL_INTERVAL_ACTIVE}s)")
 
     while True:
         try:
-            await asyncio.sleep(POLL_INTERVAL_SECONDS)
+            # Use faster polling when containers are running
+            interval = POLL_INTERVAL_ACTIVE if _has_running_containers() else POLL_INTERVAL_IDLE
+            await asyncio.sleep(interval)
             results = await pull_all_beads_sync()
             if results:
                 successes = sum(1 for v in results.values() if v)
-                logger.debug(f"Beads sync poll: {successes}/{len(results)} successful")
+                logger.debug(f"Beads sync poll: {successes}/{len(results)} successful (interval: {interval}s)")
         except asyncio.CancelledError:
             logger.info("Beads sync poller stopped")
             break
