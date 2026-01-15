@@ -141,7 +141,7 @@ if [ -z "$FEATURE_ID" ]; then
 fi
 
 # Create feature branch
-FEATURE_TITLE=$(safe_bd_json show "$FEATURE_ID" --json | jq -r '.title' | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd '[:alnum:]-' | cut -c1-30)
+FEATURE_TITLE=$(safe_bd_json show "$FEATURE_ID" --json | jq -r '.[0].title' | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd '[:alnum:]-' | cut -c1-30)
 BRANCH="feature/${FEATURE_ID}-${FEATURE_TITLE}"
 git checkout -b "$BRANCH"
 
@@ -228,7 +228,7 @@ chmod +x init.sh 2>/dev/null && ./init.sh || echo "No init.sh found"
 The feature was claimed in Step 1.5 and stored in `$FEATURE_ID`. Verify it's set:
 ```bash
 echo "Working on feature: $FEATURE_ID"
-safe_bd_json show "$FEATURE_ID" --json | jq -r '.title'
+safe_bd_json show "$FEATURE_ID" --json | jq -r '.[0].title'
 ```
 
 #### 3.1 Follow Your Plan
@@ -283,7 +283,7 @@ npm test -- --passWithNoTests 2>/dev/null || echo "No tests configured"
 
 **ONLY after validation passes:**
 ```bash
-FEATURE_TITLE=$(safe_bd_json show "$FEATURE_ID" --json | jq -r '.title')
+FEATURE_TITLE=$(safe_bd_json show "$FEATURE_ID" --json | jq -r '.[0].title')
 bd close "$FEATURE_ID"
 git add . && git commit -m "Implement: $FEATURE_TITLE"
 ```
@@ -346,7 +346,7 @@ You are responsible for merging your work to main. Handle any conflicts.
 
 ```bash
 # Get feature title for commit messages (if not already set)
-FEATURE_TITLE=${FEATURE_TITLE:-$(safe_bd_json show "$FEATURE_ID" --json | jq -r '.title')}
+FEATURE_TITLE=${FEATURE_TITLE:-$(safe_bd_json show "$FEATURE_ID" --json | jq -r '.[0].title')}
 
 # 1. Commit your work on feature branch (if not already committed)
 git add .
