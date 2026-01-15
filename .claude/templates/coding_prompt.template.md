@@ -78,9 +78,9 @@ safe_bd_json() {
     fi
 }
 
-# Safe bd sync - always suppress verbose output
+# Safe bd sync - suppress verbose output (bd outputs to stdout, not stderr)
 safe_bd_sync() {
-    bd sync 2>/dev/null
+    bd sync >/dev/null 2>&1
 }
 
 # =============================================================================
@@ -381,7 +381,7 @@ The next session will:
 6. **ONLY CLOSE WHAT YOU IMPLEMENT** - Never close a feature unless you implemented it
 7. **VERIFY ONLY CLOSED FEATURES** - During verification, only check features with status=closed
 8. **LIMIT VERIFICATION** - Max 3 features, max 5 minutes, only AFTER implementing
-9. **SUPPRESS BD STDERR** - Always use `2>/dev/null` when capturing bd JSON output (bd outputs verbose status to stderr which breaks JSON parsing). Use the `safe_bd_json` and `safe_bd_sync` helpers defined above.
+9. **SUPPRESS BD OUTPUT** - Always suppress bd verbose output when capturing JSON (bd outputs status messages to stdout which breaks JSON parsing). Use the `safe_bd_json` and `safe_bd_sync` helpers defined above, or use `>/dev/null 2>&1` for sync operations.
 
 ## TEST-DRIVEN MINDSET
 
@@ -405,9 +405,9 @@ bd stats                              # Check progress
 bd sync                               # Sync at session end
 
 # IMPORTANT: When capturing JSON output, use the safe helpers:
-safe_bd_json ready --json             # Returns clean JSON (stderr suppressed)
-safe_bd_json show <id> --json         # Returns clean JSON (stderr suppressed)
-safe_bd_sync                          # Syncs without verbose output
+safe_bd_json ready --json             # Returns clean JSON (output suppressed)
+safe_bd_json show <id> --json         # Returns clean JSON (output suppressed)
+safe_bd_sync                          # Syncs without verbose output (stdout suppressed)
 ```
 
 ---
