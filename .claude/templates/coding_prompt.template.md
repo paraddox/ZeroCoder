@@ -55,10 +55,42 @@ The container manager has already pulled latest code and synced beads.
 Now claim a feature using distributed lock:
 
 ```bash
+# =============================================================================
+# SAFE BD HELPERS - Use these to avoid JSON parsing errors from verbose output
+# =============================================================================
+
+# Safe JSON helper - validates JSON before returning
+safe_bd_json() {
+    local output exit_code
+    output=$(bd "$@" 2>/dev/null)
+    exit_code=$?
+
+    if [ $exit_code -ne 0 ]; then
+        return $exit_code
+    fi
+
+    # Validate it's actually JSON
+    if echo "$output" | jq -e . >/dev/null 2>&1; then
+        echo "$output"
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Safe bd sync - always suppress verbose output
+safe_bd_sync() {
+    bd sync 2>/dev/null
+}
+
+# =============================================================================
+# FEATURE CLAIMING
+# =============================================================================
+
 # Try to claim the first ready feature
 # Returns: 0=success (feature ID on stdout), 1=no features, 2=claim failed (retry)
 claim_feature() {
-    local feature_id=$(bd ready --json 2>/dev/null | jq -r '.[0].id // empty')
+    local feature_id=$(safe_bd_json ready --json | jq -r '.[0].id // empty')
 
     if [ -z "$feature_id" ]; then
         echo "No features ready to work on" >&2  # Errors to stderr, not stdout!
@@ -66,13 +98,13 @@ claim_feature() {
     fi
 
     # Try to claim it (sync first to get latest state)
-    bd sync 2>/dev/null
+    safe_bd_sync
     bd update "$feature_id" --status=in_progress 2>/dev/null
     local update_status=$?
 
     if [ $update_status -eq 0 ]; then
         # Push claim immediately to establish lock
-        bd sync 2>/dev/null
+        safe_bd_sync
         echo "$feature_id"  # Only the ID goes to stdout
         return 0
     else
@@ -97,7 +129,7 @@ for i in $(seq 1 $MAX_RETRIES); do
     # claim_status=2 means retry
     echo "Attempt $i failed, retrying after backoff..."
     sleep $((i * 2))  # Backoff
-    bd sync  # Refresh state
+    safe_bd_sync  # Refresh state
     FEATURE_ID=""  # Reset for next attempt
 done
 
@@ -107,7 +139,7 @@ if [ -z "$FEATURE_ID" ]; then
 fi
 
 # Create feature branch
-FEATURE_TITLE=$(bd show "$FEATURE_ID" --json | jq -r '.title' | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd '[:alnum:]-' | cut -c1-30)
+FEATURE_TITLE=$(safe_bd_json show "$FEATURE_ID" --json | jq -r '.title' | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd '[:alnum:]-' | cut -c1-30)
 BRANCH="feature/${FEATURE_ID}-${FEATURE_TITLE}"
 git checkout -b "$BRANCH"
 
@@ -176,7 +208,7 @@ chmod +x init.sh 2>/dev/null && ./init.sh || echo "No init.sh, start servers man
 The feature was claimed in Step 1.5 and stored in `$FEATURE_ID`. Verify it's set:
 ```bash
 echo "Working on feature: $FEATURE_ID"
-bd show "$FEATURE_ID" --json | jq -r '.title'
+safe_bd_json show "$FEATURE_ID" --json | jq -r '.title'
 ```
 
 #### 3.1 Follow Your Plan
@@ -231,7 +263,7 @@ npm test -- --passWithNoTests 2>/dev/null || echo "No tests configured"
 
 **ONLY after validation passes:**
 ```bash
-FEATURE_TITLE=$(bd show "$FEATURE_ID" --json | jq -r '.title')
+FEATURE_TITLE=$(safe_bd_json show "$FEATURE_ID" --json | jq -r '.title')
 bd close "$FEATURE_ID"
 git add . && git commit -m "Implement: $FEATURE_TITLE"
 ```
@@ -244,7 +276,7 @@ After implementing your feature, verify 3 randomly selected closed features.
 
 ```bash
 # Get 3 random closed features (not the one you just implemented)
-CLOSED_FEATURES=$(bd list --status=closed --json | jq -r '.[].id' | grep -v "$FEATURE_ID" | shuf | head -3)
+CLOSED_FEATURES=$(safe_bd_json list --status=closed --json | jq -r '.[].id' | grep -v "$FEATURE_ID" | shuf | head -3)
 
 for feature_id in $CLOSED_FEATURES; do
     echo "Verifying: $feature_id"
@@ -294,7 +326,7 @@ You are responsible for merging your work to main. Handle any conflicts.
 
 ```bash
 # Get feature title for commit messages (if not already set)
-FEATURE_TITLE=${FEATURE_TITLE:-$(bd show "$FEATURE_ID" --json | jq -r '.title')}
+FEATURE_TITLE=${FEATURE_TITLE:-$(safe_bd_json show "$FEATURE_ID" --json | jq -r '.title')}
 
 # 1. Commit your work on feature branch (if not already committed)
 git add .
@@ -319,7 +351,7 @@ git merge "$FEATURE_BRANCH" --no-ff -m "Merge: $FEATURE_TITLE"
 git push origin main
 
 # 5. Sync beads state
-bd sync
+safe_bd_sync
 
 # 6. Exit - container manager will clean up the branch
 ```
@@ -349,6 +381,7 @@ The next session will:
 6. **ONLY CLOSE WHAT YOU IMPLEMENT** - Never close a feature unless you implemented it
 7. **VERIFY ONLY CLOSED FEATURES** - During verification, only check features with status=closed
 8. **LIMIT VERIFICATION** - Max 3 features, max 5 minutes, only AFTER implementing
+9. **SUPPRESS BD STDERR** - Always use `2>/dev/null` when capturing bd JSON output (bd outputs verbose status to stderr which breaks JSON parsing). Use the `safe_bd_json` and `safe_bd_sync` helpers defined above.
 
 ## TEST-DRIVEN MINDSET
 
@@ -370,6 +403,11 @@ bd update <id> --status=in_progress   # Claim feature (REQUIRED before coding)
 bd close <id>                         # Mark complete
 bd stats                              # Check progress
 bd sync                               # Sync at session end
+
+# IMPORTANT: When capturing JSON output, use the safe helpers:
+safe_bd_json ready --json             # Returns clean JSON (stderr suppressed)
+safe_bd_json show <id> --json         # Returns clean JSON (stderr suppressed)
+safe_bd_sync                          # Syncs without verbose output
 ```
 
 ---

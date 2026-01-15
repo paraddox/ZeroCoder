@@ -40,12 +40,20 @@ def run_bd(args: list[str], check: bool = False) -> subprocess.CompletedProcess:
     )
 
 
-def parse_json_output(result: subprocess.CompletedProcess) -> list | dict:
-    """Parse JSON from bd CLI output."""
+def parse_json_output(result: subprocess.CompletedProcess) -> tuple[list | dict, str | None]:
+    """Parse JSON from bd CLI output.
+
+    Returns:
+        Tuple of (data, error). On success, error is None.
+        On JSON parse failure, returns ([], error_message).
+    """
     try:
-        return json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return []
+        return json.loads(result.stdout), None
+    except json.JSONDecodeError as e:
+        # Include stderr in error message for debugging
+        stderr_preview = result.stderr[:200] if result.stderr else "none"
+        error_msg = f"JSON parse error: {e}. stdout: {result.stdout[:100] if result.stdout else 'empty'}. stderr: {stderr_preview}"
+        return [], error_msg
 
 
 def is_initialized() -> bool:
@@ -206,15 +214,18 @@ def action_get(feature_id: str) -> dict:
     """Get a single feature by ID."""
     result = run_bd(["show", feature_id, "--json"])
     if result.returncode != 0:
-        return {"success": False, "error": f"Feature {feature_id} not found"}
+        return {"success": False, "error": f"Feature {feature_id} not found: {result.stderr}"}
 
-    output = parse_json_output(result)
+    output, parse_error = parse_json_output(result)
+    if parse_error:
+        return {"success": False, "error": f"Failed to parse feature data: {parse_error}"}
+
     if isinstance(output, list) and output:
         feature = issue_to_feature(output[0])
     elif isinstance(output, dict) and output:
         feature = issue_to_feature(output)
     else:
-        return {"success": False, "error": f"Feature {feature_id} not found"}
+        return {"success": False, "error": f"Feature {feature_id} not found (empty response)"}
 
     return {"success": True, "feature": feature}
 
@@ -251,7 +262,10 @@ def action_create(data: dict) -> dict:
     if result.returncode != 0:
         return {"success": False, "error": f"Failed to create feature: {result.stderr}"}
 
-    output = parse_json_output(result)
+    output, parse_error = parse_json_output(result)
+    if parse_error:
+        return {"success": False, "error": f"Feature may have been created but failed to parse response: {parse_error}"}
+
     feature_id = output.get("id") if isinstance(output, dict) else None
 
     if not feature_id:

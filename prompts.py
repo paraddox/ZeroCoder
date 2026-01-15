@@ -16,6 +16,9 @@ from pathlib import Path
 # Base templates location (generic templates)
 TEMPLATES_DIR = Path(__file__).parent / ".claude" / "templates"
 
+# Marker for beads workflow section in CLAUDE.md (used for refresh logic)
+BEADS_WORKFLOW_MARKER = "## BEADS WORKFLOW"
+
 
 def get_project_prompts_dir(project_dir: Path) -> Path:
     """Get the prompts directory for a specific project."""
@@ -366,10 +369,45 @@ def refresh_project_prompts(project_dir: Path) -> list[str]:
         except (OSError, PermissionError) as e:
             print(f"  Warning: Could not update {dest_name}: {e}")
 
+    # Also refresh CLAUDE.md beads workflow section
+    # This ensures agents always get the latest beads instructions
+    claude_md = project_dir / "CLAUDE.md"
+    claude_template = TEMPLATES_DIR / "project_claude.md.template"
+
+    if claude_template.exists():
+        try:
+            template_content = claude_template.read_text(encoding="utf-8")
+            template_content = template_content.replace("{project_name}", project_dir.name)
+
+            if claude_md.exists():
+                existing_content = claude_md.read_text(encoding="utf-8")
+
+                # Extract beads workflow section from template
+                if BEADS_WORKFLOW_MARKER in template_content:
+                    beads_start = template_content.find(BEADS_WORKFLOW_MARKER)
+                    template_beads_section = template_content[beads_start:]
+
+                    # Replace or append in existing file
+                    if BEADS_WORKFLOW_MARKER in existing_content:
+                        # Replace existing beads section with latest from template
+                        beads_pos = existing_content.find(BEADS_WORKFLOW_MARKER)
+                        updated_content = existing_content[:beads_pos].rstrip() + "\n\n" + template_beads_section
+                    else:
+                        # Append beads section
+                        updated_content = existing_content.rstrip() + "\n\n" + template_beads_section
+
+                    claude_md.write_text(updated_content, encoding="utf-8")
+                    updated_files.append("CLAUDE.md")
+            else:
+                # Create new CLAUDE.md from template
+                claude_md.write_text(template_content, encoding="utf-8")
+                updated_files.append("CLAUDE.md")
+        except (OSError, PermissionError) as e:
+            print(f"  Warning: Could not update CLAUDE.md: {e}")
+
     return updated_files
 
 
-BEADS_WORKFLOW_MARKER = "## BEADS WORKFLOW"
 BEADS_WORKFLOW_SECTION = """
 ## BEADS WORKFLOW
 
