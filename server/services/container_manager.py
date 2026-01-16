@@ -184,8 +184,10 @@ class ContainerManager:
         self._sync_status()
 
     def _get_marker_file_path(self) -> Path:
-        """Get path to the user-started marker file."""
-        return self.project_dir / ".agent_started"
+        """Get path to the user-started marker file (per-container)."""
+        # Use container-specific marker to avoid conflicts in multi-container setups
+        # Each container (nexus-1, nexus-2, etc.) gets its own marker file
+        return self.project_dir / f".agent_started.{self.container_number}"
 
     def _check_user_started_marker(self) -> bool:
         """Check if user-started marker file exists."""
