@@ -43,6 +43,7 @@ from .services.container_manager import (
     start_hound_trigger_monitor,
 )
 from .services.beads_sync_manager import initialize_all_projects, start_beads_sync_poller
+from .services.branch_cleanup import cleanup_all_remote_branches
 from .websocket import project_websocket
 
 # Idle container check interval (seconds)
@@ -117,6 +118,12 @@ async def lifespan(app: FastAPI):
         await initialize_all_projects()
     except Exception as e:
         logger.warning(f"Failed to initialize beads-sync: {e}")
+
+    # Clean up remote feature branches for all projects
+    try:
+        await cleanup_all_remote_branches()
+    except Exception as e:
+        logger.warning(f"Failed to cleanup remote branches: {e}")
 
     # Startup - start background monitors
     idle_monitor_task = asyncio.create_task(idle_container_monitor())
