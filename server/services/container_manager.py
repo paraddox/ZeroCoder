@@ -225,6 +225,16 @@ class ContainerManager:
         # Always refresh user_started from marker file (may have been created externally)
         self._user_started = self._check_user_started_marker()
 
+        # First check if container is registered in our database
+        # This prevents Docker containers from previous runs showing as active
+        from registry import get_container
+        db_container = get_container(self.project_name, self.container_number)
+        if db_container is None:
+            # Container not registered - it's not created by our system
+            self._status = "not_created"
+            return
+
+        # Container is registered, now check Docker for live status
         try:
             result = subprocess.run(
                 ["docker", "inspect", "-f", "{{.State.Status}}", self.container_name],
@@ -241,6 +251,8 @@ class ContainerManager:
                 else:
                     self._status = "stopped"
             else:
+                # Docker container doesn't exist but DB says it was created
+                # Could be removed manually - still show as not_created
                 self._status = "not_created"
         except Exception as e:
             logger.warning(f"Failed to check container status: {e}")
