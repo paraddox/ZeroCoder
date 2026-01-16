@@ -2028,11 +2028,16 @@ def get_container_manager(
 
 
 def get_all_container_managers(project_name: str) -> list[ContainerManager]:
-    """Get all container managers for a project (thread-safe)."""
+    """Get all container managers for a project (thread-safe), including hound containers."""
+    result = []
     with _managers_lock:
-        if project_name not in _managers:
-            return []
-        return list(_managers[project_name].values())
+        if project_name in _managers:
+            result.extend(_managers[project_name].values())
+    # Also include hound container if present
+    with _hound_lock:
+        if project_name in _hound_containers:
+            result.append(_hound_containers[project_name])
+    return result
 
 
 def get_projects_with_active_containers() -> list[str]:

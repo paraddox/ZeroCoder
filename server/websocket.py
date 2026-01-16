@@ -76,8 +76,12 @@ async def _send_containers_list(websocket: WebSocket, project_name: str):
     manager_map = {cm.container_number: cm for cm in all_managers}
 
     container_list = []
+    seen_container_nums = set()
+
+    # First add containers from registry
     for c in containers:
         container_num = c["container_number"]
+        seen_container_nums.add(container_num)
         cm = manager_map.get(container_num)
         container_info = {
             "number": container_num,
@@ -87,6 +91,17 @@ async def _send_containers_list(websocket: WebSocket, project_name: str):
             container_info["agent_type"] = cm._current_agent_type
             container_info["sdk_type"] = "claude" if cm._force_claude_sdk or not cm._is_opencode_model() else "opencode"
         container_list.append(container_info)
+
+    # Add any managers not in registry (e.g., hound containers with container_number=-1)
+    for cm in all_managers:
+        if cm.container_number not in seen_container_nums:
+            container_info = {
+                "number": cm.container_number,
+                "type": cm.container_type,
+                "agent_type": cm._current_agent_type,
+                "sdk_type": "claude" if cm._force_claude_sdk or not cm._is_opencode_model() else "opencode",
+            }
+            container_list.append(container_info)
 
     await websocket.send_json({
         "type": "containers",

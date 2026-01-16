@@ -824,8 +824,10 @@ async def list_containers(name: str):
     manager_map = {cm.container_number: cm for cm in managers}
 
     result = []
+    seen_container_nums = set()
 
     for c in containers:
+        seen_container_nums.add(c["container_number"])
         # Construct Docker container name from project and container number
         container_type = c.get("container_type", "coding")
         container_number = c["container_number"]
@@ -866,6 +868,25 @@ async def list_containers(name: str):
             agent_type=agent_type,
             sdk_type=sdk_type,
         ))
+
+    # Add any managers not in registry (e.g., hound containers with container_number=-1)
+    for cm in managers:
+        if cm.container_number not in seen_container_nums:
+            # Get live status from Docker for hound container
+            docker_name = f"zerocoder-{name}-hound"
+            live_status = _get_docker_container_status(docker_name)
+            final_status = live_status if live_status else "stopped"
+
+            result.append(ContainerStatus(
+                id=-1,  # Synthetic ID for hound
+                container_number=cm.container_number,
+                container_type=cm.container_type,
+                status=final_status,
+                current_feature=cm._current_feature,
+                docker_container_id=None,
+                agent_type=cm._current_agent_type,
+                sdk_type="claude" if cm._force_claude_sdk or not cm._is_opencode_model() else "opencode",
+            ))
 
     return result
 
