@@ -2000,8 +2000,13 @@ async def cleanup_idle_containers() -> list[str]:
 
 
 async def cleanup_all_containers() -> None:
-    """Stop all running containers. Called on server shutdown."""
-    logger.info("Stopping all zerocoder containers...")
+    """Stop containers on server shutdown.
+
+    User-started containers with open features are preserved - they'll keep
+    running and be restored when the server restarts. This prevents server
+    restarts from killing active agent work.
+    """
+    logger.info("Cleaning up containers on shutdown...")
 
     # Collect all managers from nested dict
     all_managers = []
@@ -2012,13 +2017,21 @@ async def cleanup_all_containers() -> None:
     for manager in all_managers:
         try:
             if manager.status == "running":
+                # Preserve user-started containers with work remaining
+                if manager.user_started and manager.has_open_features():
+                    logger.info(
+                        f"Preserving container {manager.container_name} "
+                        f"(user-started with open features)"
+                    )
+                    continue
+
                 logger.info(f"Stopping container: {manager.container_name}")
                 await manager.stop()
         except Exception as e:
             logger.warning(f"Error stopping container for {manager.project_name}-{manager.container_number}: {e}")
 
-    # Also stop any orphaned containers not in our registry
-    await stop_orphaned_containers()
+    # Don't stop orphaned containers - they might be user-started from before restart
+    # The health monitor will handle them on next startup
 
     with _managers_lock:
         _managers.clear()
