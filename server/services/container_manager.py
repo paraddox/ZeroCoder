@@ -926,8 +926,11 @@ class ContainerManager:
                 self._update_activity()
                 await self._broadcast_output(sanitized)
 
-                # Detect feature claim: bd update beads-X --status=in_progress
-                claim_match = re.search(r'bd update (beads-\d+) --status[= ]in_progress', sanitized)
+                # Detect feature claim from echo output: "Claimed beads-X, working on branch..."
+                # Or: "Working on feature: beads-X"
+                claim_match = re.search(r'Claimed (beads-\d+),', sanitized)
+                if not claim_match:
+                    claim_match = re.search(r'Working on feature: (beads-\d+)', sanitized)
                 if claim_match:
                     await self._set_current_feature(claim_match.group(1))
 
