@@ -34,8 +34,13 @@ CONTAINER_IMAGE = "zerocoder-project"
 # Path to Dockerfile for building the image
 DOCKERFILE_PATH = Path(__file__).parent.parent.parent / "Dockerfile.project"
 
-# Idle timeout in minutes
+# Idle timeout in minutes (for stopping inactive containers)
 IDLE_TIMEOUT_MINUTES = 15
+
+# Stuck agent timeout in minutes (agent running but no output)
+# If an agent process is running but produces no log output for this long,
+# it's considered stuck (e.g., OpenCode API hung) and will be restarted
+AGENT_STUCK_TIMEOUT_MINUTES = 10
 
 
 def image_exists(image_name: str = CONTAINER_IMAGE) -> bool:
@@ -396,6 +401,20 @@ class ContainerManager:
             return False
         idle_duration = datetime.now() - self.last_activity
         return idle_duration > timedelta(minutes=IDLE_TIMEOUT_MINUTES)
+
+    def is_agent_stuck(self) -> bool:
+        """Check if agent is running but not producing output (stuck).
+
+        This detects scenarios where the agent process is alive but hung,
+        e.g., OpenCode API not responding, network timeout, etc.
+        """
+        if self.last_activity is None:
+            return False
+        # Only consider stuck if agent is supposedly running
+        if not self.is_agent_running():
+            return False
+        stuck_duration = datetime.now() - self.last_activity
+        return stuck_duration > timedelta(minutes=AGENT_STUCK_TIMEOUT_MINUTES)
 
     def get_idle_seconds(self) -> int:
         """Get seconds since last activity."""
@@ -2168,6 +2187,27 @@ async def monitor_agent_health() -> list[str]:
                     logger.error(f"Failed to restart agent in {manager.container_name}: {message}")
             except Exception as e:
                 logger.exception(f"Error restarting agent in {manager.container_name}: {e}")
+            continue
+
+        # Handle stuck agent (running but no output for AGENT_STUCK_TIMEOUT_MINUTES)
+        # This catches cases where agent process is alive but hung (e.g., API timeout)
+        if manager.status == "running" and manager.is_agent_stuck():
+            idle_mins = manager.get_idle_seconds() // 60
+            logger.warning(
+                f"Agent stuck in {manager.container_name} (no output for {idle_mins} min), restarting..."
+            )
+            await manager._broadcast_output(
+                f"[System] Agent stuck (no output for {idle_mins} min), restarting..."
+            )
+            try:
+                success, message = await manager.restart_agent()
+                if success:
+                    restarted.append(manager.container_name)
+                    logger.info(f"Successfully restarted stuck agent in {manager.container_name}")
+                else:
+                    logger.error(f"Failed to restart stuck agent in {manager.container_name}: {message}")
+            except Exception as e:
+                logger.exception(f"Error restarting stuck agent in {manager.container_name}: {e}")
 
     return restarted
 
