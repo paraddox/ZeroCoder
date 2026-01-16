@@ -57,8 +57,13 @@ if [ -d "$BEADS_DIR" ]; then
     log "Running bd doctor --fix..."
     bd --no-daemon doctor --fix --yes 2>&1 || log "WARNING: bd doctor failed"
 
-    log "Syncing beads state..."
-    bd --no-daemon sync 2>&1 || log "WARNING: bd sync failed"
+    # Only sync if no other sync is in progress (agent may be syncing)
+    if [ ! -f "$BEADS_DIR/.sync.lock" ]; then
+        log "Syncing beads state..."
+        bd --no-daemon sync 2>&1 || log "WARNING: bd sync failed"
+    else
+        log "Skipping sync (another sync in progress, agent will handle it)"
+    fi
 fi
 
 log "Repository setup complete"
