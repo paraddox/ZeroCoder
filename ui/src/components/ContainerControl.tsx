@@ -1,4 +1,5 @@
-import { Play, Square, PauseCircle, Edit3, Settings2 } from 'lucide-react'
+import { useState } from 'react'
+import { Play, Square, PauseCircle, Edit3, Settings2, Loader2 } from 'lucide-react'
 
 interface ContainerControlProps {
   projectName: string
@@ -25,9 +26,30 @@ export function ContainerControl({
   onGracefulStop,
   onEditTasks,
 }: ContainerControlProps) {
+  const [isStarting, setIsStarting] = useState(false)
+  const [isStopping, setIsStopping] = useState(false)
+
   const handleSliderChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const newCount = parseInt(e.target.value, 10)
     await onTargetChange(newCount)
+  }
+
+  const handleStart = async () => {
+    setIsStarting(true)
+    try {
+      await onStart()
+    } finally {
+      setIsStarting(false)
+    }
+  }
+
+  const handleStopNow = async () => {
+    setIsStopping(true)
+    try {
+      await onStopNow()
+    } finally {
+      setIsStopping(false)
+    }
   }
 
   return (
@@ -82,24 +104,32 @@ export function ContainerControl({
       <div className="flex items-center gap-2">
         {/* Start Button */}
         <button
-          onClick={onStart}
-          disabled={agentRunning}
+          onClick={handleStart}
+          disabled={agentRunning || isStarting}
           className="btn btn-success"
           title="Start containers"
         >
-          <Play size={16} />
-          <span>Start</span>
+          {isStarting ? (
+            <Loader2 size={16} className="animate-spin" />
+          ) : (
+            <Play size={16} />
+          )}
+          <span>{isStarting ? 'Starting...' : 'Start'}</span>
         </button>
 
         {/* Stop Now Button */}
         <button
-          onClick={onStopNow}
-          disabled={!agentRunning}
+          onClick={handleStopNow}
+          disabled={!agentRunning || isStopping}
           className="btn btn-danger"
           title="Force stop all containers immediately"
         >
-          <Square size={16} />
-          <span>Stop Now</span>
+          {isStopping ? (
+            <Loader2 size={16} className="animate-spin" />
+          ) : (
+            <Square size={16} />
+          )}
+          <span>{isStopping ? 'Stopping...' : 'Stop Now'}</span>
         </button>
 
         {/* Complete & Stop Button */}
