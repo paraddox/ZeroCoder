@@ -782,6 +782,26 @@ async def update_container_count(name: str, body: ContainerCountUpdate):
     return {"success": True, "target_count": body.target_count}
 
 
+def _get_docker_container_status(container_name: str) -> str | None:
+    """Get live status from Docker for a container."""
+    try:
+        result = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.Status}}", container_name],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            docker_status = result.stdout.strip()
+            if docker_status == "running":
+                return "running"
+            else:
+                return "stopped"
+        return None  # Container doesn't exist
+    except Exception:
+        return None
+
+
 @router.get("/{name}/containers", response_model=list[ContainerStatus])
 async def list_containers(name: str):
     """List all containers for a project."""
@@ -796,18 +816,41 @@ async def list_containers(name: str):
         raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
 
     containers = list_project_containers(name)
+    result = []
 
-    return [
-        ContainerStatus(
+    for c in containers:
+        # Construct Docker container name from project and container number
+        container_type = c.get("container_type", "coding")
+        container_number = c["container_number"]
+        if container_type == "init" or container_number == 0:
+            docker_name = f"zerocoder-{name}-init"
+        else:
+            docker_name = f"zerocoder-{name}-{container_number}"
+
+        # Get live status from Docker
+        live_status = _get_docker_container_status(docker_name)
+
+        # Use live status if available
+        db_status = c["status"]
+        if live_status is not None:
+            final_status = live_status
+        elif db_status == "running":
+            # Container doesn't exist in Docker but DB says running - it's stopped
+            final_status = "stopped"
+        else:
+            # Keep database status (created, stopping, stopped)
+            final_status = db_status
+
+        result.append(ContainerStatus(
             id=c["id"],
             container_number=c["container_number"],
             container_type=c["container_type"],
-            status=c["status"],
+            status=final_status,
             current_feature=c.get("current_feature"),
             docker_container_id=c.get("docker_container_id"),
-        )
-        for c in containers
-    ]
+        ))
+
+    return result
 
 
 @router.post("/{name}/stop")

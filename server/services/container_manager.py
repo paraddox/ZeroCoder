@@ -562,18 +562,122 @@ class ContainerManager:
             logger.exception(f"Error ensuring beads-sync branch for {self.project_name}")
             return False, f"Error: {e}"
 
+    async def recover_git_state(self) -> tuple[bool, str]:
+        """
+        Recover from corrupted git state (stuck rebase, ref locks, diverged branches).
+
+        This handles common git issues that can occur when the agent crashes or
+        is interrupted mid-operation:
+        - Stuck rebase/merge/cherry-pick operations
+        - Ref lock errors from stale locks
+        - Diverged branches needing reset
+        - Uncommitted changes blocking checkout
+
+        Returns:
+            Tuple of (success, message)
+        """
+        if self._status != "running":
+            return False, "Container must be running for git recovery"
+
+        try:
+            await self._broadcast_output("[System] Recovering git state...")
+
+            def run_git(cmd: list[str], timeout: int = 30) -> subprocess.CompletedProcess:
+                return subprocess.run(
+                    ["docker", "exec", "-u", "coder", self.container_name] + cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                )
+
+            # 1. Abort any stuck operations (rebase, merge, cherry-pick)
+            for abort_cmd in [
+                ["git", "rebase", "--abort"],
+                ["git", "merge", "--abort"],
+                ["git", "cherry-pick", "--abort"],
+            ]:
+                run_git(abort_cmd)  # Ignore errors - these fail if not in that state
+
+            # 2. Fix ref locks with git gc
+            result = run_git(["git", "gc", "--prune=now"], timeout=60)
+            if result.returncode != 0:
+                logger.warning(f"git gc failed: {result.stderr}")
+
+            # 3. Prune stale remote refs
+            result = run_git(["git", "remote", "prune", "origin"])
+            if result.returncode != 0:
+                logger.warning(f"git remote prune failed: {result.stderr}")
+
+            # 4. Fetch latest from origin
+            result = run_git(["git", "fetch", "origin"], timeout=60)
+            if result.returncode != 0:
+                logger.warning(f"git fetch failed after recovery: {result.stderr}")
+                # Try one more gc + fetch in case of persistent ref issues
+                run_git(["git", "gc", "--prune=now"], timeout=60)
+                result = run_git(["git", "fetch", "origin"], timeout=60)
+
+            # 5. Check current branch and status
+            result = run_git(["git", "status", "--porcelain"])
+            has_changes = bool(result.stdout.strip()) if result.returncode == 0 else False
+
+            # 6. Reset to clean state - discard any uncommitted changes
+            if has_changes:
+                logger.info("Discarding uncommitted changes during git recovery")
+                run_git(["git", "reset", "--hard", "HEAD"])
+                run_git(["git", "clean", "-fd"])  # Remove untracked files
+
+            # 7. Checkout and reset main to match origin/main
+            run_git(["git", "checkout", "main"])
+            result = run_git(["git", "reset", "--hard", "origin/main"])
+            if result.returncode != 0:
+                logger.warning(f"Failed to reset main to origin/main: {result.stderr}")
+                return False, f"Failed to reset main: {result.stderr}"
+
+            # 8. Clean up orphaned feature branches
+            result = run_git(["git", "branch", "--list", "feature/*"])
+            if result.returncode == 0 and result.stdout.strip():
+                branches = [b.strip().lstrip("* ") for b in result.stdout.strip().split("\n") if b.strip()]
+                for branch in branches:
+                    if branch:
+                        run_git(["git", "branch", "-D", branch])
+                        logger.info(f"Deleted orphaned feature branch: {branch}")
+
+            logger.info(f"Git state recovered for {self.project_name}")
+            return True, "Git state recovered"
+
+        except subprocess.TimeoutExpired:
+            return False, "Git recovery timed out"
+        except Exception as e:
+            logger.exception(f"Error recovering git state for {self.project_name}")
+            return False, f"Git recovery error: {e}"
+
     async def pre_agent_sync(self) -> tuple[bool, str]:
         """
         Run before agent starts: ensure beads-sync exists, pull latest code, sync beads.
 
         This ensures the container has the latest code and beads state before
-        the agent starts working.
+        the agent starts working. If git commands fail with recoverable errors,
+        automatically runs git recovery.
 
         Returns:
             Tuple of (success, message)
         """
         if self._status != "running":
             return False, "Container must be running for pre-agent sync"
+
+        # Error patterns that indicate git state needs recovery
+        recoverable_errors = [
+            "cannot lock ref",
+            "would be overwritten",
+            "divergent branches",
+            "rebase in progress",
+            "You are currently",  # rebasing/merging/cherry-picking message
+            "needs merge",
+            "not possible because you have unmerged files",
+        ]
+
+        def needs_recovery(stderr: str) -> bool:
+            return any(pattern in stderr for pattern in recoverable_errors)
 
         try:
             await self._broadcast_output("[System] Syncing with remote before starting agent...")
@@ -592,6 +696,7 @@ class ContainerManager:
                 (["bd", "sync"], "Syncing beads state"),
             ]
 
+            recovery_attempted = False
             for cmd, desc in commands:
                 result = subprocess.run(
                     ["docker", "exec", "-u", "coder", self.container_name] + cmd,
@@ -600,9 +705,24 @@ class ContainerManager:
                     timeout=120,
                 )
                 if result.returncode != 0:
-                    logger.warning(f"{desc} failed: {result.stderr}")
-                    # Don't fail entirely - some commands may fail benignly
-                    # (e.g., already on main, nothing to pull)
+                    error_msg = result.stderr + result.stdout
+                    logger.warning(f"{desc} failed: {error_msg}")
+
+                    # Check if this is a recoverable git error
+                    if not recovery_attempted and needs_recovery(error_msg):
+                        logger.info(f"Detected recoverable git error, attempting recovery...")
+                        recovery_attempted = True
+                        recovery_ok, recovery_msg = await self.recover_git_state()
+                        if recovery_ok:
+                            # Recovery succeeded, retry remaining commands
+                            logger.info("Git recovery succeeded, continuing sync")
+                            await self._broadcast_output("[System] Git state recovered, continuing sync...")
+                            # Don't retry this specific command, continue to next
+                            # (recovery already did fetch + checkout + reset)
+                            continue
+                        else:
+                            logger.warning(f"Git recovery failed: {recovery_msg}")
+                            # Continue anyway, maybe remaining commands will work
 
             logger.info(f"Pre-agent sync completed for {self.project_name}")
             return True, "Pre-agent sync completed"

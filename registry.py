@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
@@ -587,7 +588,10 @@ def list_valid_projects() -> list[dict[str, Any]]:
 
 def create_container(project_name: str, container_number: int, container_type: str = 'coding') -> int:
     """
-    Create a new container record.
+    Create or get an existing container record.
+
+    If a container with the same (project_name, container_number, container_type)
+    already exists, returns its ID and resets its status to 'created'.
 
     Args:
         project_name: The project this container belongs to.
@@ -595,9 +599,24 @@ def create_container(project_name: str, container_number: int, container_type: s
         container_type: 'init' or 'coding'.
 
     Returns:
-        The created container's ID.
+        The container's ID.
     """
     with _get_session() as session:
+        # Check if container already exists
+        existing = session.query(Container).filter(
+            Container.project_name == project_name,
+            Container.container_number == container_number,
+            Container.container_type == container_type
+        ).first()
+
+        if existing:
+            # Reset status for reuse
+            existing.status = 'created'
+            existing.current_feature = None
+            session.flush()
+            return existing.id
+
+        # Create new container
         container = Container(
             project_name=project_name,
             container_number=container_number,
@@ -606,8 +625,23 @@ def create_container(project_name: str, container_number: int, container_type: s
             created_at=datetime.now()
         )
         session.add(container)
-        session.flush()
-        return container.id
+        try:
+            session.flush()
+            return container.id
+        except IntegrityError:
+            # Race condition: another thread created the container between our check and insert
+            session.rollback()
+            existing = session.query(Container).filter(
+                Container.project_name == project_name,
+                Container.container_number == container_number,
+                Container.container_type == container_type
+            ).first()
+            if existing:
+                existing.status = 'created'
+                existing.current_feature = None
+                session.flush()
+                return existing.id
+            raise  # Re-raise if still not found (shouldn't happen)
 
 
 def get_container(project_name: str, container_number: int, container_type: str = 'coding') -> dict[str, Any] | None:

@@ -401,6 +401,27 @@ Features are test cases. If functionality doesn't exist, BUILD IT.
 | "API missing" | Skip | Implement the API |
 | "No data" | Skip | Create test data |
 
+## CLEAN EXIT BEHAVIOR
+
+If you must exit before completing the feature (errors, timeouts, blocked):
+
+1. **Commit any work** - Even partial progress:
+   ```bash
+   git add .
+   git commit -m "WIP: $FEATURE_TITLE (partial)" || true
+   ```
+
+2. **Keep feature in_progress** - Do NOT close incomplete work
+
+3. **Sync beads state**:
+   ```bash
+   ./scripts/safe_bd_sync.sh
+   ```
+
+4. **Note in AGENTS.md** - Document why you stopped (optional but helpful)
+
+The system will automatically recover git state on next startup if needed.
+
 ---
 
 ## BEADS COMMANDS
