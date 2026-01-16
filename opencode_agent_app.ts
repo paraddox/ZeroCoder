@@ -37,6 +37,34 @@ const GRACEFUL_STOP_FLAG = path.join(PROJECT_DIR, ".graceful_stop");
 // Agent log file (shared with container entrypoint for docker logs visibility)
 const AGENT_LOG_FILE = "/var/log/agent.log";
 
+// State file for crash recovery (in project dir so host can read it)
+const STATE_FILE = path.join(PROJECT_DIR, ".agent_state.json");
+
+/**
+ * Save state for crash recovery (mirrors agent_app.py behavior)
+ */
+function saveState(state: Record<string, unknown>): void {
+  try {
+    state.updated_at = getLocalTimestamp();
+    fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+  } catch {
+    // Ignore errors
+  }
+}
+
+/**
+ * Clear state after successful completion
+ */
+function clearState(): void {
+  try {
+    if (fs.existsSync(STATE_FILE)) {
+      fs.unlinkSync(STATE_FILE);
+    }
+  } catch {
+    // Ignore errors
+  }
+}
+
 /**
  * Get local ISO timestamp (without Z suffix, uses system timezone)
  */
@@ -368,14 +396,19 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
     }
 
     log("AGENT", "Completed successfully");
+    clearState();
     return EXIT_SUCCESS;
 
   } catch (err: unknown) {
     const error = err as Error;
+    let errorMsg = "unknown error";
+    let errorType = "Exception";
 
     if (err && typeof err === 'object' && 'status' in err) {
       const apiErr = err as { status?: number; message?: string };
-      log("ERROR", `API Error (${apiErr.status}): ${apiErr.message || error.message}`);
+      errorMsg = `API Error (${apiErr.status}): ${apiErr.message || error.message}`;
+      errorType = "APIError";
+      log("ERROR", errorMsg);
 
       if (apiErr.status === 401) {
         log("ERROR", "Authentication failed - check ZHIPU_API_KEY");
@@ -383,12 +416,26 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
         log("ERROR", "Rate limited - retry after delay");
       }
     } else if (error.message?.includes("timeout") || error.message?.includes("ETIMEDOUT")) {
-      log("ERROR", "Request timed out");
+      errorMsg = "Request timed out";
+      errorType = "TimeoutError";
+      log("ERROR", errorMsg);
     } else if (error.message?.includes("ECONNREFUSED") || error.message?.includes("ENOTFOUND")) {
-      log("ERROR", `Connection failed: ${error.message}`);
+      errorMsg = `Connection failed: ${error.message}`;
+      errorType = "ConnectionError";
+      log("ERROR", errorMsg);
     } else {
-      log("ERROR", `Unexpected error: ${error.message || String(err)}`);
+      errorMsg = error.message || String(err);
+      errorType = error.name || "Exception";
+      log("ERROR", `Unexpected error: ${errorMsg}`);
     }
+
+    // Save error state for host to read
+    saveState({
+      status: "failed",
+      error: errorMsg,
+      error_type: errorType,
+      failed_at: getLocalTimestamp(),
+    });
 
     return EXIT_FAILURE;
   } finally {
@@ -428,11 +475,19 @@ async function main(): Promise<void> {
   // Handle interrupt signal
   process.on("SIGINT", () => {
     log("AGENT", "Interrupted by user");
+    saveState({
+      status: "interrupted",
+      interrupted_at: getLocalTimestamp(),
+    });
     process.exit(EXIT_INTERRUPTED);
   });
 
   process.on("SIGTERM", () => {
     log("AGENT", "Terminated");
+    saveState({
+      status: "terminated",
+      terminated_at: getLocalTimestamp(),
+    });
     process.exit(EXIT_GRACEFUL_STOP);
   });
 

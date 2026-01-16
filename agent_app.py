@@ -95,8 +95,9 @@ def get_agent_model(project_dir: str) -> str:
 # This ensures host user can access files created by container user
 os.umask(0o000)
 
-# State file for crash recovery (in coder's home, not project dir due to permissions)
-STATE_FILE = Path("/home/coder/.agent_state.json")
+# State file for crash recovery (in project dir so host can read it)
+# Previous location (/home/coder/.agent_state.json) was inaccessible from host
+STATE_FILE = Path("/project/.agent_state.json")
 
 
 def save_state(state: dict) -> None:

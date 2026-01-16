@@ -43,6 +43,10 @@ IDLE_TIMEOUT_MINUTES = 15
 # it's considered stuck (e.g., OpenCode API hung) and will be restarted
 AGENT_STUCK_TIMEOUT_MINUTES = 10
 
+# Pre-agent sync timeout in seconds (per git/bd command)
+# If sync takes longer than this, agent starts anyway with potentially stale code
+PRE_AGENT_SYNC_TIMEOUT = 120
+
 
 def image_exists(image_name: str = CONTAINER_IMAGE) -> bool:
     """Check if a Docker image exists."""
@@ -751,7 +755,7 @@ class ContainerManager:
                     ["docker", "exec", "-u", "coder", self.container_name] + cmd,
                     capture_output=True,
                     text=True,
-                    timeout=120,
+                    timeout=PRE_AGENT_SYNC_TIMEOUT,
                 )
                 if result.returncode != 0:
                     error_msg = result.stderr + result.stdout
@@ -1592,17 +1596,21 @@ class ContainerManager:
         else:
             # Error - check state file for details and potentially restart
             state_file = self.project_dir / ".agent_state.json"
-            error_info = "unknown error"
+            error_info = f"exit code {exit_code}, no state file"
 
             if state_file.exists():
                 try:
                     state = json.loads(state_file.read_text())
-                    error_info = state.get("error", "unknown error")
+                    error_info = state.get("error", f"exit code {exit_code}")
                     error_type = state.get("error_type", "Exception")
                     logger.error(f"Agent failed in {self.container_name}: {error_type}: {error_info}")
                     await self._broadcast_output(f"[System] Agent error: {error_type}: {error_info}")
                 except Exception as e:
                     logger.warning(f"Failed to read agent state: {e}")
+                    error_info = f"exit code {exit_code}, state read error: {e}"
+            else:
+                logger.error(f"Agent failed in {self.container_name}: {error_info}")
+                await self._broadcast_output(f"[System] Agent failed: {error_info}")
 
             # Auto-restart if user started and features remain
             if self._user_started and self.has_open_features():
