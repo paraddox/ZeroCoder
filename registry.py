@@ -677,6 +677,58 @@ def get_container(project_name: str, container_number: int, container_type: str 
         session.close()
 
 
+def delete_container(project_name: str, container_number: int, container_type: str = 'coding') -> bool:
+    """
+    Delete a container record from the database.
+
+    Args:
+        project_name: Name of the project
+        container_number: Container number
+        container_type: Container type (default 'coding')
+
+    Returns:
+        True if deleted, False if not found.
+    """
+    _, SessionLocal = _get_engine()
+    session = SessionLocal()
+    try:
+        container = session.query(Container).filter(
+            Container.project_name == project_name,
+            Container.container_number == container_number,
+            Container.container_type == container_type
+        ).first()
+        if container:
+            session.delete(container)
+            session.commit()
+            return True
+        return False
+    finally:
+        session.close()
+
+
+def delete_invalid_containers(project_name: str) -> int:
+    """
+    Delete containers with invalid container_number (e.g., -1).
+
+    Args:
+        project_name: Name of the project
+
+    Returns:
+        Count of deleted records.
+    """
+    _, SessionLocal = _get_engine()
+    session = SessionLocal()
+    try:
+        result = session.query(Container).filter(
+            Container.project_name == project_name,
+            Container.container_number < 0
+        ).delete()
+        session.commit()
+        return result
+    finally:
+        session.close()
+
+
 def list_containers(status_filter: list[str] | None = None) -> list[Container]:
     """
     List all containers across all projects.

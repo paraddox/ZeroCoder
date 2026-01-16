@@ -827,10 +827,13 @@ async def list_containers(name: str):
     seen_container_nums = set()
 
     for c in containers:
-        seen_container_nums.add(c["container_number"])
+        container_number = c["container_number"]
+        # Skip invalid container numbers (e.g., -1 for hound - shouldn't be in DB)
+        if container_number < 0:
+            continue
+        seen_container_nums.add(container_number)
         # Construct Docker container name from project and container number
         container_type = c.get("container_type", "coding")
-        container_number = c["container_number"]
         if container_type == "init" or container_number == 0:
             docker_name = f"zerocoder-{name}-init"
         else:
@@ -870,23 +873,38 @@ async def list_containers(name: str):
         ))
 
     # Add any managers not in registry (e.g., hound containers with container_number=-1)
+    seen_hound = False
     for cm in managers:
-        if cm.container_number not in seen_container_nums:
-            # Get live status from Docker for hound container
-            docker_name = f"zerocoder-{name}-hound"
-            live_status = _get_docker_container_status(docker_name)
-            final_status = live_status if live_status else "stopped"
+        # Skip if already added from database
+        if cm.container_number in seen_container_nums:
+            continue
 
-            result.append(ContainerStatus(
-                id=-1,  # Synthetic ID for hound
-                container_number=cm.container_number,
-                container_type=cm.container_type,
-                status=final_status,
-                current_feature=cm._current_feature,
-                docker_container_id=None,
-                agent_type=cm._current_agent_type,
-                sdk_type="claude" if cm._force_claude_sdk or not cm._is_opencode_model() else "opencode",
-            ))
+        # Handle hound containers (container_number=-1)
+        if cm.container_number < 0:
+            # Only show hound containers (skip other invalid container numbers)
+            if cm._current_agent_type != "hound":
+                continue
+            # Prevent duplicate hound entries
+            if seen_hound:
+                continue
+            seen_hound = True
+            docker_name = f"zerocoder-{name}-hound"
+        else:
+            docker_name = f"zerocoder-{name}-{cm.container_number}"
+
+        live_status = _get_docker_container_status(docker_name)
+        final_status = live_status if live_status else "stopped"
+
+        result.append(ContainerStatus(
+            id=-1,  # Synthetic ID for in-memory only containers
+            container_number=cm.container_number,
+            container_type=cm.container_type,
+            status=final_status,
+            current_feature=cm._current_feature,
+            docker_container_id=None,
+            agent_type=cm._current_agent_type,
+            sdk_type="claude" if cm._force_claude_sdk or not cm._is_opencode_model() else "opencode",
+        ))
 
     return result
 

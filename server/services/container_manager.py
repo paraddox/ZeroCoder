@@ -133,6 +133,7 @@ class ContainerManager:
         git_url: str,
         container_number: int = 1,  # Container number for parallel execution (0 = init container)
         project_dir: Path | None = None,  # For local clone path (wizard/edit)
+        skip_db_persist: bool = False,  # Skip database registration (for hound containers)
     ):
         """
         Initialize the container manager.
@@ -182,6 +183,9 @@ class ContainerManager:
         self._current_feature: str | None = None
         # Model to use when forcing Claude SDK (defaults to Opus 4.5)
         self._forced_model: str = "claude-opus-4-5-20251101"
+
+        # Skip database persistence (for hound containers that are in-memory only)
+        self._skip_db_persist = skip_db_persist
 
         # Callbacks for WebSocket notifications
         self._output_callbacks: Set[Callable[[str], Awaitable[None]]] = set()
@@ -979,16 +983,17 @@ class ContainerManager:
                 )
                 if result.returncode != 0:
                     return False, f"Failed to start container: {result.stderr}"
-                # Update registry status
-                try:
-                    from registry import update_container_status
-                    update_container_status(
-                        project_name=self.project_name,
-                        container_number=self.container_number,
-                        status='running'
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to update container status in database: {e}")
+                # Update registry status (skip for hound containers)
+                if not self._skip_db_persist:
+                    try:
+                        from registry import update_container_status
+                        update_container_status(
+                            project_name=self.project_name,
+                            container_number=self.container_number,
+                            status='running'
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to update container status in database: {e}")
             else:
                 # Ensure Docker image exists (build if necessary)
                 image_ok, image_msg = ensure_image_exists()
@@ -1044,29 +1049,30 @@ class ContainerManager:
                 if result.returncode != 0:
                     return False, f"Failed to create container: {result.stderr}"
 
-                # Register new container in database
-                try:
-                    from registry import create_container, update_container_status
-                    create_container(
-                        project_name=self.project_name,
-                        container_number=self.container_number,
-                        container_type=self.container_type
-                    )
-                    # Get docker container ID
-                    inspect_result = subprocess.run(
-                        ["docker", "inspect", "--format", "{{.Id}}", self.container_name],
-                        capture_output=True, text=True
-                    )
-                    docker_id = inspect_result.stdout.strip() if inspect_result.returncode == 0 else None
-                    update_container_status(
-                        project_name=self.project_name,
-                        container_number=self.container_number,
-                        docker_container_id=docker_id,
-                        status='running'
-                    )
-                    logger.info(f"Registered container {self.container_name} in database")
-                except Exception as e:
-                    logger.warning(f"Failed to register container in database: {e}")
+                # Register new container in database (skip for hound containers)
+                if not self._skip_db_persist:
+                    try:
+                        from registry import create_container, update_container_status
+                        create_container(
+                            project_name=self.project_name,
+                            container_number=self.container_number,
+                            container_type=self.container_type
+                        )
+                        # Get docker container ID
+                        inspect_result = subprocess.run(
+                            ["docker", "inspect", "--format", "{{.Id}}", self.container_name],
+                            capture_output=True, text=True
+                        )
+                        docker_id = inspect_result.stdout.strip() if inspect_result.returncode == 0 else None
+                        update_container_status(
+                            project_name=self.project_name,
+                            container_number=self.container_number,
+                            docker_container_id=docker_id,
+                            status='running'
+                        )
+                        logger.info(f"Registered container {self.container_name} in database")
+                    except Exception as e:
+                        logger.warning(f"Failed to register container in database: {e}")
 
             self.started_at = datetime.now()
             self._update_activity()
@@ -2553,6 +2559,7 @@ async def spawn_hound_container(project_name: str, git_url: str, task_ids: list[
             git_url=git_url,
             container_number=-1,  # Special marker for hound container
             project_dir=project_dir,
+            skip_db_persist=True,  # Hound containers are in-memory only
         )
         # Override the container name since -1 would give "zerocoder-{project}--1"
         hound_manager.container_name = container_name
