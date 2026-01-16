@@ -68,13 +68,16 @@ if [ ! -x "./scripts/safe_bd_json.sh" ] || [ ! -x "./scripts/safe_bd_sync.sh" ];
 fi
 
 # =============================================================================
-# FEATURE CLAIMING
+# FEATURE CLAIMING (with race condition prevention)
 # =============================================================================
 
 # Try to claim a random OPEN feature (not in_progress)
 # Returns: 0=success (feature ID on stdout), 1=no features, 2=claim failed (retry)
 claim_feature() {
-    # CRITICAL: Filter for status=open only! bd ready includes in_progress which causes race conditions
+    # CRITICAL: Sync FIRST to get latest state before selecting
+    ./scripts/safe_bd_sync.sh
+
+    # Filter for status=open only! bd ready includes in_progress which causes race conditions
     # Use shuf to randomize so parallel agents don't all claim the same feature
     local feature_id=$(./scripts/safe_bd_json.sh ready --json | jq -r '[.[] | select(.status == "open")][].id' | shuf | head -1)
 
@@ -83,18 +86,34 @@ claim_feature() {
         return 1
     fi
 
-    # Try to claim it (sync first to get latest state)
-    ./scripts/safe_bd_sync.sh
+    # RACE CONDITION FIX: Verify feature is STILL open after sync
+    # Another agent may have claimed it between our sync and now
+    local current_status=$(./scripts/safe_bd_json.sh show "$feature_id" --json | jq -r '.[0].status')
+    if [ "$current_status" != "open" ]; then
+        echo "Feature $feature_id already $current_status, trying next..." >&2
+        return 2  # Retry with different feature
+    fi
+
+    # Try to claim it
     bd update "$feature_id" --status=in_progress 2>/dev/null
     local update_status=$?
 
     if [ $update_status -eq 0 ]; then
-        # Push claim immediately to establish lock
+        # Push claim immediately to establish distributed lock
         ./scripts/safe_bd_sync.sh
+
+        # DOUBLE-CHECK: Verify WE own the claim after push
+        # If another agent pushed first, sync will show their claim
+        local post_sync_status=$(./scripts/safe_bd_json.sh show "$feature_id" --json | jq -r '.[0].status')
+        if [ "$post_sync_status" != "in_progress" ]; then
+            echo "Feature $feature_id was claimed by another agent, trying next..." >&2
+            return 2
+        fi
+
         echo "$feature_id"  # Only the ID goes to stdout
         return 0
     else
-        echo "Feature $feature_id already claimed, trying next..." >&2  # Errors to stderr!
+        echo "Feature $feature_id claim failed, trying next..." >&2  # Errors to stderr!
         return 2  # Retry with next
     fi
 }
