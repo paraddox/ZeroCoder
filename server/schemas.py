@@ -116,6 +116,8 @@ class ContainerStatus(BaseModel):
     status: Literal["created", "running", "stopping", "stopped"]
     current_feature: str | None = None
     docker_container_id: str | None = None
+    agent_type: Literal["coder", "overseer", "hound", "initializer"] | None = None
+    sdk_type: Literal["claude", "opencode"] | None = None
 
 
 # ============================================================================
@@ -180,6 +182,9 @@ class AgentStatus(BaseModel):
     idle_seconds: int = 0
     agent_running: bool = False  # True if agent process is running inside container
     graceful_stop_requested: bool = False  # True if graceful stop has been requested
+    # Agent type and SDK info
+    agent_type: Literal["coder", "overseer", "hound", "initializer"] | None = None
+    sdk_type: Literal["claude", "opencode"] | None = None
     # Legacy fields for backwards compatibility
     pid: int | None = None
     yolo_mode: bool = False

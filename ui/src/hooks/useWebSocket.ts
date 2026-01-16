@@ -14,6 +14,8 @@ export interface LogEntry {
 export interface ContainerInfo {
   number: number
   type: 'init' | 'coding'
+  agent_type?: 'coder' | 'initializer' | 'hound' | 'overseer'
+  sdk_type?: 'claude' | 'opencode'
 }
 
 interface WebSocketState {

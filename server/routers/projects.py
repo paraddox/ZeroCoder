@@ -805,6 +805,8 @@ def _get_docker_container_status(container_name: str) -> str | None:
 @router.get("/{name}/containers", response_model=list[ContainerStatus])
 async def list_containers(name: str):
     """List all containers for a project."""
+    from ..services.container_manager import get_all_container_managers
+
     (
         _, _, get_project_path, _, _, _,
         _, _, _, _, list_project_containers
@@ -816,6 +818,11 @@ async def list_containers(name: str):
         raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
 
     containers = list_project_containers(name)
+
+    # Build a map of container managers for agent info
+    managers = get_all_container_managers(name)
+    manager_map = {cm.container_number: cm for cm in managers}
+
     result = []
 
     for c in containers:
@@ -841,6 +848,14 @@ async def list_containers(name: str):
             # Keep database status (created, stopping, stopped)
             final_status = db_status
 
+        # Get agent info from container manager
+        cm = manager_map.get(container_number)
+        agent_type = None
+        sdk_type = None
+        if cm:
+            agent_type = cm._current_agent_type
+            sdk_type = "claude" if cm._force_claude_sdk or not cm._is_opencode_model() else "opencode"
+
         result.append(ContainerStatus(
             id=c["id"],
             container_number=c["container_number"],
@@ -848,6 +863,8 @@ async def list_containers(name: str):
             status=final_status,
             current_feature=c.get("current_feature"),
             docker_container_id=c.get("docker_container_id"),
+            agent_type=agent_type,
+            sdk_type=sdk_type,
         ))
 
     return result

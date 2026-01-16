@@ -44,6 +44,8 @@ export interface ProjectSettings {
 // Container types
 export type ContainerType = 'init' | 'coding'
 export type ContainerStatusType = 'created' | 'running' | 'stopping' | 'stopped'
+export type AgentType = 'coder' | 'initializer' | 'hound' | 'overseer'
+export type SdkType = 'claude' | 'opencode'
 
 export interface ContainerInfo {
   id: number
@@ -52,6 +54,8 @@ export interface ContainerInfo {
   status: ContainerStatusType
   current_feature: string | null
   docker_container_id: string | null
+  agent_type?: AgentType
+  sdk_type?: SdkType
 }
 
 export interface ProjectPrompts {
@@ -159,6 +163,8 @@ export interface WSAgentStatusMessage {
   type: 'agent_status'
   status: AgentStatus
   container_number?: number
+  agent_type?: AgentType
+  sdk_type?: SdkType
 }
 
 export interface WSGracefulStopRequestedMessage {
@@ -175,6 +181,8 @@ export interface WSContainersMessage {
   containers: Array<{
     number: number
     type: 'init' | 'coding'
+    agent_type?: AgentType
+    sdk_type?: SdkType
   }>
 }
 

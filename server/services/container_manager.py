@@ -1989,6 +1989,8 @@ class ContainerManager:
             "user_started": self._user_started,
             "graceful_stop_requested": self._graceful_stop_requested,
             "current_feature": self._current_feature,
+            "agent_type": self._current_agent_type,
+            "sdk_type": "claude" if self._force_claude_sdk or not self._is_opencode_model() else "opencode",
         }
 
 

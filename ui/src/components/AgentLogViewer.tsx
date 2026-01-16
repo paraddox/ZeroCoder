@@ -425,19 +425,24 @@ export function AgentLogViewer({
               >
                 All
               </button>
-              {availableContainers.map((containerNum) => (
-                <button
-                  key={containerNum}
-                  onClick={() => onContainerFilterChange?.(containerNum)}
-                  className={`px-2 py-0.5 text-xs font-mono rounded transition-colors ${
-                    containerFilter === containerNum
-                      ? 'bg-emerald-600 text-white'
-                      : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
-                  }`}
-                >
-                  #{containerNum}
-                </button>
-              ))}
+              {availableContainers.map((containerNum) => {
+                // Find container info for this number to get agent type
+                const containerInfo = registeredContainers?.find(c => c.number === containerNum)
+                const label = containerNum === -1 ? 'Hound' : containerInfo?.agent_type || `#${containerNum}`
+                return (
+                  <button
+                    key={containerNum}
+                    onClick={() => onContainerFilterChange?.(containerNum)}
+                    className={`px-2 py-0.5 text-xs font-mono rounded transition-colors ${
+                      containerFilter === containerNum
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                )
+              })}
             </div>
           )}
           <button
@@ -486,7 +491,10 @@ export function AgentLogViewer({
                   </span>
                   {showContainerBadge && (
                     <span className="px-1.5 py-0.5 text-xs font-mono bg-slate-700 text-slate-400 rounded shrink-0">
-                      #{log.container_number}
+                      {log.container_number === -1 ? 'Hound' : (() => {
+                        const containerInfo = registeredContainers?.find(c => c.number === log.container_number)
+                        return containerInfo?.agent_type || `#${log.container_number}`
+                      })()}
                     </span>
                   )}
                   <span className={`${colorClass} whitespace-pre-wrap break-all text-xs leading-relaxed`}>

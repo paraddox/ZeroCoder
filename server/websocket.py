@@ -69,6 +69,31 @@ def _list_project_containers(project_name: str) -> list[dict]:
     return list_project_containers(project_name)
 
 
+async def _send_containers_list(websocket: WebSocket, project_name: str):
+    """Send containers list with agent info to the WebSocket client."""
+    containers = _list_project_containers(project_name)
+    all_managers = get_all_container_managers(project_name)
+    manager_map = {cm.container_number: cm for cm in all_managers}
+
+    container_list = []
+    for c in containers:
+        container_num = c["container_number"]
+        cm = manager_map.get(container_num)
+        container_info = {
+            "number": container_num,
+            "type": c["container_type"],
+        }
+        if cm:
+            container_info["agent_type"] = cm._current_agent_type
+            container_info["sdk_type"] = "claude" if cm._force_claude_sdk or not cm._is_opencode_model() else "opencode"
+        container_list.append(container_info)
+
+    await websocket.send_json({
+        "type": "containers",
+        "containers": container_list,
+    })
+
+
 class ConnectionManager:
     """Manages WebSocket connections per project."""
 
@@ -217,7 +242,7 @@ async def project_websocket(websocket: WebSocket, project_name: str):
                 pass  # Connection may be closed
         return on_output
 
-    def make_status_callback(container_num: int):
+    def make_status_callback(container_num: int, cm: "ContainerManager"):
         async def on_status_change(status: str):
             """Handle status change - broadcast to this WebSocket."""
             try:
@@ -225,6 +250,8 @@ async def project_websocket(websocket: WebSocket, project_name: str):
                     "type": "agent_status",
                     "status": status,
                     "container_number": container_num,
+                    "agent_type": cm._current_agent_type,
+                    "sdk_type": "claude" if cm._force_claude_sdk or not cm._is_opencode_model() else "opencode",
                 })
             except Exception:
                 pass  # Connection may be closed
@@ -235,7 +262,7 @@ async def project_websocket(websocket: WebSocket, project_name: str):
     registered_container_nums: set[int] = set()
     for cm in all_managers:
         output_cb = make_output_callback(cm.container_number)
-        status_cb = make_status_callback(cm.container_number)
+        status_cb = make_status_callback(cm.container_number, cm)
         cm.add_output_callback(output_cb)
         cm.add_status_callback(status_cb)
         registered_callbacks.append((cm, output_cb, status_cb))
@@ -256,7 +283,7 @@ async def project_websocket(websocket: WebSocket, project_name: str):
                     if cm.container_number not in registered_container_nums:
                         # New container found - register callbacks
                         output_cb = make_output_callback(cm.container_number)
-                        status_cb = make_status_callback(cm.container_number)
+                        status_cb = make_status_callback(cm.container_number, cm)
                         cm.add_output_callback(output_cb)
                         cm.add_status_callback(status_cb)
                         registered_callbacks.append((cm, output_cb, status_cb))
@@ -264,15 +291,8 @@ async def project_websocket(websocket: WebSocket, project_name: str):
 
                         logger.info(f"Registered callbacks for new container {cm.container_number}")
 
-                        # Send updated containers list to UI
-                        containers = _list_project_containers(project_name)
-                        await websocket.send_json({
-                            "type": "containers",
-                            "containers": [
-                                {"number": c["container_number"], "type": c["container_type"]}
-                                for c in containers
-                            ],
-                        })
+                        # Send updated containers list to UI with agent info
+                        await _send_containers_list(websocket, project_name)
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -301,15 +321,8 @@ async def project_websocket(websocket: WebSocket, project_name: str):
             "percentage": round(percentage, 1),
         })
 
-        # Send registered containers list
-        containers = _list_project_containers(project_name)
-        await websocket.send_json({
-            "type": "containers",
-            "containers": [
-                {"number": c["container_number"], "type": c["container_type"]}
-                for c in containers
-            ],
-        })
+        # Send registered containers list with agent info
+        await _send_containers_list(websocket, project_name)
 
         # Keep connection alive and handle incoming messages
         while True:

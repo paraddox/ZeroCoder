@@ -155,15 +155,26 @@ export function ContainerList({
                 {/* Container Info */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 mb-1">
-                    {/* Container Name */}
+                    {/* Container Name - special handling for Hound (container_number -1) */}
                     <span className="font-display font-medium text-[var(--color-text)]">
-                      Agent {container.container_number}
+                      {container.container_number === -1 ? 'Hound' : `Agent ${container.container_number}`}
                     </span>
 
-                    {/* Type Badge */}
+                    {/* Agent Type Badge */}
                     <span className="badge text-xs bg-[var(--color-bg-subtle)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
-                      {container.container_type}
+                      {container.agent_type || container.container_type}
                     </span>
+
+                    {/* SDK Badge */}
+                    {container.sdk_type && (
+                      <span className={`badge text-xs border ${
+                        container.sdk_type === 'claude'
+                          ? 'bg-orange-500/10 text-orange-400 border-orange-500/30'
+                          : 'bg-blue-500/10 text-blue-400 border-blue-500/30'
+                      }`}>
+                        {container.sdk_type}
+                      </span>
+                    )}
                   </div>
 
                   {/* Current Feature */}
