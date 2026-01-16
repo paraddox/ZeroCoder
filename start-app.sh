@@ -159,6 +159,69 @@ if [[ " $* " == *" --stop "* ]] || [[ " $* " == *" -s "* ]]; then
     exit 0
 fi
 
+# Check for --restart flag (restart server only, preserve containers)
+if [[ " $* " == *" --restart "* ]] || [[ " $* " == *" -r "* ]]; then
+    echo "Restarting ZeroCoder server (preserving containers)..."
+
+    # Kill server processes only (not containers)
+    UVICORN_PIDS=$(pgrep -f "uvicorn server.main:app")
+    if [ ! -z "$UVICORN_PIDS" ]; then
+        echo "Stopping uvicorn processes: $UVICORN_PIDS"
+        for PID in $UVICORN_PIDS; do
+            kill -TERM "$PID" 2>/dev/null
+            for i in {1..5}; do
+                if ! kill -0 "$PID" 2>/dev/null; then
+                    break
+                fi
+                sleep 1
+            done
+            if kill -0 "$PID" 2>/dev/null; then
+                kill -9 "$PID" 2>/dev/null
+            fi
+        done
+        echo "Server stopped"
+    fi
+
+    # Rebuild UI
+    echo "Rebuilding UI..."
+    if [ -d "ui" ]; then
+        cd ui
+        npm run build --silent
+        cd ..
+        echo "UI rebuilt"
+    fi
+
+    # Cleanup for restart mode - DON'T touch containers
+    cleanup_restart() {
+        echo ""
+        echo "Shutting down server (containers preserved)..."
+        if [ ! -z "$PYTHON_PID" ]; then
+            kill -TERM "$PYTHON_PID" 2>/dev/null
+            sleep 2
+            if kill -0 "$PYTHON_PID" 2>/dev/null; then
+                kill -9 "$PYTHON_PID" 2>/dev/null
+            fi
+        fi
+        UVICORN_PIDS=$(pgrep -f "uvicorn server.main:app")
+        if [ ! -z "$UVICORN_PIDS" ]; then
+            for PID in $UVICORN_PIDS; do
+                kill -TERM "$PID" 2>/dev/null
+            done
+        fi
+        echo "Server stopped (containers still running)"
+        exit 0
+    }
+    trap cleanup_restart SIGINT SIGTERM
+
+    # Start server in foreground
+    echo "Starting server..."
+    python start-app.py &
+    PYTHON_PID=$!
+    echo "Python PID: $PYTHON_PID"
+    wait $PYTHON_PID
+    exit 0
+fi
+
 # Check for -bg flag to run in background
 if [[ " $* " == *" -bg "* ]] || [[ " $* " == *" --background "* ]]; then
     # Remove -bg/--background from args before passing to start-app.py
