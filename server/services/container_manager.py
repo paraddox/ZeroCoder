@@ -2444,10 +2444,10 @@ async def get_tasks_for_hound_review(project_name: str, container_name: str) -> 
         List of task IDs to review (up to 20)
     """
     try:
-        # Get all closed tasks (higher limit to have pool for random selection)
+        # Get all closed tasks as JSON (higher limit to have pool for random selection)
         result = subprocess.run(
             ["docker", "exec", "-u", "coder", container_name,
-             "bd", "list", "--status=closed", "--limit=100"],
+             "bd", "--no-daemon", "list", "--status=closed", "--limit=100", "--json"],
             capture_output=True,
             text=True,
             timeout=30,
@@ -2456,13 +2456,17 @@ async def get_tasks_for_hound_review(project_name: str, container_name: str) -> 
             logger.warning(f"Failed to get closed tasks: {result.stderr}")
             return []
 
-        # Parse output - each line is a task (format: "id: title")
+        # Parse JSON output
         all_closed = []
-        for line in result.stdout.strip().split("\n"):
-            if line and ":" in line:
-                task_id = line.split(":")[0].strip()
+        try:
+            tasks = json.loads(result.stdout) if result.stdout.strip() else []
+            for task in tasks:
+                task_id = task.get("id")
                 if task_id:
                     all_closed.append(task_id)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse closed tasks JSON: {e}")
+            return []
 
         if not all_closed:
             return []
