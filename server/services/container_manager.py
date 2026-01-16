@@ -215,6 +215,9 @@ class ContainerManager:
         if self._status == "completed":
             return
 
+        # Always refresh user_started from marker file (may have been created externally)
+        self._user_started = self._check_user_started_marker()
+
         try:
             result = subprocess.run(
                 ["docker", "inspect", "-f", "{{.State.Status}}", self.container_name],
