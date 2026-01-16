@@ -965,6 +965,11 @@ class ContainerManager:
 
         self._sync_status()
 
+        # Check if graceful stop was requested - don't restart
+        if self._graceful_stop_requested:
+            logger.info(f"Graceful stop requested, not starting {self.container_name}")
+            return False, "Graceful stop requested"
+
         if self._status == "running":
             # Container already running, just send instruction if provided
             if instruction:
@@ -1650,6 +1655,11 @@ class ContainerManager:
         Returns:
             Tuple of (success, message)
         """
+        # Check if graceful stop was requested - don't restart
+        if self._graceful_stop_requested:
+            logger.info(f"Graceful stop requested, not restarting {self.container_name}")
+            return False, "Graceful stop requested, not restarting"
+
         logger.info(f"Restarting agent in container {self.container_name}")
 
         self._restarting = True
@@ -2325,6 +2335,10 @@ async def monitor_agent_health() -> list[str]:
     for manager in all_managers:
         # Only monitor user-started containers
         if not manager.user_started:
+            continue
+
+        # Skip if graceful stop was requested
+        if manager._graceful_stop_requested:
             continue
 
         # Skip if restart already in progress
