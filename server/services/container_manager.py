@@ -1781,7 +1781,9 @@ class ContainerManager:
             )
             if result.returncode == 0:
                 stats = json.loads(result.stdout)
-                return stats.get("closed", 0)
+                # bd stats --json returns nested structure: summary.closed_issues
+                summary = stats.get("summary", {})
+                return summary.get("closed_issues", 0)
         except Exception as e:
             logger.warning(f"Failed to get closed count: {e}")
         return 0
