@@ -307,6 +307,7 @@ function App() {
               onSelectProject={handleSelectProject}
               onIncompleteProjectClick={handleIncompleteProjectClick}
               isLoading={projectsLoading}
+              currentProgress={progress}
             />
           </div>
         </div>
