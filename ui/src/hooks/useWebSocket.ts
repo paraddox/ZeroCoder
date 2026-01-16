@@ -28,6 +28,7 @@ interface WebSocketState {
   containers: ContainerInfo[]
   isConnected: boolean
   gracefulStopRequested: boolean
+  containerUpdateCounter: number // Increments when container_update received
 }
 
 const MAX_LOGS = 100 // Keep last 100 log lines
@@ -40,6 +41,7 @@ export function useProjectWebSocket(projectName: string | null) {
     containers: [],
     isConnected: false,
     gracefulStopRequested: false,
+    containerUpdateCounter: 0,
   })
 
   const wsRef = useRef<WebSocket | null>(null)
@@ -130,6 +132,14 @@ export function useProjectWebSocket(projectName: string | null) {
 
             case 'feature_update':
               // Feature updates will trigger a refetch via React Query
+              break
+
+            case 'container_update':
+              // Container update (current_feature changed) - increment counter to trigger refetch
+              setState(prev => ({
+                ...prev,
+                containerUpdateCounter: prev.containerUpdateCounter + 1,
+              }))
               break
 
             case 'pong':

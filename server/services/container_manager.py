@@ -177,6 +177,8 @@ class ContainerManager:
         self._current_agent_type: Literal["coder", "overseer", "hound"] = "coder"
         # Force Claude SDK for initializer (regardless of project model)
         self._force_claude_sdk: bool = False
+        # Track current feature being worked on (detected from logs)
+        self._current_feature: str | None = None
         # Model to use when forcing Claude SDK (defaults to Opus 4.5)
         self._forced_model: str = "claude-opus-4-5-20251101"
 
@@ -401,6 +403,36 @@ class ContainerManager:
             return False
         idle_duration = datetime.now() - self.last_activity
         return idle_duration > timedelta(minutes=IDLE_TIMEOUT_MINUTES)
+
+    async def _set_current_feature(self, feature_id: str | None) -> None:
+        """Update current feature and broadcast change via WebSocket."""
+        if self._current_feature == feature_id:
+            return
+
+        self._current_feature = feature_id
+        logger.info(f"[{self.container_name}] Current feature: {feature_id}")
+
+        # Update database
+        try:
+            from registry import update_container_status
+            update_container_status(
+                project_name=self.project_name,
+                container_number=self.container_number,
+                current_feature=feature_id if feature_id else ""
+            )
+        except Exception as e:
+            logger.warning(f"Failed to update current_feature in database: {e}")
+
+        # Broadcast via WebSocket
+        try:
+            from server.websocket import manager as websocket_manager
+            await websocket_manager.broadcast_to_project(self.project_name, {
+                "type": "container_update",
+                "container_number": self.container_number,
+                "current_feature": feature_id
+            })
+        except Exception as e:
+            logger.warning(f"Failed to broadcast current_feature update: {e}")
 
     def is_agent_stuck(self) -> bool:
         """Check if agent is running but not producing output (stuck).
@@ -893,6 +925,16 @@ class ContainerManager:
 
                 self._update_activity()
                 await self._broadcast_output(sanitized)
+
+                # Detect feature claim: bd update beads-X --status=in_progress
+                claim_match = re.search(r'bd update (beads-\d+) --status[= ]in_progress', sanitized)
+                if claim_match:
+                    await self._set_current_feature(claim_match.group(1))
+
+                # Detect feature complete: bd close beads-X
+                close_match = re.search(r'bd close (beads-\d+)', sanitized)
+                if close_match and self._current_feature == close_match.group(1):
+                    await self._set_current_feature(None)
 
         except asyncio.CancelledError:
             raise
@@ -1917,6 +1959,7 @@ class ContainerManager:
             "agent_running": self.is_agent_running(),
             "user_started": self._user_started,
             "graceful_stop_requested": self._graceful_stop_requested,
+            "current_feature": self._current_feature,
         }
 
 

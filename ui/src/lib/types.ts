@@ -178,6 +178,12 @@ export interface WSContainersMessage {
   }>
 }
 
+export interface WSContainerUpdateMessage {
+  type: 'container_update'
+  container_number: number
+  current_feature: string | null
+}
+
 export type WSMessage =
   | WSProgressMessage
   | WSFeatureUpdateMessage
@@ -186,6 +192,7 @@ export type WSMessage =
   | WSGracefulStopRequestedMessage
   | WSPongMessage
   | WSContainersMessage
+  | WSContainerUpdateMessage
 
 // ============================================================================
 // Spec Chat Types

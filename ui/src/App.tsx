@@ -62,7 +62,7 @@ function App() {
   const { data: projects, isLoading: projectsLoading, refetch: refetchProjects } = useProjects()
   const { data: features } = useFeatures(selectedProject)
   const { data: agentStatusData } = useAgentStatus(selectedProject)
-  const { data: containers, isLoading: containersLoading } = useContainers(selectedProject)
+  const { data: containers, isLoading: containersLoading, refetch: refetchContainers } = useContainers(selectedProject)
   const reopenFeature = useReopenFeature(selectedProject ?? '')
   const wsState = useProjectWebSocket(selectedProject)
   const { theme, toggleTheme } = useTheme()
@@ -78,6 +78,13 @@ function App() {
 
   // Celebrate when all features are complete
   useCelebration(features, selectedProject)
+
+  // Refetch containers when WebSocket notifies of container update (e.g., current_feature changed)
+  useEffect(() => {
+    if (wsState.containerUpdateCounter > 0) {
+      refetchContainers()
+    }
+  }, [wsState.containerUpdateCounter, refetchContainers])
 
   // Persist selected project to localStorage
   const handleSelectProject = useCallback((project: string | null) => {
