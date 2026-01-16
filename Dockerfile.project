@@ -19,8 +19,9 @@ FROM python:3.11-slim-bookworm
 # Prevent interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Disable beads daemon in containers (avoids stale lock file issues)
+# Disable beads daemon in containers (avoids stale lock file issues and sync conflicts)
 ENV BD_NO_DAEMON=true
+ENV BEADS_AUTO_START_DAEMON=false
 
 # Install essentials and webapp development tools
 RUN apt-get update && apt-get install -y \
@@ -98,6 +99,9 @@ WORKDIR /project
 COPY agent_app.py /app/agent_app.py
 COPY container_scripts/feature_status.py /app/feature_status.py
 COPY container_scripts/beads_commands.py /app/beads_commands.py
+COPY container_scripts/setup_repo.sh /app/setup_repo.sh
+COPY container_scripts/cleanup_session.sh /app/cleanup_session.sh
+RUN chmod +x /app/setup_repo.sh /app/cleanup_session.sh
 
 # Configure git for container operations (for root, during build)
 RUN git config --global user.email "agent@zerocoder.local" \
@@ -216,6 +220,23 @@ if [ -n "\$GIT_REMOTE_URL" ]; then
         fi
         echo "[$(date -Iseconds)] Repository updated successfully" >> /var/log/agent.log
     fi
+fi
+
+# Kill any running beads daemon (prevents sync conflicts)
+if [ -f "/project/.beads/daemon.pid" ]; then
+    DAEMON_PID=\$(cat /project/.beads/daemon.pid 2>/dev/null)
+    if [ -n "\$DAEMON_PID" ] && kill -0 "\$DAEMON_PID" 2>/dev/null; then
+        echo "[$(date -Iseconds)] Stopping beads daemon (PID: \$DAEMON_PID)..." >> /var/log/agent.log
+        kill "\$DAEMON_PID" 2>/dev/null || true
+        sleep 1
+    fi
+    rm -f /project/.beads/daemon.pid /project/.beads/daemon.lock
+fi
+
+# Run repository setup script (initializes beads based on CONTAINER_TYPE)
+if [ -f "/app/setup_repo.sh" ]; then
+    echo "[$(date -Iseconds)] Running repository setup (type: \${CONTAINER_TYPE:-coding})..." >> /var/log/agent.log
+    su - coder -c "cd /project && CONTAINER_TYPE=\${CONTAINER_TYPE:-coding} BD_NO_DAEMON=true /app/setup_repo.sh"
 fi
 
 # Keep container running by tailing the agent log

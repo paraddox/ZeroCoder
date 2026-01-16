@@ -780,61 +780,43 @@ class ContainerManager:
 
     async def post_agent_cleanup(self) -> tuple[bool, str]:
         """
-        Run after agent completes: cleanup feature branches.
+        Run cleanup script after agent session ends.
 
-        The agent has already merged to main and pushed. This just cleans up
-        any leftover feature branches.
+        This calls cleanup_session.sh which:
+        - Aborts stuck git operations
+        - Switches to main branch
+        - Discards uncommitted changes
+        - Deletes local feature branches
+        - Pulls latest from main
+        - Syncs beads state
 
         Returns:
             Tuple of (success, message)
         """
         if self._status != "running":
-            return False, "Container must be running for post-agent cleanup"
+            return False, "Container must be running for cleanup"
 
         try:
-            # List feature branches
+            await self._broadcast_output("[System] Running session cleanup...")
+
             result = subprocess.run(
                 ["docker", "exec", "-u", "coder", self.container_name,
-                 "git", "branch", "--list", "feature/*"],
+                 "/app/cleanup_session.sh"],
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=120,
             )
 
-            if result.returncode != 0 or not result.stdout.strip():
-                return True, "No feature branches to clean up"
+            if result.returncode != 0:
+                logger.warning(f"Cleanup script returned non-zero: {result.stderr}")
 
-            # Clean up each feature branch
-            branches = [b.strip().lstrip("* ") for b in result.stdout.strip().split("\n") if b.strip()]
-            for branch in branches:
-                if not branch:
-                    continue
-
-                # Delete local branch
-                subprocess.run(
-                    ["docker", "exec", "-u", "coder", self.container_name,
-                     "git", "branch", "-d", branch],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                )
-
-                # Delete remote branch (may fail if already deleted)
-                subprocess.run(
-                    ["docker", "exec", "-u", "coder", self.container_name,
-                     "git", "push", "origin", "--delete", branch],
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
-
-            logger.info(f"Cleaned up {len(branches)} feature branches for {self.project_name}")
-            return True, f"Cleaned up {len(branches)} feature branches"
+            logger.info(f"Session cleanup completed for {self.project_name}")
+            return True, "Session cleanup completed"
 
         except subprocess.TimeoutExpired:
-            return False, "Post-agent cleanup timed out"
+            return False, "Cleanup script timed out"
         except Exception as e:
-            logger.exception(f"Error in post-agent cleanup for {self.project_name}")
+            logger.exception(f"Error running cleanup for {self.project_name}")
             return False, f"Cleanup error: {e}"
 
     async def recover_stuck_features(self) -> tuple[bool, str]:
@@ -1020,6 +1002,9 @@ class ContainerManager:
                 ]
                 # Pass git URL for cloning (container clones from git instead of volume mount)
                 cmd.extend(["-e", f"GIT_REMOTE_URL={self.git_url}"])
+                # Pass container type for setup_repo.sh (init vs coding)
+                container_type = "init" if self._is_init_container else "coding"
+                cmd.extend(["-e", f"CONTAINER_TYPE={container_type}"])
                 # Pass OAuth token if available
                 oauth_token = os.getenv("CLAUDE_CODE_OAUTH_TOKEN")
                 if oauth_token:
@@ -1922,6 +1907,9 @@ class ContainerManager:
                 ]
                 # Pass git URL for cloning (container clones from git instead of volume mount)
                 cmd.extend(["-e", f"GIT_REMOTE_URL={self.git_url}"])
+                # Pass container type for setup_repo.sh (init vs coding)
+                container_type = "init" if self._is_init_container else "coding"
+                cmd.extend(["-e", f"CONTAINER_TYPE={container_type}"])
                 # Pass OAuth token if available
                 oauth_token = os.getenv("CLAUDE_CODE_OAUTH_TOKEN")
                 if oauth_token:

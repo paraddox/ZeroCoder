@@ -21,21 +21,11 @@ This number was determined during spec creation and must be followed precisely. 
 
 ---
 
-### CRITICAL FIRST TASK: Initialize Beads and Create Features
+### FIRST TASK: Create Features
 
-First, initialize beads in the project:
+Based on `prompts/app_spec.txt`, create features using the `bd create` command. Features are stored in the `.beads/` directory, which is the single source of truth for what needs to be built.
 
-```bash
-# Initialize beads with sync branch for parallel container workflow
-bd init --branch beads-sync
-
-# Verify configuration
-bd doctor
-```
-
-Fix all warnings and errors that this command reports.
-
-Then, based on `prompts/app_spec.txt`, create features using the `bd create` command. Features are stored in the `.beads/` directory, which is the single source of truth for what needs to be built.
+**Note:** Beads is already initialized by the container setup script. Just create features.
 
 
 
@@ -480,48 +470,13 @@ set up and run the development environment. The script should:
 
 Base the script on the technology stack specified in `prompts/app_spec.txt`.
 
-### THIRD TASK: Initialize Git and Connect Remote
-
-Create a git repository, connect to remote, and set up the beads-sync branch for parallel container workflow:
-
-```bash
-# Initialize git (if not already a repo)
-git init 2>/dev/null || true
-
-# Initial commit
-git add .
-git commit -m "Initial setup: project structure and features"
-
-# Connect to remote and push
-if [ -n "$GIT_REMOTE_URL" ]; then
-    git remote add origin "$GIT_REMOTE_URL" 2>/dev/null || git remote set-url origin "$GIT_REMOTE_URL"
-
-    # Push main branch
-    git push -u origin main || (git pull origin main --allow-unrelated-histories && git push -u origin main)
-
-    # Create and push beads-sync branch
-    git checkout -b beads-sync
-    git push -u origin beads-sync
-    git checkout main
-
-    # Initial beads sync
-    bd sync
-fi
-```
-
-Include in your commit:
-- init.sh (environment setup script)
-- README.md (project overview and setup instructions)
-- Any initial project structure files
-- .beads/ directory (feature tracking)
-
-### FOURTH TASK: Create Project Structure
+### THIRD TASK: Create Project Structure
 
 Set up the basic project structure based on what's specified in `prompts/app_spec.txt`.
 This typically includes directories for frontend, backend, and any other
 components mentioned in the spec.
 
-### FIFTH TASK: Create Beads Helper Scripts
+### FOURTH TASK: Create Beads Helper Scripts
 
 Create helper scripts that coding agents will use for safe beads operations. These prevent JSON parsing errors from verbose bd output.
 
@@ -566,7 +521,7 @@ chmod +x scripts/safe_bd_sync.sh
 
 These scripts are essential because `bd` outputs verbose status messages to stdout which breaks JSON parsing when agents try to capture output.
 
-### SIXTH TASK: Create AGENTS.md (Operational Guide)
+### FIFTH TASK: Create AGENTS.md (Operational Guide)
 
 Create `AGENTS.md` at the project root. This file persists operational knowledge for all future coding sessions, preventing them from rediscovering commands and patterns.
 
@@ -627,29 +582,14 @@ Create `AGENTS.md` at the project root. This file persists operational knowledge
 
 **Size limit:** Keep AGENTS.md under 100 lines. Focus on the most essential information. If it grows too large, consolidate or remove outdated entries.
 
-### SEVENTH TASK: Run Beads Doctor
-
-Before ending your session, run the beads doctor to check for any issues:
-
-```bash
-bd doctor
-```
-
-Fix any warnings or errors that appear. Common fixes:
-- Missing hooks: `bd init` or re-run setup
-- Sync issues: `bd sync`
-- Invalid dependencies: `bd dep remove <issue> <dep>`
-
 ### IMPORTANT: Do NOT Implement Features
 
-Your role as the Initializer Agent is **COMPLETE** after the seven tasks above:
-1. Initialize beads and create features
+Your role as the Initializer Agent is **COMPLETE** after the five tasks above:
+1. Create features (beads is already initialized by container)
 2. Create init.sh
-3. Initialize Git and connect remote
-4. Create project structure
-5. Create beads helper scripts (scripts/safe_bd_json.sh, scripts/safe_bd_sync.sh)
-6. Create AGENTS.md
-7. Run beads doctor
+3. Create project structure
+4. Create beads helper scripts (scripts/safe_bd_json.sh, scripts/safe_bd_sync.sh)
+5. Create AGENTS.md
 
 **DO NOT:**
 - Implement any features
@@ -670,7 +610,6 @@ Before your context fills up:
    - `init.sh` exists and is executable
    - Project structure matches the spec
    - `AGENTS.md` documents the setup
-   - `bd doctor` shows no warnings
 2. Commit all scaffolding with descriptive messages
 3. Sync and push:
    ```bash

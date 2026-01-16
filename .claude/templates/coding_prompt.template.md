@@ -41,12 +41,6 @@ tail -50 IMPLEMENTATION_HISTORY.md 2>/dev/null || echo "No history yet"
 
 If these files exist, READ THEM CAREFULLY - they save you from rediscovering things.
 
-Run
-```bash
-bd doctor
-```
-Fix all warnings and issues that this reports. if there are any errors/warnings that persist even after taking the steps proposed by the bd doctor command, then you can move on to the next step.
-
 **DO NOT** spend more than 3 minutes on orientation. Get the basics and move on.
 
 ### STEP 1.5: CLAIM FEATURE (Distributed Lock)
