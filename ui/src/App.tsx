@@ -9,7 +9,6 @@ import { useContainers, useUpdateContainerCount, useStartAgent, useStopAgent, us
 const STORAGE_KEY = 'zerocoder-selected-project'
 import { ProjectTabs } from './components/ProjectTabs'
 import { KanbanBoard } from './components/KanbanBoard'
-import { ControlBar } from './components/ControlBar'
 import { SetupWizard } from './components/SetupWizard'
 import { AddFeatureForm } from './components/AddFeatureForm'
 import { FeatureModal } from './components/FeatureModal'
@@ -313,21 +312,6 @@ function App() {
         </div>
       </header>
 
-      {/* Control Bar */}
-      {selectedProject && (
-        <ControlBar
-          projectName={selectedProject}
-          agentStatus={wsState.agentStatus}
-          yoloMode={agentStatusData?.yolo_mode ?? false}
-          agentRunning={agentStatusData?.agent_running ?? false}
-          gracefulStopRequested={wsState.gracefulStopRequested}
-          progress={progress}
-          isConnected={wsState.isConnected}
-          onAddFeature={() => setShowAddFeature(true)}
-          onSettings={() => setShowSettingsModal(true)}
-          onDelete={() => setShowDeleteModal(true)}
-        />
-      )}
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-6 py-8">
@@ -342,26 +326,34 @@ function App() {
           </div>
         ) : (
           <div className="space-y-6">
-            {/* Container Control - slider and buttons for parallel agents */}
+            {/* Unified Toolbar - control buttons and actions */}
             <ContainerControl
               projectName={selectedProject}
-              targetCount={targetContainerCount}
-              runningCount={runningContainerCount}
               agentRunning={agentStatusData?.agent_running ?? false}
               gracefulStopRequested={wsState.gracefulStopRequested}
-              onTargetChange={handleContainerCountChange}
+              progress={progress}
+              isConnected={wsState.isConnected}
               onStart={handleStartAgent}
               onStopNow={handleStopAgent}
               onGracefulStop={handleGracefulStop}
               onEditTasks={handleEditTasks}
+              onAddFeature={() => setShowAddFeature(true)}
+              onSettings={() => setShowSettingsModal(true)}
+              onDelete={() => setShowDeleteModal(true)}
             />
 
-            {/* Container List - show running containers */}
+            {/* Container List - show running containers with status and controls */}
             {containers && containers.length > 0 && (
               <ContainerList
                 containers={containers}
                 onViewLogs={handleViewContainerLogs}
                 isLoading={containersLoading}
+                agentStatus={wsState.agentStatus}
+                agentRunning={agentStatusData?.agent_running ?? false}
+                gracefulStopRequested={wsState.gracefulStopRequested}
+                targetCount={targetContainerCount}
+                runningCount={runningContainerCount}
+                onTargetChange={handleContainerCountChange}
               />
             )}
 
