@@ -9,10 +9,10 @@ This is a FRESH context window - you have no memory of previous sessions.
 
 **The beads workflow in this document is NOT optional.** You MUST follow it exactly:
 
-1. **ALWAYS run `bd ready`** to get the next feature
-2. **ALWAYS run `bd update <id> --status=in_progress`** BEFORE writing any code
-3. **ALWAYS run `bd close <id>`** only AFTER thorough verification
-4. **ALWAYS run `bd sync`** at the end of your session
+1. **ALWAYS run `beads_client ready`** to get the next feature
+2. **ALWAYS run `beads_client update <id> --status=in_progress`** BEFORE writing any code
+3. **ALWAYS run `beads_client close <id>`** only AFTER thorough verification
+4. **ALWAYS run `beads_client sync`** at the end of your session
 
 **Failure to follow this workflow breaks the monitoring system.** The UI shows users what you're working on by reading beads status. If you skip these commands, users cannot monitor your progress.
 
@@ -23,8 +23,8 @@ This is a FRESH context window - you have no memory of previous sessions.
 ```bash
 # Basic orientation
 pwd && ls -la
-bd stats
-bd ready
+beads_client stats
+beads_client ready
 
 # Read Ralph artifacts (CRITICAL - these persist knowledge across sessions)
 cat AGENTS.md 2>/dev/null || echo "No AGENTS.md yet"
@@ -52,7 +52,7 @@ Now claim a feature using distributed lock:
 # =============================================================================
 # SAFE BD HELPERS - Scripts created by initializer in scripts/ directory
 # =============================================================================
-# ./scripts/safe_bd_json.sh <cmd> [args...]  - Returns clean JSON from bd commands
+# ./scripts/safe_bd_json.sh <cmd> [args...]  - Returns clean JSON from beads_client commands
 # ./scripts/safe_bd_sync.sh                   - Syncs beads without verbose output
 
 # Verify scripts exist (created by initializer)
@@ -71,7 +71,7 @@ claim_feature() {
     # CRITICAL: Sync FIRST to get latest state before selecting
     ./scripts/safe_bd_sync.sh
 
-    # Filter for status=open only! bd ready includes in_progress which causes race conditions
+    # Filter for status=open only! beads_client ready includes in_progress which causes race conditions
     # Use shuf to randomize so parallel agents don't all claim the same feature
     local feature_id=$(./scripts/safe_bd_json.sh ready --json | jq -r '[.[] | select(.status == "open")][].id' | shuf | head -1)
 
@@ -89,7 +89,7 @@ claim_feature() {
     fi
 
     # Try to claim it
-    bd update "$feature_id" --status=in_progress 2>/dev/null
+    beads_client update "$feature_id" --status=in_progress 2>/dev/null
     local update_status=$?
 
     if [ $update_status -eq 0 ]; then
@@ -145,7 +145,7 @@ git checkout -b "$BRANCH"
 echo "Claimed $FEATURE_ID, working on branch $BRANCH"
 ```
 
-**NOTE**: The container manager handles git pull/push and bd sync. Focus on implementing the feature.
+**NOTE**: The container manager handles git pull/push and beads_client sync. Focus on implementing the feature.
 
 ### STEP 2: INSTALL DEPENDENCIES + START SERVERS
 
@@ -179,7 +179,7 @@ chmod +x init.sh 2>/dev/null && ./init.sh || echo "No init.sh found"
 
 1. **View your claimed feature details:**
    ```bash
-   bd show "$FEATURE_ID"
+   beads_client show "$FEATURE_ID"
    ```
 
 2. **Run gap analysis for this feature:**
@@ -193,7 +193,7 @@ chmod +x init.sh 2>/dev/null && ./init.sh || echo "No init.sh found"
    cat > IMPLEMENTATION_PLAN.md << 'EOF'
    # Implementation Plan
 
-   ## Current Feature: [Feature Title from bd ready]
+   ## Current Feature: [Feature Title from beads_client ready]
    Feature ID: [beads-xxx]
 
    ### Gap Analysis
@@ -281,7 +281,7 @@ npm test -- --passWithNoTests 2>/dev/null || echo "No tests configured"
 **ONLY after validation passes:**
 ```bash
 FEATURE_TITLE=$(./scripts/safe_bd_json.sh show "$FEATURE_ID" --json | jq -r '.[0].title')
-bd close "$FEATURE_ID"
+beads_client close "$FEATURE_ID"
 git add . && git commit -m "Implement: $FEATURE_TITLE"
 ```
 
@@ -297,7 +297,7 @@ CLOSED_FEATURES=$(./scripts/safe_bd_json.sh list --status=closed --json | jq -r 
 
 for feature_id in $CLOSED_FEATURES; do
     echo "Verifying: $feature_id"
-    bd show "$feature_id"
+    beads_client show "$feature_id"
     # Quick functional check - does it still work?
     # If broken, note it but do NOT change status
 done
@@ -396,13 +396,13 @@ The next session will:
 
 1. **READ ARTIFACTS FIRST** - Always read AGENTS.md and IMPLEMENTATION_PLAN.md before starting
 2. **PLAN BEFORE CODING** - Create IMPLEMENTATION_PLAN.md with gap analysis + task breakdown
-3. **MARK IN_PROGRESS** - Run `bd update <id> --status=in_progress` BEFORE writing any code
+3. **MARK IN_PROGRESS** - Run `beads_client update <id> --status=in_progress` BEFORE writing any code
 4. **VALIDATE BEFORE CLOSE** - Lint/typecheck MUST pass before closing a feature
 5. **UPDATE ARTIFACTS** - Log discoveries to AGENTS.md, archive plans to IMPLEMENTATION_HISTORY.md
 6. **ONLY CLOSE WHAT YOU IMPLEMENT** - Never close a feature unless you implemented it
 7. **VERIFY ONLY CLOSED FEATURES** - During verification, only check features with status=closed
 8. **LIMIT VERIFICATION** - Max 3 features, max 5 minutes, only AFTER implementing
-9. **SUPPRESS BD OUTPUT** - Always suppress bd verbose output when capturing JSON (bd outputs status messages to stdout which breaks JSON parsing). Use the `./scripts/safe_bd_json.sh` and `./scripts/safe_bd_sync.sh` helpers defined above, or use `>/dev/null 2>&1` for sync operations.
+9. **USE HELPER SCRIPTS** - Use `./scripts/safe_bd_json.sh` and `./scripts/safe_bd_sync.sh` helpers for clean JSON output and syncing.
 
 ## TEST-DRIVEN MINDSET
 
@@ -440,16 +440,16 @@ The system will automatically recover git state on next startup if needed.
 ## BEADS COMMANDS
 
 ```bash
-bd ready                              # Get next feature
-bd update <id> --status=in_progress   # Claim feature (REQUIRED before coding)
-bd close <id>                         # Mark complete
-bd stats                              # Check progress
-bd sync                               # Sync at session end
+beads_client ready                              # Get available features
+beads_client update <id> --status=in_progress   # Claim feature (REQUIRED before coding)
+beads_client close <id>                         # Mark complete
+beads_client stats                              # Check progress
+beads_client sync                               # Sync at session end
 
 # IMPORTANT: When capturing JSON output, use the safe helpers:
-./scripts/safe_bd_json.sh ready --json             # Returns clean JSON (output suppressed)
-./scripts/safe_bd_json.sh show <id> --json         # Returns clean JSON (output suppressed)
-./scripts/safe_bd_sync.sh                          # Syncs without verbose output (stdout suppressed)
+./scripts/safe_bd_json.sh ready             # Returns clean JSON (output suppressed)
+./scripts/safe_bd_json.sh show <id>         # Returns clean JSON (output suppressed)
+./scripts/safe_bd_sync.sh                   # Syncs (stdout suppressed)
 ```
 
 ---

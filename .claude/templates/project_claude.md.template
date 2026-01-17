@@ -10,15 +10,15 @@ This project uses **beads** for feature/issue tracking and **Ralph artifacts** f
 
 ```
 1. READ ARTIFACTS        → cat AGENTS.md; cat IMPLEMENTATION_PLAN.md
-2. GET FEATURE           → bd ready
-3. CLAIM IT              → bd update <id> --status=in_progress
+2. GET FEATURE           → beads_client ready
+3. CLAIM IT              → beads_client update <id> --status=in_progress
 4. GAP ANALYSIS          → What exists vs what's needed?
 5. PLAN                  → Create/update IMPLEMENTATION_PLAN.md
 6. IMPLEMENT             → Follow the plan
 7. VALIDATE              → npm run lint && npm run typecheck (MUST PASS)
-8. CLOSE                 → bd close <id>
+8. CLOSE                 → beads_client close <id>
 9. UPDATE ARTIFACTS      → Archive plan, update discoveries
-10. COMMIT + EXIT        → git commit && bd sync
+10. COMMIT + EXIT        → git commit && beads_client sync
 ```
 
 **Skipping `--status=in_progress` breaks the UI monitoring. NEVER skip it.**
@@ -65,17 +65,17 @@ This file is **overwritten for each feature** and archived to IMPLEMENTATION_HIS
 
 1. Check what's ready to work on:
    ```bash
-   bd ready
+   beads_client ready
    ```
 
 2. Pick a feature and view details:
    ```bash
-   bd show <feature-id>
+   beads_client show <feature-id>
    ```
 
 3. **REQUIRED: Mark the feature as in_progress BEFORE starting any work:**
    ```bash
-   bd update <feature-id> --status=in_progress
+   beads_client update <feature-id> --status=in_progress
    ```
    This step is MANDATORY. It allows the UI to show what you're currently working on.
 
@@ -97,38 +97,38 @@ npm run lint
 npm run typecheck
 
 # Only after validation passes:
-bd close <feature-id>
+beads_client close <feature-id>
 ```
 
 **If validation fails, FIX THE ISSUES before closing.**
 
 Check overall progress:
 ```bash
-bd stats
+beads_client stats
 ```
 
 ### If Blocked
 
 If you encounter a blocker:
 ```bash
-bd update <feature-id> --status=blocked
-bd comments <feature-id> add "Blocked because: <reason>"
+beads_client update <feature-id> --status=blocked
+beads_client comments <feature-id> --add "Blocked because: <reason>"
 ```
 
-Then move to the next available feature with `bd ready`.
+Then move to the next available feature with `beads_client ready`.
 
 ## Beads Quick Reference
 
 | Command | Description |
 |---------|-------------|
-| `bd ready` | List features ready to work on |
-| `bd show <id>` | View feature details |
-| `bd list --status=open` | List all open features |
-| `bd list --status=in_progress` | List features being worked on |
-| `bd update <id> --status=in_progress` | Claim a feature |
-| `bd close <id>` | Mark feature as complete |
-| `bd stats` | Show progress statistics |
-| `bd comments <id> add "..."` | Add a comment to a feature |
+| `beads_client ready` | List features ready to work on |
+| `beads_client show <id>` | View feature details |
+| `beads_client list --status=open` | List all open features |
+| `beads_client list --status=in_progress` | List features being worked on |
+| `beads_client update <id> --status=in_progress` | Claim a feature |
+| `beads_client close <id>` | Mark feature as complete |
+| `beads_client stats` | Show progress statistics |
+| `beads_client comments <id> --add "..."` | Add a comment to a feature |
 
 ## Project Guidelines
 

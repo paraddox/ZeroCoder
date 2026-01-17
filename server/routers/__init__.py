@@ -7,6 +7,7 @@ FastAPI routers for different API endpoints.
 
 from .agent import router as agent_router
 from .assistant_chat import router as assistant_chat_router
+from .beads_api import router as beads_api_router
 from .features import router as features_router
 from .projects import router as projects_router
 from .spec_creation import router as spec_creation_router
@@ -17,4 +18,5 @@ __all__ = [
     "agent_router",
     "spec_creation_router",
     "assistant_chat_router",
+    "beads_api_router",
 ]

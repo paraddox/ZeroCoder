@@ -19,10 +19,10 @@ Quick setup to understand current state:
 
 ```bash
 # Check current progress
-bd stats
+beads_client stats
 
 # Get all closed issues (check timestamps to find recent ones)
-bd list --status=closed
+beads_client list --status=closed
 
 # Understand the project
 cat CLAUDE.md 2>/dev/null || cat README.md 2>/dev/null
@@ -68,7 +68,7 @@ You are a verification subagent checking recently closed issues.
 
 ### Task: Verify Implementations Are Real
 For each issue in your list:
-1. Read the issue description with `bd show <id>`
+1. Read the issue description with `beads_client show <id>`
 2. Search the codebase for the actual implementation
 3. Check for these RED FLAGS that indicate incomplete work:
    - Strings: "coming soon", "TODO", "FIXME", "placeholder", "not implemented", "stub"
@@ -120,10 +120,10 @@ Reopen the bead with detailed reason:
 
 ```bash
 # First reopen the bead
-bd reopen <bead_id>
+beads_client reopen <bead_id>
 
 # Then add a comment with details
-bd comments <bead_id> --add "OVERSEER VERIFICATION FAILED
+beads_client comments <bead_id> --add "OVERSEER VERIFICATION FAILED
 
 Issue: Implementation is incomplete/placeholder
 
@@ -143,10 +143,10 @@ After processing all findings:
 
 ```bash
 # Show updated stats
-bd stats
+beads_client stats
 
 # List any reopened issues
-bd list --status=open
+beads_client list --status=open
 ```
 
 ### Exit Behavior
@@ -199,10 +199,10 @@ bd list --status=open
 ```
 [Agent checks stats and recent issues]
 
-bd stats
+beads_client stats
 # Shows: 10 closed, 0 open
 
-bd list --status=closed
+beads_client list --status=closed
 # Found 6 issues closed in past 4 days
 
 Dividing into 2 batches:

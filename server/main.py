@@ -29,6 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from .routers import (
     agent_router,
     assistant_chat_router,
+    beads_api_router,
     features_router,
     projects_router,
     spec_creation_router,
@@ -224,6 +225,7 @@ app.include_router(features_router)
 app.include_router(agent_router)
 app.include_router(spec_creation_router)
 app.include_router(assistant_chat_router)
+app.include_router(beads_api_router)
 
 
 # ============================================================================

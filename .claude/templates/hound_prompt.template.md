@@ -26,7 +26,7 @@ Quick setup to understand current state:
 
 ```bash
 # Check current progress
-bd stats
+beads_client stats
 
 # Read operational guide for project context
 cat AGENTS.md 2>/dev/null || echo "WARNING: AGENTS.md missing!"
@@ -72,7 +72,7 @@ You are a code review subagent checking implementations for completed tasks.
 
 1. **Read the task details:**
    ```bash
-   bd show <task_id>
+   beads_client show <task_id>
    ```
 
 2. **Search for the implementation:**
@@ -100,7 +100,7 @@ You are a code review subagent checking implementations for completed tasks.
   "reviewed_tasks": [
     {
       "task_id": "beads-123",
-      "task_title": "Title from bd show",
+      "task_title": "Title from beads_client show",
       "status": "PASS" | "FAIL",
       "implementation_files": ["src/...", "api/..."],
       "reason": "Only if FAIL - specific evidence with file:line",
@@ -121,7 +121,7 @@ After all subagents complete, collect their JSON results and take action on FAIL
 1. **Add a detailed comment:**
 
 ```bash
-bd comments <task_id> --add "HOUND REVIEW FAILED
+beads_client comments <task_id> --add "HOUND REVIEW FAILED
 
 Issue: [Brief description of the problem]
 
@@ -138,7 +138,7 @@ This task was marked closed but the implementation is incomplete."
 2. **Reopen the task:**
 
 ```bash
-bd reopen <task_id>
+beads_client reopen <task_id>
 ```
 
 ---
@@ -149,10 +149,10 @@ After processing all findings:
 
 ```bash
 # Show updated stats
-bd stats
+beads_client stats
 
 # List any reopened issues
-bd list --status=open
+beads_client list --status=open
 ```
 
 ### Report Summary

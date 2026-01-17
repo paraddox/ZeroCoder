@@ -470,8 +470,8 @@ If not, copy from `.claude/templates/initializer_prompt.template.md` first, then
 
 **Example edit:**
 ```
-Before: **CRITICAL:** You must create exactly **[FEATURE_COUNT]** features using the `bd create` command.
-After:  **CRITICAL:** You must create exactly **25** features using the `bd create` command.
+Before: **CRITICAL:** You must create exactly **[FEATURE_COUNT]** features using the `beads_client create` command.
+After:  **CRITICAL:** You must create exactly **25** features using the `beads_client create` command.
 ```
 
 **Verify the update:** After editing, read the file again to confirm the feature count appears correctly. If `[FEATURE_COUNT]` still appears in the file, the update failed and you must try again.

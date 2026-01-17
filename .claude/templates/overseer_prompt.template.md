@@ -19,10 +19,10 @@ Quick setup to understand current state:
 
 ```bash
 # Check current progress
-bd stats
+beads_client stats
 
 # Get all closed features
-bd list --status=closed
+beads_client list --status=closed
 
 # Read the app specification
 cat prompts/app_spec.txt
@@ -46,7 +46,7 @@ Before proceeding, verify these artifacts exist and are useful:
 
 **If AGENTS.md is missing or empty:** Create a bead to fix this:
 ```bash
-bd create --title="Create/Update AGENTS.md operational guide" --type=task --priority=0 --description="AGENTS.md is missing or incomplete. This file must contain:
+beads_client create --title="Create/Update AGENTS.md operational guide" --type=task --priority=0 --description="AGENTS.md is missing or incomplete. This file must contain:
 - Commands: lint, test, typecheck, build
 - Project structure
 - Code patterns
@@ -160,7 +160,7 @@ After all 5 subagents complete, collect their JSON results and take action:
 Create new bead issues:
 
 ```bash
-bd create --title="[Feature title]" \
+beads_client create --title="[Feature title]" \
           --type=feature \
           --priority=2 \
           --description="OVERSEER: This feature was in the app spec but had no corresponding bead issue.
@@ -177,10 +177,10 @@ Reopen the bead with detailed reason:
 
 ```bash
 # First reopen the bead
-bd reopen <bead_id>
+beads_client reopen <bead_id>
 
 # Then add a comment with details
-bd comments <bead_id> --add "OVERSEER VERIFICATION FAILED
+beads_client comments <bead_id> --add "OVERSEER VERIFICATION FAILED
 
 Issue: Implementation is incomplete/placeholder
 
@@ -200,10 +200,10 @@ After processing all findings:
 
 ```bash
 # Show updated stats
-bd stats
+beads_client stats
 
 # List any newly created or reopened issues
-bd list --status=open
+beads_client list --status=open
 ```
 
 ### Exit Behavior

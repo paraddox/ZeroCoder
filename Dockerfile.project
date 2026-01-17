@@ -101,7 +101,11 @@ COPY container_scripts/feature_status.py /app/feature_status.py
 COPY container_scripts/beads_commands.py /app/beads_commands.py
 COPY container_scripts/setup_repo.sh /app/setup_repo.sh
 COPY container_scripts/cleanup_session.sh /app/cleanup_session.sh
-RUN chmod +x /app/setup_repo.sh /app/cleanup_session.sh
+COPY container_scripts/beads_client.sh /app/beads_client.sh
+RUN chmod +x /app/setup_repo.sh /app/cleanup_session.sh /app/beads_client.sh
+
+# Create symlink for beads_client.sh so agents can call it easily
+RUN ln -s /app/beads_client.sh /usr/local/bin/beads_client
 
 # Configure git for container operations (for root, during build)
 RUN git config --global user.email "agent@zerocoder.local" \

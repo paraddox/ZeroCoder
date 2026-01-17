@@ -15,7 +15,7 @@ before proceeding.
 
 ## REQUIRED FEATURE COUNT
 
-**CRITICAL:** You must create exactly **[FEATURE_COUNT]** features using the `bd create` command.
+**CRITICAL:** You must create exactly **[FEATURE_COUNT]** features using the `beads_client create` command.
 
 This number was determined during spec creation and must be followed precisely. Do not create more or fewer features than specified.
 
@@ -23,7 +23,7 @@ This number was determined during spec creation and must be followed precisely. 
 
 ### FIRST TASK: Create Features
 
-Based on `prompts/app_spec.txt`, create features using the `bd create` command. Features are stored in the `.beads/` directory, which is the single source of truth for what needs to be built.
+Based on `prompts/app_spec.txt`, create features using the `beads_client create` command. Features are stored in the `.beads/` directory, which is the single source of truth for what needs to be built.
 
 **Note:** Beads is already initialized by the container setup script. Just create features.
 
@@ -31,10 +31,10 @@ Based on `prompts/app_spec.txt`, create features using the `bd create` command. 
 
 **Creating Features:**
 
-Use `bd create` for each feature. You can run multiple creates efficiently:
+Use `beads_client create` for each feature. You can run multiple creates efficiently:
 
 ```bash
-bd create --title="Feature name" --type=feature --priority=2 --description="Description of the feature and what it verifies
+beads_client create --title="Feature name" --type=feature --priority=2 --description="Description of the feature and what it verifies
 
 Steps:
 1. Navigate to relevant page
@@ -455,7 +455,7 @@ Features must include tests that **actively verify real data** and **detect mock
 
 **CRITICAL INSTRUCTION:**
 IT IS CATASTROPHIC TO REMOVE OR EDIT FEATURES IN FUTURE SESSIONS.
-Features can ONLY be marked as complete (via `bd close <feature-id>`).
+Features can ONLY be marked as complete (via `beads_client close <feature-id>`).
 Never remove features, never edit descriptions, never modify testing steps.
 This ensures no functionality is missed.
 
@@ -478,20 +478,20 @@ components mentioned in the spec.
 
 ### FOURTH TASK: Create Beads Helper Scripts
 
-Create helper scripts that coding agents will use for safe beads operations. These prevent JSON parsing errors from verbose bd output.
+Create helper scripts that coding agents will use for safe beads operations. These wrap the `beads_client` command for cleaner output.
 
 ```bash
 # Create scripts directory
 mkdir -p scripts
 
-# Create safe_bd_json.sh - safely captures JSON output from bd commands
+# Create safe_bd_json.sh - safely captures JSON output from beads_client commands
 cat > scripts/safe_bd_json.sh << 'SCRIPT'
 #!/bin/bash
-# Safe wrapper for bd commands that return JSON
-# Usage: ./scripts/safe_bd_json.sh <bd-command> [args...]
-# Example: ./scripts/safe_bd_json.sh ready --json
+# Safe wrapper for beads_client commands that return JSON
+# Usage: ./scripts/safe_bd_json.sh <command> [args...]
+# Example: ./scripts/safe_bd_json.sh ready
 
-output=$(bd "$@" 2>/dev/null)
+output=$(beads_client "$@" 2>/dev/null)
 exit_code=$?
 
 if [ $exit_code -ne 0 ]; then
@@ -508,18 +508,18 @@ fi
 SCRIPT
 chmod +x scripts/safe_bd_json.sh
 
-# Create safe_bd_sync.sh - syncs beads without verbose output
+# Create safe_bd_sync.sh - syncs beads via host API
 cat > scripts/safe_bd_sync.sh << 'SCRIPT'
 #!/bin/bash
-# Safe wrapper for bd sync that suppresses verbose output
+# Safe wrapper for beads sync
 # Usage: ./scripts/safe_bd_sync.sh
 
-bd sync >/dev/null 2>&1
+beads_client sync >/dev/null 2>&1
 SCRIPT
 chmod +x scripts/safe_bd_sync.sh
 ```
 
-These scripts are essential because `bd` outputs verbose status messages to stdout which breaks JSON parsing when agents try to capture output.
+These scripts wrap the `beads_client` command which calls the host API for beads operations.
 
 ### FIFTH TASK: Create AGENTS.md (Operational Guide)
 
@@ -595,7 +595,7 @@ Your role as the Initializer Agent is **COMPLETE** after the five tasks above:
 - Implement any features
 - Write application code
 - Fix or close any issues you created
-- Start working on `bd ready` items
+- Start working on `beads_client ready` items
 
 The **Coding Agent** (in subsequent sessions) will handle all feature implementation.
 Your job is to leave a clean, well-organized project scaffold with all features
@@ -606,14 +606,14 @@ properly defined in beads for the coding agent to work through.
 Before your context fills up:
 
 1. Verify all scaffolding is complete:
-   - `bd stats` shows the correct feature count
+   - `beads_client stats` shows the correct feature count
    - `init.sh` exists and is executable
    - Project structure matches the spec
    - `AGENTS.md` documents the setup
 2. Commit all scaffolding with descriptive messages
 3. Sync and push:
    ```bash
-   bd sync
+   beads_client sync
    git push origin main  # If remote is configured
    ```
 

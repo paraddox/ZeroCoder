@@ -1053,6 +1053,10 @@ class ContainerManager:
                 zhipu_key = os.getenv("ZHIPU_API_KEY")
                 if zhipu_key:
                     cmd.extend(["-e", f"ZHIPU_API_KEY={zhipu_key}"])
+                # Pass project name and host API URL for beads_client.sh
+                cmd.extend(["-e", f"PROJECT_NAME={self.project_name}"])
+                server_port = os.getenv("PORT", "8888")
+                cmd.extend(["-e", f"HOST_API_URL=http://host.docker.internal:{server_port}"])
                 # Sync timezone with host
                 if os.path.exists("/etc/localtime"):
                     cmd.extend(["-v", "/etc/localtime:/etc/localtime:ro"])
@@ -1968,6 +1972,10 @@ class ContainerManager:
                 zhipu_key = os.getenv("ZHIPU_API_KEY")
                 if zhipu_key:
                     cmd.extend(["-e", f"ZHIPU_API_KEY={zhipu_key}"])
+                # Pass project name and host API URL for beads_client.sh
+                cmd.extend(["-e", f"PROJECT_NAME={self.project_name}"])
+                server_port = os.getenv("PORT", "8888")
+                cmd.extend(["-e", f"HOST_API_URL=http://host.docker.internal:{server_port}"])
                 # Sync timezone with host
                 if os.path.exists("/etc/localtime"):
                     cmd.extend(["-v", "/etc/localtime:/etc/localtime:ro"])
