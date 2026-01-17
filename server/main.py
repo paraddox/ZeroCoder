@@ -39,6 +39,7 @@ from .services.assistant_chat_session import cleanup_all_sessions as cleanup_ass
 from .services.container_manager import (
     cleanup_all_containers,
     cleanup_idle_containers,
+    cleanup_stale_containers,
     restore_managers_from_registry,
     start_agent_health_monitor,
     start_hound_trigger_monitor,
@@ -113,6 +114,14 @@ async def lifespan(app: FastAPI):
             logger.info(f"Restored {restored} container managers from registry")
     except Exception as e:
         logger.warning(f"Failed to restore container managers: {e}")
+
+    # Clean up stale container DB entries (containers that no longer exist in Docker)
+    try:
+        cleaned = await cleanup_stale_containers()
+        if cleaned:
+            logger.info(f"Cleaned up {cleaned} stale container DB entries")
+    except Exception as e:
+        logger.warning(f"Failed to cleanup stale containers: {e}")
 
     # Initialize beads-sync for all registered projects
     try:

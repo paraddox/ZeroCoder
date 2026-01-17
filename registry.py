@@ -851,3 +851,27 @@ def delete_all_project_containers(project_name: str) -> int:
     with _get_session() as session:
         deleted = session.query(Container).filter(Container.project_name == project_name).delete()
     return deleted
+
+
+def list_all_containers() -> list[dict]:
+    """
+    List all containers across all projects as dicts.
+
+    Returns:
+        List of container info dicts.
+    """
+    _, SessionLocal = _get_engine()
+    session = SessionLocal()
+    try:
+        containers = session.query(Container).all()
+        return [
+            {
+                "project_name": c.project_name,
+                "container_number": c.container_number,
+                "container_type": c.container_type or "coding",
+                "status": c.status,
+            }
+            for c in containers
+        ]
+    finally:
+        session.close()
