@@ -189,7 +189,7 @@ class TestProjectsRouterClone:
             )
 
         assert success is False
-        assert "timeout" in message.lower()
+        assert "timed out" in message.lower()
 
 
 class TestProjectsRouterBeadsInit:
@@ -260,8 +260,12 @@ class TestProjectsRouterStats:
         project_dir = tmp_path / "project"
         project_dir.mkdir()
 
-        with patch("server.routers.projects._count_passing_tests") as mock_count:
+        # Need to patch the source module since _count_passing_tests is lazily imported
+        with patch("progress.count_passing_tests") as mock_count:
             mock_count.return_value = (5, 2, 10)
+            # Also force re-initialization of the import
+            import server.routers.projects as proj_module
+            proj_module._imports_initialized = False
 
             stats = get_project_stats(project_dir)
 
@@ -539,21 +543,18 @@ class TestAgentRouterStatus:
         from server.routers.agent import get_agent_status
 
         mock_manager = MagicMock()
-        mock_manager.status = "running"
-        mock_manager.container_name = "zerocoder-test-1"
         mock_manager.started_at = datetime.now()
-        mock_manager.get_idle_seconds.return_value = 30
-        mock_manager.is_agent_running.return_value = True
-        mock_manager._graceful_stop_requested = False
-        mock_manager._current_agent_type = "coder"
-        mock_manager._is_opencode_model.return_value = False
-        mock_manager._sync_status = MagicMock()
+        # get_status_dict must return a proper dict, not MagicMock
+        mock_manager.get_status_dict.return_value = {
+            "status": "running",
+            "container_name": "zerocoder-test-1",
+            "idle_seconds": 30,
+            "agent_running": True,
+            "graceful_stop_requested": False,
+        }
 
-        with patch("server.routers.agent._get_registry_functions") as mock_reg:
-            mock_reg.return_value = (
-                MagicMock(return_value=Path("/tmp/project")),
-                MagicMock(return_value="https://github.com/user/repo.git"),
-            )
+        with patch("server.routers.agent.validate_project_name") as mock_validate:
+            mock_validate.return_value = "test-project"
             with patch("server.routers.agent.get_existing_container_manager") as mock_get:
                 mock_get.return_value = mock_manager
 
@@ -570,30 +571,35 @@ class TestAgentRouterControl:
     @pytest.mark.asyncio
     async def test_start_agent_creates_container(self):
         """Test that starting agent creates container if needed."""
-        from server.routers.agent import start_all_containers
+        from server.routers.agent import start_agent
+        from server.schemas import AgentStartRequest
 
         mock_manager = MagicMock()
         mock_manager.start = AsyncMock(return_value=(True, "Started"))
-        mock_manager._is_init_container = True
-        mock_manager.is_agent_running.return_value = True
         mock_manager.status = "running"
-        mock_manager._graceful_stop_requested = False
+        mock_manager.get_status_dict.return_value = {
+            "status": "running",
+            "container_name": "zerocoder-test-1",
+            "idle_seconds": 0,
+            "agent_running": True,
+            "graceful_stop_requested": False,
+        }
 
-        with patch("server.routers.agent._get_registry_functions") as mock_reg:
-            mock_reg.return_value = (
-                MagicMock(return_value=Path("/tmp/project")),
-                MagicMock(return_value="https://github.com/user/repo.git"),
-                MagicMock(return_value={"target_container_count": 1, "is_new": False}),
-                MagicMock(return_value=False),  # is_new
-            )
-            with patch("server.routers.agent.get_container_manager") as mock_get:
-                mock_get.return_value = mock_manager
-                with patch("server.routers.agent.has_project_prompts") as mock_prompts:
-                    mock_prompts.return_value = True
-                    with patch("server.routers.agent.has_open_features") as mock_features:
-                        mock_features.return_value = True
+        with patch("server.routers.agent.check_docker_available") as mock_docker:
+            mock_docker.return_value = True
+            with patch("server.routers.agent.check_image_exists") as mock_image:
+                mock_image.return_value = True
+                with patch("server.routers.agent.get_project_container") as mock_get:
+                    mock_get.return_value = mock_manager
+                    with patch("server.routers.agent._get_agent_prompt") as mock_prompt:
+                        mock_prompt.return_value = "Test prompt"
+                        with patch("server.routers.agent._get_project_path") as mock_path:
+                            mock_path.return_value = Path("/tmp/project")
 
-                        response = await start_all_containers("test-project")
+                            response = await start_agent(
+                                "test-project",
+                                AgentStartRequest()
+                            )
 
         assert response.success is True
 
@@ -601,20 +607,17 @@ class TestAgentRouterControl:
     @pytest.mark.asyncio
     async def test_stop_agent_stops_all_containers(self):
         """Test that stopping agent stops all containers."""
-        from server.routers.agent import stop_all_containers
+        from server.routers.agent import stop_agent
 
         mock_manager = MagicMock()
+        mock_manager.status = "stopped"
         mock_manager.stop = AsyncMock(return_value=(True, "Stopped"))
 
-        with patch("server.routers.agent._get_registry_functions") as mock_reg:
-            mock_reg.return_value = (
-                MagicMock(return_value=Path("/tmp/project")),
-                MagicMock(return_value="https://github.com/user/repo.git"),
-            )
-            with patch("server.routers.agent.get_all_container_managers") as mock_all:
-                mock_all.return_value = [mock_manager]
-
-                response = await stop_all_containers("test-project")
+        with patch("server.routers.agent.validate_project_name") as mock_validate:
+            mock_validate.return_value = "test-project"
+            # Mock _managers with an existing manager
+            with patch("server.services.container_manager._managers", {"test-project": {1: mock_manager}}):
+                response = await stop_agent("test-project")
 
         assert response.success is True
         mock_manager.stop.assert_called_once()
@@ -626,20 +629,21 @@ class TestAgentRouterControl:
         from server.routers.agent import graceful_stop_agent
 
         mock_manager = MagicMock()
+        mock_manager.status = "running"
         mock_manager.graceful_stop = AsyncMock(return_value=(True, "Stopping gracefully"))
         mock_manager._graceful_stop_requested = False
 
-        with patch("server.routers.agent._get_registry_functions") as mock_reg:
-            mock_reg.return_value = (
-                MagicMock(return_value=Path("/tmp/project")),
-                MagicMock(return_value="https://github.com/user/repo.git"),
-            )
-            with patch("server.routers.agent.get_all_container_managers") as mock_all:
-                mock_all.return_value = [mock_manager]
+        with patch("server.routers.agent.validate_project_name") as mock_validate:
+            mock_validate.return_value = "test-project"
+            # Mock _managers with an existing manager
+            with patch("server.services.container_manager._managers", {"test-project": {1: mock_manager}}):
+                with patch("server.routers.agent.websocket_manager") as mock_ws:
+                    mock_ws.broadcast_to_project = AsyncMock()
 
-                response = await graceful_stop_agent("test-project")
+                    response = await graceful_stop_agent("test-project")
 
         assert response.success is True
+        mock_manager.graceful_stop.assert_called_once()
 
 
 # =============================================================================
@@ -673,9 +677,9 @@ class TestWebSocketConnection:
         mock_ws = AsyncMock()
 
         await manager.connect(mock_ws, "test-project")
-        manager.disconnect(mock_ws, "test-project")
+        await manager.disconnect(mock_ws, "test-project")
 
-        assert mock_ws not in manager.active_connections.get("test-project", [])
+        assert mock_ws not in manager.active_connections.get("test-project", set())
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -935,32 +939,39 @@ class TestAPIEndpoints:
     def test_client(self):
         """Create a FastAPI test client."""
         from fastapi.testclient import TestClient
-        from server.main import app
+        import os
+
+        # Allow external access for testing
+        os.environ["ALLOW_EXTERNAL_ACCESS"] = "true"
+
+        # Re-import app after setting env var
+        import importlib
+        import server.main
+        importlib.reload(server.main)
 
         with patch("signal.signal", return_value=None):
-            with TestClient(app, raise_server_exceptions=False) as client:
+            with TestClient(server.main.app, raise_server_exceptions=False) as client:
                 yield client
+
+        # Clean up
+        os.environ.pop("ALLOW_EXTERNAL_ACCESS", None)
 
     @pytest.mark.unit
     def test_health_check_endpoint(self, test_client):
-        """Test health check endpoint returns ok."""
+        """Test health check endpoint returns healthy."""
         response = test_client.get("/api/health")
 
         assert response.status_code == 200
-        assert response.json()["status"] == "ok"
+        assert response.json()["status"] == "healthy"
 
     @pytest.mark.unit
     def test_projects_list_endpoint(self, test_client):
         """Test projects list endpoint."""
-        with patch("server.routers.projects._init_imports"):
-            with patch("server.routers.projects._get_registry_functions") as mock_reg:
-                mock_reg.return_value = (
-                    None, None, None, None, None, None,
-                    MagicMock(return_value={}),  # list_registered_projects
-                    None, None, None, None
-                )
+        # Mock the registry module function directly
+        with patch("registry.list_registered_projects") as mock_list:
+            mock_list.return_value = {}  # Empty dict of projects
 
-                response = test_client.get("/api/projects")
+            response = test_client.get("/api/projects")
 
         assert response.status_code == 200
         assert isinstance(response.json(), list)

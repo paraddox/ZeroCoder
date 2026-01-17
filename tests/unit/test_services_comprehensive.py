@@ -528,7 +528,8 @@ class TestContainerBeadsClient:
         client = ContainerBeadsClient("test-project")
 
         with patch("server.services.container_beads.send_beads_command") as mock_cmd:
-            mock_cmd.return_value = {"success": True, "id": "feat-1"}
+            # create() expects {"success": True, "feature": {"id": "..."}}
+            mock_cmd.return_value = {"success": True, "feature": {"id": "feat-1"}}
 
             result = await client.create(
                 name="Test Feature",
@@ -538,7 +539,8 @@ class TestContainerBeadsClient:
                 priority=1
             )
 
-        assert result == {"success": True, "id": "feat-1"}
+        # create() returns str | None (the feature ID)
+        assert result == "feat-1"
         mock_cmd.assert_called_once()
 
     @pytest.mark.unit
@@ -549,12 +551,16 @@ class TestContainerBeadsClient:
 
         client = ContainerBeadsClient("test-project")
 
+        mock_feature = {"id": "feat-1", "name": "Updated Name", "priority": 2}
+
         with patch("server.services.container_beads.send_beads_command") as mock_cmd:
-            mock_cmd.return_value = {"success": True}
+            mock_cmd.return_value = {"success": True, "feature": mock_feature}
 
-            result = await client.update("feat-1", title="Updated Title", priority=2)
+            # update() takes name= not title=
+            result = await client.update("feat-1", name="Updated Name", priority=2)
 
-        assert result == {"success": True}
+        # update() returns dict | None (the feature)
+        assert result == mock_feature
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -569,7 +575,8 @@ class TestContainerBeadsClient:
 
             result = await client.delete("feat-1")
 
-        assert result == {"success": True}
+        # delete() returns bool
+        assert result is True
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -584,6 +591,7 @@ class TestContainerBeadsClient:
 
             result = await client.skip("feat-1")
 
+        # skip() returns dict | None with success key
         assert result == {"success": True}
 
     @pytest.mark.unit
@@ -594,12 +602,15 @@ class TestContainerBeadsClient:
 
         client = ContainerBeadsClient("test-project")
 
+        mock_feature = {"id": "feat-1", "status": "open"}
+
         with patch("server.services.container_beads.send_beads_command") as mock_cmd:
-            mock_cmd.return_value = {"success": True}
+            mock_cmd.return_value = {"success": True, "feature": mock_feature}
 
             result = await client.reopen("feat-1")
 
-        assert result == {"success": True}
+        # reopen() returns dict | None (the feature)
+        assert result == mock_feature
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -615,11 +626,13 @@ class TestContainerBeadsClient:
         ]
 
         with patch("server.services.container_beads.send_beads_command") as mock_cmd:
-            mock_cmd.return_value = {"success": True, "tasks": mock_features}
+            # list_all() expects {"success": True, "features": [...]}
+            mock_cmd.return_value = {"success": True, "features": mock_features}
 
             result = await client.list_all()
 
-        assert result["tasks"] == mock_features
+        # list_all() returns list[dict] directly
+        assert result == mock_features
 
 
 class TestSendBeadsCommand:

@@ -121,8 +121,8 @@ class TestMessageOperations:
             messages = get_messages(project_dir, conv.id)
 
         assert len(messages) == 1
-        assert messages[0].role == "user"
-        assert messages[0].content == "Hello!"
+        assert messages[0]["role"] == "user"
+        assert messages[0]["content"] == "Hello!"
 
     @pytest.mark.unit
     def test_add_message_assistant(self, tmp_path):
@@ -143,8 +143,8 @@ class TestMessageOperations:
             messages = get_messages(project_dir, conv.id)
 
         assert len(messages) == 1
-        assert messages[0].role == "assistant"
-        assert messages[0].content == "Hi there!"
+        assert messages[0]["role"] == "assistant"
+        assert messages[0]["content"] == "Hi there!"
 
     @pytest.mark.unit
     def test_message_ordering(self, tmp_path):
@@ -167,9 +167,9 @@ class TestMessageOperations:
             messages = get_messages(project_dir, conv.id)
 
         assert len(messages) == 3
-        assert messages[0].content == "Message 1"
-        assert messages[1].content == "Message 2"
-        assert messages[2].content == "Message 3"
+        assert messages[0]["content"] == "Message 1"
+        assert messages[1]["content"] == "Message 2"
+        assert messages[2]["content"] == "Message 3"
 
     @pytest.mark.unit
     def test_get_messages_empty(self, tmp_path):
@@ -224,22 +224,26 @@ class TestDatabasePath:
 
         create_conversation(project_dir, "test-project")
 
-        db_path = project_dir / ".assistant" / "conversations.db"
+        # Database is stored directly in project_dir as assistant.db
+        db_path = project_dir / "assistant.db"
         assert db_path.exists()
 
     @pytest.mark.unit
     def test_database_directory_created(self, tmp_path):
-        """Test .assistant directory is created if not exists."""
+        """Test database file is created."""
         from server.services.assistant_database import create_conversation
 
         project_dir = tmp_path / "test-project"
         project_dir.mkdir()
 
-        assert not (project_dir / ".assistant").exists()
+        # Database file should not exist before first conversation
+        db_path = project_dir / "assistant.db"
+        assert not db_path.exists()
 
         create_conversation(project_dir, "test-project")
 
-        assert (project_dir / ".assistant").exists()
+        # After creating conversation, db file should exist
+        assert db_path.exists()
 
 
 # =============================================================================
@@ -269,8 +273,9 @@ class TestDatabaseIsolation:
 
         assert len(list1) == 1
         assert len(list2) == 1
-        assert list1[0].project_name == "project1"
-        assert list2[0].project_name == "project2"
+        # list_conversations returns dicts, not objects
+        assert list1[0]["project_name"] == "project1"
+        assert list2[0]["project_name"] == "project2"
 
     @pytest.mark.unit
     def test_messages_isolated_by_conversation(self, tmp_path):
@@ -293,5 +298,6 @@ class TestDatabaseIsolation:
 
         assert len(messages1) == 1
         assert len(messages2) == 1
-        assert messages1[0].content == "Conv 1 message"
-        assert messages2[0].content == "Conv 2 message"
+        # get_messages returns dicts, not objects
+        assert messages1[0]["content"] == "Conv 1 message"
+        assert messages2[0]["content"] == "Conv 2 message"

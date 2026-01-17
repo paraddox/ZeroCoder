@@ -349,16 +349,22 @@ class TestAgentStopEndpoint:
         """Test stop when no container exists."""
         from server.routers.agent import stop_agent
 
+        mock_manager = MagicMock()
+        mock_manager.status = "stopped"
+        mock_manager.stop = AsyncMock(return_value=(True, "Container stopped"))
+
         with patch("server.routers.agent.validate_project_name") as mock_validate:
             mock_validate.return_value = "test-project"
 
-            with patch("server.routers.agent.get_existing_container_manager") as mock_get:
-                mock_get.return_value = None
+            # Mock _managers to be empty, triggering the fallback path
+            with patch("server.services.container_manager._managers", {}):
+                with patch("server.routers.agent.get_project_container") as mock_get_container:
+                    mock_get_container.return_value = mock_manager
 
-                result = await stop_agent("test-project")
+                    result = await stop_agent("test-project")
 
-                assert result.success is True
-                assert "not running" in result.message.lower() or result.status == "stopped"
+                    assert result.success is True
+                    mock_manager.stop.assert_called_once()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -367,14 +373,14 @@ class TestAgentStopEndpoint:
         from server.routers.agent import stop_agent
 
         mock_manager = MagicMock()
+        mock_manager.status = "stopped"
         mock_manager.stop = AsyncMock(return_value=(True, "Container stopped"))
 
         with patch("server.routers.agent.validate_project_name") as mock_validate:
             mock_validate.return_value = "test-project"
 
-            with patch("server.routers.agent.get_existing_container_manager") as mock_get:
-                mock_get.return_value = mock_manager
-
+            # Mock _managers with an existing manager
+            with patch("server.services.container_manager._managers", {"test-project": {1: mock_manager}}):
                 result = await stop_agent("test-project")
 
                 assert result.success is True
@@ -387,18 +393,28 @@ class TestGracefulStopEndpoint:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_graceful_stop_no_container(self):
-        """Test graceful stop when no container exists."""
+        """Test graceful stop when no container exists (fallback path)."""
         from server.routers.agent import graceful_stop_agent
+
+        mock_manager = MagicMock()
+        mock_manager.status = "stopped"
+        mock_manager.graceful_stop = AsyncMock(return_value=(True, "Graceful stop requested"))
 
         with patch("server.routers.agent.validate_project_name") as mock_validate:
             mock_validate.return_value = "test-project"
 
-            with patch("server.routers.agent.get_existing_container_manager") as mock_get:
-                mock_get.return_value = None
+            # Mock _managers to be empty, triggering the fallback path
+            with patch("server.services.container_manager._managers", {}):
+                with patch("server.routers.agent.get_project_container") as mock_get_container:
+                    mock_get_container.return_value = mock_manager
 
-                result = await graceful_stop_agent("test-project")
+                    with patch("server.routers.agent.websocket_manager") as mock_ws:
+                        mock_ws.broadcast_to_project = AsyncMock()
 
-                assert result.success is True
+                        result = await graceful_stop_agent("test-project")
+
+                        assert result.success is True
+                        mock_manager.graceful_stop.assert_called_once()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -407,18 +423,21 @@ class TestGracefulStopEndpoint:
         from server.routers.agent import graceful_stop_agent
 
         mock_manager = MagicMock()
+        mock_manager.status = "running"
         mock_manager.graceful_stop = AsyncMock(return_value=(True, "Graceful stop requested"))
 
         with patch("server.routers.agent.validate_project_name") as mock_validate:
             mock_validate.return_value = "test-project"
 
-            with patch("server.routers.agent.get_existing_container_manager") as mock_get:
-                mock_get.return_value = mock_manager
+            # Mock _managers with an existing manager
+            with patch("server.services.container_manager._managers", {"test-project": {1: mock_manager}}):
+                with patch("server.routers.agent.websocket_manager") as mock_ws:
+                    mock_ws.broadcast_to_project = AsyncMock()
 
-                result = await graceful_stop_agent("test-project")
+                    result = await graceful_stop_agent("test-project")
 
-                assert result.success is True
-                mock_manager.graceful_stop.assert_called_once()
+                    assert result.success is True
+                    mock_manager.graceful_stop.assert_called_once()
 
 
 class TestContainerNumberValidation:

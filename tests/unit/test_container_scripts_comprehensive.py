@@ -81,7 +81,7 @@ class TestPriorityConversion:
         from container_scripts.beads_commands import beads_to_priority
 
         result = beads_to_priority("invalid")
-        assert result == 2  # Default priority
+        assert result == 4  # Default priority (P4 = backlog)
 
 
 # =============================================================================
@@ -143,50 +143,54 @@ class TestRunBd:
         """Test successful bd command execution."""
         from container_scripts.beads_commands import run_bd
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=0,
-                stdout='{"status": "ok"}',
-                stderr=""
-            )
+        mock_result = MagicMock(
+            returncode=0,
+            stdout='{"status": "ok"}',
+            stderr=""
+        )
 
+        with patch("container_scripts.beads_commands.subprocess.run", return_value=mock_result):
             result = run_bd(["list", "--json"])
 
-        assert result == {"status": "ok"}
+        # run_bd returns CompletedProcess, not parsed JSON
+        assert result.returncode == 0
+        assert result.stdout == '{"status": "ok"}'
 
     @pytest.mark.unit
     def test_run_bd_failure(self):
-        """Test bd command failure."""
+        """Test bd command failure with check=True."""
         from container_scripts.beads_commands import run_bd
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
+        # When check=True is passed, subprocess.run raises CalledProcessError
+        with patch("container_scripts.beads_commands.subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.CalledProcessError(
                 returncode=1,
-                stdout="",
+                cmd=["bd", "invalid"],
                 stderr="Error: command failed"
             )
 
-            with pytest.raises(Exception) as exc_info:
-                run_bd(["invalid"])
+            with pytest.raises(subprocess.CalledProcessError) as exc_info:
+                run_bd(["invalid"], check=True)
 
-            assert "failed" in str(exc_info.value).lower() or "error" in str(exc_info.value).lower()
+            assert exc_info.value.returncode == 1
 
     @pytest.mark.unit
     def test_run_bd_empty_output(self):
         """Test bd command with empty output."""
         from container_scripts.beads_commands import run_bd
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=0,
-                stdout="",
-                stderr=""
-            )
+        mock_result = MagicMock(
+            returncode=0,
+            stdout="",
+            stderr=""
+        )
 
+        with patch("container_scripts.beads_commands.subprocess.run", return_value=mock_result):
             result = run_bd(["sync"])
 
-        # Empty output should return empty dict or None
-        assert result is None or result == {}
+        # run_bd returns CompletedProcess with empty stdout
+        assert result.returncode == 0
+        assert result.stdout == ""
 
     @pytest.mark.unit
     def test_run_bd_invalid_json(self):
@@ -216,16 +220,21 @@ class TestListFeatures:
     """Tests for listing features."""
 
     @pytest.mark.unit
-    def test_handle_list_action(self):
+    def test_handle_list_action(self, tmp_path):
         """Test handling list action."""
         from container_scripts.beads_commands import handle_action
 
-        with patch("container_scripts.beads_commands.run_bd") as mock_bd:
-            mock_bd.return_value = [
-                {"id": "feat-1", "title": "Feature 1", "status": "open", "priority": "P1"},
-                {"id": "feat-2", "title": "Feature 2", "status": "closed", "priority": "P2"},
-            ]
+        # Create a mock .beads directory with issues.jsonl
+        beads_dir = tmp_path / ".beads"
+        beads_dir.mkdir()
+        jsonl_file = beads_dir / "issues.jsonl"
+        jsonl_file.write_text(
+            '{"id": "feat-1", "title": "Feature 1", "status": "open", "priority": "P1", "labels": []}\n'
+            '{"id": "feat-2", "title": "Feature 2", "status": "closed", "priority": "P2", "labels": []}\n'
+        )
 
+        # Patch BEADS_DIR to use our temp directory
+        with patch("container_scripts.beads_commands.BEADS_DIR", beads_dir):
             result = handle_action({"action": "list"})
 
         assert "features" in result
@@ -244,28 +253,42 @@ class TestCreateFeature:
         """Test handling create action."""
         from container_scripts.beads_commands import handle_action
 
-        with patch("container_scripts.beads_commands.run_bd") as mock_bd:
-            mock_bd.return_value = {"id": "feat-3"}
+        mock_create_result = MagicMock(
+            returncode=0,
+            stdout='{"id": "feat-3"}',
+            stderr=""
+        )
+        mock_get_result = MagicMock(
+            returncode=0,
+            stdout='{"id": "feat-3", "title": "New Feature", "status": "open"}',
+            stderr=""
+        )
 
-            result = handle_action({
-                "action": "create",
-                "title": "New Feature",
-                "description": "Feature description",
-                "priority": 1,
-                "category": "authentication"
-            })
+        with patch("container_scripts.beads_commands.is_initialized", return_value=True):
+            with patch("container_scripts.beads_commands.run_bd", side_effect=[mock_create_result, mock_get_result]):
+                # Note: create expects parameters nested under 'data' key
+                result = handle_action({
+                    "action": "create",
+                    "data": {
+                        "name": "New Feature",
+                        "description": "Feature description",
+                        "priority": 1,
+                        "category": "authentication"
+                    }
+                })
 
-        assert result.get("success") is True or "id" in result
+        assert result.get("success") is True or "feature" in result
 
     @pytest.mark.unit
     def test_handle_create_missing_title(self):
-        """Test create action without title."""
+        """Test create action without name."""
         from container_scripts.beads_commands import handle_action
 
-        result = handle_action({
-            "action": "create",
-            "description": "Feature description"
-        })
+        with patch("container_scripts.beads_commands.is_initialized", return_value=True):
+            result = handle_action({
+                "action": "create",
+                "description": "Feature description"
+            })
 
         assert "error" in result
 
@@ -282,13 +305,28 @@ class TestUpdateFeature:
         """Test handling update action."""
         from container_scripts.beads_commands import handle_action
 
-        with patch("container_scripts.beads_commands.run_bd") as mock_bd:
-            mock_bd.return_value = {"success": True}
+        mock_get_result = MagicMock(
+            returncode=0,
+            stdout='{"id": "feat-1", "title": "Feature 1", "status": "open", "priority": "P2", "labels": []}',
+            stderr=""
+        )
+        mock_update_result = MagicMock(
+            returncode=0,
+            stdout='{}',
+            stderr=""
+        )
+        mock_get_result2 = MagicMock(
+            returncode=0,
+            stdout='{"id": "feat-1", "title": "Feature 1", "status": "in_progress"}',
+            stderr=""
+        )
 
+        with patch("container_scripts.beads_commands.run_bd", side_effect=[mock_get_result, mock_update_result, mock_get_result2]):
+            # Note: update expects feature_id and data keys
             result = handle_action({
                 "action": "update",
-                "id": "feat-1",
-                "status": "in_progress"
+                "feature_id": "feat-1",
+                "data": {"status": "in_progress"}
             })
 
         assert result.get("success") is True or "error" not in result
@@ -318,12 +356,17 @@ class TestDeleteFeature:
         """Test handling delete action."""
         from container_scripts.beads_commands import handle_action
 
-        with patch("container_scripts.beads_commands.run_bd") as mock_bd:
-            mock_bd.return_value = {"success": True}
+        mock_result = MagicMock(
+            returncode=0,
+            stdout='{}',
+            stderr=""
+        )
 
+        with patch("container_scripts.beads_commands.run_bd", return_value=mock_result):
+            # Note: delete expects feature_id key
             result = handle_action({
                 "action": "delete",
-                "id": "feat-1"
+                "feature_id": "feat-1"
             })
 
         assert result.get("success") is True or "error" not in result
@@ -352,12 +395,22 @@ class TestReopenFeature:
         """Test handling reopen action."""
         from container_scripts.beads_commands import handle_action
 
-        with patch("container_scripts.beads_commands.run_bd") as mock_bd:
-            mock_bd.return_value = {"success": True}
+        mock_reopen_result = MagicMock(
+            returncode=0,
+            stdout='{}',
+            stderr=""
+        )
+        mock_get_result = MagicMock(
+            returncode=0,
+            stdout='{"id": "feat-1", "title": "Feature 1", "status": "open"}',
+            stderr=""
+        )
 
+        with patch("container_scripts.beads_commands.run_bd", side_effect=[mock_reopen_result, mock_get_result]):
+            # Note: reopen expects feature_id key
             result = handle_action({
                 "action": "reopen",
-                "id": "feat-1"
+                "feature_id": "feat-1"
             })
 
         assert result.get("success") is True or "error" not in result
@@ -403,9 +456,13 @@ class TestInitAction:
         """Test handling init action."""
         from container_scripts.beads_commands import handle_action
 
-        with patch("container_scripts.beads_commands.run_bd") as mock_bd:
-            mock_bd.return_value = {"success": True}
+        mock_init_result = MagicMock(
+            returncode=0,
+            stdout='',
+            stderr=""
+        )
 
+        with patch("container_scripts.beads_commands.run_bd", return_value=mock_init_result):
             result = handle_action({
                 "action": "init"
             })
