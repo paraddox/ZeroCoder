@@ -46,6 +46,7 @@ from .services.container_manager import (
 )
 from .services.beads_sync_manager import initialize_all_projects, start_beads_sync_poller
 from .services.branch_cleanup import cleanup_all_remote_branches
+from .services.task_cleanup import revert_all_in_progress_tasks
 from .websocket import project_websocket
 
 # Idle container check interval (seconds)
@@ -134,6 +135,14 @@ async def lifespan(app: FastAPI):
         await cleanup_all_remote_branches()
     except Exception as e:
         logger.warning(f"Failed to cleanup remote branches: {e}")
+
+    # Revert stale in_progress tasks to open
+    try:
+        reverted = await revert_all_in_progress_tasks()
+        if reverted:
+            logger.info(f"Reverted in_progress tasks in {len(reverted)} projects")
+    except Exception as e:
+        logger.warning(f"Failed to revert in_progress tasks: {e}")
 
     # Startup - start background monitors
     idle_monitor_task = asyncio.create_task(idle_container_monitor())
