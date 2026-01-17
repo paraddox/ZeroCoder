@@ -764,11 +764,11 @@ class ContainerManager:
                 # Continue anyway - beads-sync may be optional for some setups
 
             # 2. Fetch and pull latest from main
+            # Note: bd sync removed - beads operations now use host API
             commands = [
                 (["git", "fetch", "origin"], "Fetching from origin"),
                 (["git", "checkout", "main"], "Checking out main"),
                 (["git", "pull", "origin", "main"], "Pulling latest from main"),
-                (["bd", "sync"], "Syncing beads state"),
             ]
 
             recovery_attempted = False
@@ -2073,6 +2073,22 @@ def get_container_manager(
         return _managers[project_name][container_number]
 
 
+def get_existing_container_manager(
+    project_name: str,
+    container_number: int = 1,
+) -> ContainerManager | None:
+    """
+    Get an existing container manager WITHOUT creating one.
+
+    Returns:
+        ContainerManager if exists, None otherwise
+    """
+    with _managers_lock:
+        if project_name in _managers:
+            return _managers[project_name].get(container_number)
+    return None
+
+
 def get_all_container_managers(project_name: str) -> list[ContainerManager]:
     """Get all container managers for a project (thread-safe), including hound containers."""
     result = []
@@ -2185,7 +2201,11 @@ async def restore_managers_from_registry() -> int:
                 continue
 
             # Check if Docker container actually exists
-            container_name = f"zerocoder-{project_name}-{container_number}"
+            container_type = container.container_type or 'coding'
+            if container_type == "init" or container_number == 0:
+                container_name = f"zerocoder-{project_name}-init"
+            else:
+                container_name = f"zerocoder-{project_name}-{container_number}"
             docker_exists = False
 
             if docker_container_id:
@@ -2232,13 +2252,53 @@ async def restore_managers_from_registry() -> int:
             else:
                 # Docker container gone, update registry
                 logger.info(f"Container {container_name} no longer exists, updating registry")
-                container_type = container.container_type or 'coding'
                 update_container_status(project_name, container_number, container_type, status="stopped")
 
     except Exception as e:
         logger.exception(f"Error restoring container managers: {e}")
 
     return restored
+
+
+async def cleanup_stale_containers() -> int:
+    """
+    Remove container DB entries that don't exist in Docker.
+    Called on server startup to ensure clean state.
+
+    Returns:
+        Number of stale container entries cleaned up.
+    """
+    from registry import list_all_containers, delete_container
+
+    all_containers = list_all_containers()
+    cleaned = 0
+
+    for c in all_containers:
+        project_name = c["project_name"]
+        container_num = c["container_number"]
+        container_type = c.get("container_type", "coding")
+
+        # Build container name (init containers use -init suffix, others use -N)
+        if container_type == "init" or container_num == 0:
+            container_name = f"zerocoder-{project_name}-init"
+        else:
+            container_name = f"zerocoder-{project_name}-{container_num}"
+
+        # Check if exists in Docker
+        result = await asyncio.to_thread(
+            subprocess.run,
+            ["docker", "inspect", container_name],
+            capture_output=True
+        )
+
+        if result.returncode != 0:
+            # Container doesn't exist in Docker - remove from DB and memory
+            delete_container(project_name, container_num, container_type)
+            clear_container_manager(project_name, container_num)
+            logger.info(f"Removed stale container entry: {container_name}")
+            cleaned += 1
+
+    return cleaned
 
 
 async def cleanup_idle_containers() -> list[str]:
