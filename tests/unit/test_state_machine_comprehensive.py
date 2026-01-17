@@ -67,8 +67,10 @@ class TestContainerStateMachine:
         container_manager.started_at = datetime.now()
         container_manager.last_activity = datetime.now()
 
-        await container_manager._notify_status("running")
+        container_manager._notify_status_change("running")
 
+        # Allow async tasks to complete
+        await asyncio.sleep(0.01)
         status_callback.assert_called_once_with("running")
         assert container_manager._status == "running"
 
@@ -84,8 +86,10 @@ class TestContainerStateMachine:
 
         # Simulate container stopping
         container_manager._status = "stopped"
-        await container_manager._notify_status("stopped")
+        container_manager._notify_status_change("stopped")
 
+        # Allow async tasks to complete
+        await asyncio.sleep(0.01)
         status_callback.assert_called_once_with("stopped")
         assert container_manager._status == "stopped"
 
@@ -101,8 +105,10 @@ class TestContainerStateMachine:
         # Simulate restart
         container_manager._status = "running"
         container_manager.started_at = datetime.now()
-        await container_manager._notify_status("running")
+        container_manager._notify_status_change("running")
 
+        # Allow async tasks to complete
+        await asyncio.sleep(0.01)
         status_callback.assert_called_once_with("running")
         assert container_manager._status == "running"
 
@@ -117,8 +123,10 @@ class TestContainerStateMachine:
 
         # Simulate completion
         container_manager._status = "completed"
-        await container_manager._notify_status("completed")
+        container_manager._notify_status_change("completed")
 
+        # Allow async tasks to complete
+        await asyncio.sleep(0.01)
         status_callback.assert_called_once_with("completed")
         assert container_manager._status == "completed"
 
@@ -234,7 +242,7 @@ class TestContainerStatePersistence:
         """Test that _sync_status updates state from Docker."""
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="running\n")
-            with patch("server.services.container_manager.get_container", return_value=None):
+            with patch("registry.get_container", return_value=None):
                 with patch("server.services.container_manager.create_container"):
                     container_manager._status = "not_created"
                     container_manager._sync_status()
@@ -246,7 +254,7 @@ class TestContainerStatePersistence:
         """Test that _sync_status handles missing containers."""
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=1, stdout="")
-            with patch("server.services.container_manager.get_container", return_value=None):
+            with patch("registry.get_container", return_value=None):
                 container_manager._status = "running"
                 container_manager._sync_status()
 

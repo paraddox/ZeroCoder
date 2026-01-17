@@ -221,7 +221,7 @@ class TestMultiContainerOrchestration:
 
                     # Notify status changes
                     for manager in managers:
-                        await manager._notify_status("running")
+                        manager._notify_status_change("running")
 
                     # Verify each callback was called
                     for callback in callbacks:
@@ -456,7 +456,7 @@ class TestErrorRecovery:
         manager.add_status_callback(successful)
 
         # Should not raise and successful should be called
-        await manager._notify_status("running")
+        manager._notify_status_change("running")
 
         successful.assert_called_once_with("running")
 

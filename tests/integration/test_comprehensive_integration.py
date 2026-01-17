@@ -171,7 +171,7 @@ class TestContainerManagementIntegration:
                     manager.add_status_callback(status_callback)
 
                     # Notify status
-                    await manager._notify_status("running")
+                    manager._notify_status_change("running")
                     status_callback.assert_called_with("running")
 
                     # Clear manager
@@ -638,7 +638,7 @@ class TestErrorRecoveryIntegration:
         manager.add_status_callback(success_callback)
 
         # Should not raise and success callback should be called
-        await manager._notify_status("running")
+        manager._notify_status_change("running")
 
         fail_callback.assert_called_once()
         success_callback.assert_called_once()

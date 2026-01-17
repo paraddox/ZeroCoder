@@ -321,12 +321,12 @@ class TestContainerManagerIntegration:
         manager.add_output_callback(output_callback)
 
         # Simulate status changes
-        await manager._notify_status("running")
-        await manager._notify_status("stopped")
+        manager._notify_status_change("running")
+        manager._notify_status_change("stopped")
 
         # Simulate output
-        await manager._notify_output("Line 1")
-        await manager._notify_output("Line 2")
+        await manager._broadcast_output("Line 1")
+        await manager._broadcast_output("Line 2")
 
         assert status_history == ["running", "stopped"]
         assert output_history == ["Line 1", "Line 2"]

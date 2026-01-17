@@ -390,6 +390,66 @@ def action_init() -> dict:
 
 
 # =============================================================================
+# Programmatic API
+# =============================================================================
+
+def handle_action(command: dict) -> dict:
+    """Handle a beads action from a dict (for programmatic/testing use).
+
+    Args:
+        command: Dict with 'action' key and action-specific data.
+            - list: {}
+            - get: {"feature_id": str}
+            - create: {"data": {"name": str, ...}}
+            - update: {"feature_id": str, "data": {...}}
+            - delete: {"feature_id": str}
+            - skip: {"feature_id": str}
+            - reopen: {"feature_id": str}
+            - init: {}
+
+    Returns:
+        Dict with 'success' key and action-specific data.
+    """
+    action = command.get("action", "")
+
+    if action == "list":
+        return action_list()
+    elif action == "get":
+        feature_id = command.get("feature_id", "")
+        if not feature_id:
+            return {"success": False, "error": "feature_id required"}
+        return action_get(feature_id)
+    elif action == "create":
+        data = command.get("data", {})
+        return action_create(data)
+    elif action == "update":
+        feature_id = command.get("feature_id", "")
+        data = command.get("data", {})
+        if not feature_id:
+            return {"success": False, "error": "feature_id required"}
+        return action_update(feature_id, data)
+    elif action == "delete":
+        feature_id = command.get("feature_id", "")
+        if not feature_id:
+            return {"success": False, "error": "feature_id required"}
+        return action_delete(feature_id)
+    elif action == "skip":
+        feature_id = command.get("feature_id", "")
+        if not feature_id:
+            return {"success": False, "error": "feature_id required"}
+        return action_skip(feature_id)
+    elif action == "reopen":
+        feature_id = command.get("feature_id", "")
+        if not feature_id:
+            return {"success": False, "error": "feature_id required"}
+        return action_reopen(feature_id)
+    elif action == "init":
+        return action_init()
+    else:
+        return {"success": False, "error": f"Unknown action: {action}"}
+
+
+# =============================================================================
 # Main
 # =============================================================================
 

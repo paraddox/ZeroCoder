@@ -166,7 +166,7 @@ class TestContainerManagerStatusSync:
                 returncode=0,
                 stdout="running\n"
             )
-            with patch("server.services.container_manager.get_container", return_value=None):
+            with patch("registry.get_container", return_value=None):
                 with patch("server.services.container_manager.create_container"):
                     container_manager._status = "not_created"
                     container_manager._sync_status()
@@ -181,7 +181,7 @@ class TestContainerManagerStatusSync:
                 returncode=0,
                 stdout="exited\n"
             )
-            with patch("server.services.container_manager.get_container", return_value=None):
+            with patch("registry.get_container", return_value=None):
                 with patch("server.services.container_manager.create_container"):
                     container_manager._status = "running"
                     container_manager._sync_status()
@@ -196,7 +196,7 @@ class TestContainerManagerStatusSync:
                 returncode=1,
                 stdout=""
             )
-            with patch("server.services.container_manager.get_container", return_value=None):
+            with patch("registry.get_container", return_value=None):
                 container_manager._status = "running"
                 container_manager._sync_status()
 
@@ -434,15 +434,17 @@ class TestContainerManagerCallbacks:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_notify_status_calls_callbacks(self, container_manager):
-        """Test that _notify_status calls all registered callbacks."""
+        """Test that _notify_status_change calls all registered callbacks."""
         callback1 = AsyncMock()
         callback2 = AsyncMock()
 
         container_manager.add_status_callback(callback1)
         container_manager.add_status_callback(callback2)
 
-        await container_manager._notify_status("running")
+        container_manager._notify_status_change("running")
 
+        # Allow async tasks to complete
+        await asyncio.sleep(0.01)
         callback1.assert_called_once_with("running")
         callback2.assert_called_once_with("running")
 
@@ -629,15 +631,15 @@ class TestSendBeadsCommand:
         """Test successful beads command execution."""
         from server.services.container_beads import send_beads_command
 
-        with patch("asyncio.to_thread") as mock_thread:
-            mock_result = MagicMock()
-            mock_result.returncode = 0
-            mock_result.stdout = '{"success": true}'
-            mock_thread.return_value = mock_result
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(b'{"success": true}', b''))
 
-            result = await send_beads_command("test-project", "list")
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
+            result = await send_beads_command("test-project", {"action": "list"})
 
         assert result == {"success": True}
+        mock_exec.assert_called_once()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -645,14 +647,13 @@ class TestSendBeadsCommand:
         """Test beads command failure handling."""
         from server.services.container_beads import send_beads_command
 
-        with patch("asyncio.to_thread") as mock_thread:
-            mock_result = MagicMock()
-            mock_result.returncode = 1
-            mock_result.stderr = "Command failed"
-            mock_thread.return_value = mock_result
+        mock_proc = MagicMock()
+        mock_proc.returncode = 1
+        mock_proc.communicate = AsyncMock(return_value=(b'', b'Command failed'))
 
-            with pytest.raises(Exception):
-                await send_beads_command("test-project", "invalid-command")
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            with pytest.raises(RuntimeError, match="Container command failed"):
+                await send_beads_command("test-project", {"action": "invalid"})
 
 
 # =============================================================================

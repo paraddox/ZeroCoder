@@ -320,7 +320,7 @@ class TestContainerManagerConcurrency:
 
         # Notify concurrently
         await asyncio.gather(*[
-            container_manager._notify_status(f"status-{i}")
+            container_manager._notify_status_change(f"status-{i}")
             for i in range(50)
         ])
 
@@ -604,7 +604,7 @@ class TestDeadlockPrevention:
 
         # Should not deadlock
         await asyncio.wait_for(
-            manager._notify_status("test"),
+            manager._notify_status_change("test"),
             timeout=5.0
         )
 

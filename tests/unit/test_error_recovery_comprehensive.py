@@ -122,7 +122,10 @@ class TestContainerManagerErrorRecovery:
         container_manager.add_status_callback(success_cb)
 
         # Should not raise
-        await container_manager._notify_status("running")
+        container_manager._notify_status_change("running")
+
+        # Allow async tasks to complete
+        await asyncio.sleep(0.01)
 
         # Success callback should still be called
         success_cb.assert_called_once_with("running")
@@ -138,7 +141,7 @@ class TestContainerManagerErrorRecovery:
         container_manager.add_output_callback(success_cb)
 
         # Should not raise
-        await container_manager._notify_output("test line")
+        await container_manager._broadcast_output("test line")
 
         # Success callback should still be called
         success_cb.assert_called_once()
@@ -148,7 +151,7 @@ class TestContainerManagerErrorRecovery:
         """Test handling of subprocess errors during sync."""
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = subprocess.SubprocessError("Docker not available")
-            with patch("server.services.container_manager.get_container", return_value=None):
+            with patch("registry.get_container", return_value=None):
                 # Should not raise, should set not_created
                 container_manager._sync_status()
 
@@ -231,11 +234,13 @@ class TestBeadsErrorRecovery:
         """Test handling of command timeout."""
         from server.services.container_beads import send_beads_command
 
-        with patch("asyncio.to_thread") as mock_thread:
-            mock_thread.side_effect = asyncio.TimeoutError()
+        mock_proc = MagicMock()
+        mock_proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError())
 
-            with pytest.raises(asyncio.TimeoutError):
-                await send_beads_command("test-project", "list")
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError()):
+                with pytest.raises(RuntimeError, match="timed out"):
+                    await send_beads_command("test-project", {"action": "list"})
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -243,14 +248,13 @@ class TestBeadsErrorRecovery:
         """Test handling of invalid JSON response."""
         from server.services.container_beads import send_beads_command
 
-        with patch("asyncio.to_thread") as mock_thread:
-            mock_result = MagicMock()
-            mock_result.returncode = 0
-            mock_result.stdout = "not valid json"
-            mock_thread.return_value = mock_result
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(b"not valid json", b''))
 
-            with pytest.raises(json.JSONDecodeError):
-                await send_beads_command("test-project", "list")
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            with pytest.raises(RuntimeError, match="Invalid JSON"):
+                await send_beads_command("test-project", {"action": "list"})
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -507,7 +511,7 @@ class TestResourceCleanupErrorRecovery:
         callback.side_effect = Exception("Notification error")
 
         # Should not raise
-        await manager._notify_status("running")
+        manager._notify_status_change("running")
 
         # Callback should still be registered (not removed on error)
         assert callback in manager._status_callbacks

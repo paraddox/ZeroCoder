@@ -53,6 +53,15 @@ def _get_project_git_url(project_name: str) -> str | None:
     return get_project_git_url(project_name)
 
 
+def _get_registry_functions():
+    """Get registry functions for testing purposes."""
+    return (
+        get_project_path,
+        get_project_git_url,
+        get_project_info,
+    )
+
+
 router = APIRouter(prefix="/api/projects/{project_name}/agent", tags=["agent"])
 
 

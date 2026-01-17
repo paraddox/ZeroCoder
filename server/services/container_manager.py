@@ -104,7 +104,8 @@ AGENT_HEALTH_CHECK_INTERVAL = 300
 
 # Patterns for sensitive data that should be redacted from output
 SENSITIVE_PATTERNS = [
-    r'sk-[a-zA-Z0-9]{20,}',  # Anthropic API keys
+    r'sk-ant[a-zA-Z0-9_-]*',  # Anthropic API keys (sk-ant-...)
+    r'sk-[a-zA-Z0-9]{20,}',  # Generic sk- keys with 20+ chars
     r'ANTHROPIC_API_KEY=[^\s]+',
     r'api[_-]?key[=:][^\s]+',
     r'token[=:][^\s]+',
@@ -2043,6 +2044,15 @@ class ContainerManager:
 # Global registry of container managers: project -> {container_number -> manager}
 _managers: dict[str, dict[int, ContainerManager]] = {}
 _managers_lock = threading.Lock()
+
+# Alias for backward compatibility with tests
+_container_managers = _managers
+
+
+def get_projects_dir() -> Path:
+    """Get the projects directory path (wrapper for registry function)."""
+    from registry import get_projects_dir as _get_projects_dir
+    return _get_projects_dir()
 
 
 def get_container_manager(

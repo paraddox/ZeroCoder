@@ -470,8 +470,10 @@ class TestCallbackManagement:
         callback = AsyncMock()
         container_manager.add_status_callback(callback)
 
-        await container_manager._notify_status("running")
+        container_manager._notify_status_change("running")
 
+        # Allow async tasks to run
+        await asyncio.sleep(0.01)
         callback.assert_called_once_with("running")
 
     @pytest.mark.unit
@@ -484,8 +486,10 @@ class TestCallbackManagement:
         container_manager.add_status_callback(callback1)
         container_manager.add_status_callback(callback2)
 
-        await container_manager._notify_status("stopped")
+        container_manager._notify_status_change("stopped")
 
+        # Allow async tasks to run
+        await asyncio.sleep(0.01)
         callback1.assert_called_once_with("stopped")
         callback2.assert_called_once_with("stopped")
 
@@ -500,7 +504,10 @@ class TestCallbackManagement:
         container_manager.add_status_callback(success_callback)
 
         # Should not raise despite failing callback
-        await container_manager._notify_status("running")
+        container_manager._notify_status_change("running")
+
+        # Allow async tasks to run
+        await asyncio.sleep(0.01)
 
         # Success callback should still be called
         success_callback.assert_called_once()
