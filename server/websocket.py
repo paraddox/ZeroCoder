@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import re
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Set
@@ -69,17 +70,55 @@ def _list_project_containers(project_name: str) -> list[dict]:
     return list_project_containers(project_name)
 
 
+def _delete_container(project_name: str, container_number: int, container_type: str) -> bool:
+    """Delete a container from the registry."""
+    import sys
+    root = Path(__file__).parent.parent
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+
+    from registry import delete_container
+    return delete_container(project_name, container_number, container_type)
+
+
+def _container_exists_in_docker(project_name: str, container_number: int, container_type: str) -> bool:
+    """Check if a container exists in Docker."""
+    if container_type == "init" or container_number == 0:
+        container_name = f"zerocoder-{project_name}-init"
+    else:
+        container_name = f"zerocoder-{project_name}-{container_number}"
+
+    result = subprocess.run(
+        ["docker", "inspect", "-f", "{{.State.Status}}", container_name],
+        capture_output=True, text=True
+    )
+    return result.returncode == 0
+
+
 async def _send_containers_list(websocket: WebSocket, project_name: str):
     """Send containers list with agent info to the WebSocket client."""
     containers = _list_project_containers(project_name)
     all_managers = get_all_container_managers(project_name)
     manager_map = {cm.container_number: cm for cm in all_managers}
 
+    # Filter out stale DB entries that don't exist in Docker
+    valid_containers = []
+    for c in containers:
+        container_num = c["container_number"]
+        container_type = c.get("container_type", "coding")
+
+        if _container_exists_in_docker(project_name, container_num, container_type):
+            valid_containers.append(c)
+        else:
+            # Clean up stale DB entry
+            _delete_container(project_name, container_num, container_type)
+            logger.info(f"Cleaned up stale container entry: {project_name}/{container_num} ({container_type})")
+
     container_list = []
     seen_container_nums = set()
 
-    # First add containers from registry
-    for c in containers:
+    # First add containers from registry (now filtered)
+    for c in valid_containers:
         container_num = c["container_number"]
         seen_container_nums.add(container_num)
         cm = manager_map.get(container_num)
