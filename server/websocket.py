@@ -9,14 +9,13 @@ import asyncio
 import json
 import logging
 import re
-import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Set
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from .services.container_manager import get_container_manager, get_all_container_managers
+from .services.container_manager import get_all_container_managers
 
 # Lazy imports
 _count_passing_tests = None
@@ -59,88 +58,19 @@ def _get_count_passing_tests():
     return _count_passing_tests
 
 
-def _list_project_containers(project_name: str) -> list[dict]:
-    """Get list of registered containers for a project."""
-    import sys
-    root = Path(__file__).parent.parent
-    if str(root) not in sys.path:
-        sys.path.insert(0, str(root))
-
-    from registry import list_project_containers
-    return list_project_containers(project_name)
-
-
-def _delete_container(project_name: str, container_number: int, container_type: str) -> bool:
-    """Delete a container from the registry."""
-    import sys
-    root = Path(__file__).parent.parent
-    if str(root) not in sys.path:
-        sys.path.insert(0, str(root))
-
-    from registry import delete_container
-    return delete_container(project_name, container_number, container_type)
-
-
-def _container_exists_in_docker(project_name: str, container_number: int, container_type: str) -> bool:
-    """Check if a container exists in Docker."""
-    if container_type == "init" or container_number == 0:
-        container_name = f"zerocoder-{project_name}-init"
-    else:
-        container_name = f"zerocoder-{project_name}-{container_number}"
-
-    result = subprocess.run(
-        ["docker", "inspect", "-f", "{{.State.Status}}", container_name],
-        capture_output=True, text=True
-    )
-    return result.returncode == 0
-
-
 async def _send_containers_list(websocket: WebSocket, project_name: str):
     """Send containers list with agent info to the WebSocket client."""
-    containers = _list_project_containers(project_name)
     all_managers = get_all_container_managers(project_name)
-    manager_map = {cm.container_number: cm for cm in all_managers}
-
-    # Filter out stale DB entries that don't exist in Docker
-    valid_containers = []
-    for c in containers:
-        container_num = c["container_number"]
-        container_type = c.get("container_type", "coding")
-
-        if _container_exists_in_docker(project_name, container_num, container_type):
-            valid_containers.append(c)
-        else:
-            # Clean up stale DB entry
-            _delete_container(project_name, container_num, container_type)
-            logger.info(f"Cleaned up stale container entry: {project_name}/{container_num} ({container_type})")
 
     container_list = []
-    seen_container_nums = set()
-
-    # First add containers from registry (now filtered)
-    for c in valid_containers:
-        container_num = c["container_number"]
-        seen_container_nums.add(container_num)
-        cm = manager_map.get(container_num)
-        container_info = {
-            "number": container_num,
-            "type": c["container_type"],
-        }
-        if cm:
-            container_info["agent_type"] = cm._current_agent_type
-            container_info["sdk_type"] = "claude" if cm._force_claude_sdk or not cm._is_opencode_model() else "opencode"
-        container_list.append(container_info)
-
-    # Add any managers not in registry (e.g., hound containers with container_number=-1)
     for cm in all_managers:
-        if cm.container_number not in seen_container_nums:
-            container_info = {
-                "number": cm.container_number,
-                "type": cm.container_type,
-                "agent_type": cm._current_agent_type,
-                "sdk_type": "claude" if cm._force_claude_sdk or not cm._is_opencode_model() else "opencode",
-            }
-            container_list.append(container_info)
+        container_info = {
+            "number": cm.container_number,
+            "type": cm.container_type,
+            "agent_type": cm._current_agent_type,
+            "sdk_type": "claude" if cm._force_claude_sdk or not cm._is_opencode_model() else "opencode",
+        }
+        container_list.append(container_info)
 
     await websocket.send_json({
         "type": "containers",
@@ -274,12 +204,10 @@ async def project_websocket(websocket: WebSocket, project_name: str):
 
     await manager.connect(websocket, project_name)
 
-    # Get all container managers for this project and register callbacks
-    # First ensure at least the default container exists
-    container_manager = get_container_manager(project_name, git_url, 1, project_dir)
+    # Get all existing container managers for this project and register callbacks
+    # Note: Don't pre-create a manager - only use managers that already exist
+    # Managers are created when the user starts containers via the Start button
     all_managers = get_all_container_managers(project_name)
-    if not all_managers:
-        all_managers = [container_manager]
 
     # Create callback factory that captures container_number
     def make_output_callback(container_num: int):
@@ -357,10 +285,11 @@ async def project_websocket(websocket: WebSocket, project_name: str):
     callback_registration_task = asyncio.create_task(register_new_container_callbacks())
 
     try:
-        # Send initial status
+        # Send initial status (use first manager's status, or "not_created" if none)
+        initial_status = all_managers[0].status if all_managers else "not_created"
         await websocket.send_json({
             "type": "agent_status",
-            "status": container_manager.status,
+            "status": initial_status,
         })
 
         # Send initial progress (pass project_name for cache lookup)

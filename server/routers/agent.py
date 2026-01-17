@@ -20,6 +20,7 @@ from fastapi import APIRouter, HTTPException
 from ..schemas import AgentActionResponse, AgentStartRequest, AgentStatus
 from ..services.container_manager import (
     get_container_manager,
+    get_existing_container_manager,
     check_docker_available,
     check_image_exists,
 )
@@ -95,7 +96,22 @@ def get_project_container(project_name: str, container_number: int = 1):
 @router.get("/status", response_model=AgentStatus)
 async def get_agent_status(project_name: str):
     """Get the current status of the container for a project."""
-    manager = get_project_container(project_name)
+    project_name = validate_project_name(project_name)
+
+    # Check if a manager exists without creating one
+    manager = get_existing_container_manager(project_name, container_number=1)
+
+    if manager is None:
+        # No container has been created yet - return default status
+        return AgentStatus(
+            status="not_created",
+            container_name=f"zerocoder-{project_name}-1",
+            started_at=None,
+            idle_seconds=0,
+            agent_running=False,
+            graceful_stop_requested=False,
+        )
+
     status_dict = manager.get_status_dict()
 
     return AgentStatus(

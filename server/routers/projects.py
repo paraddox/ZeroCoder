@@ -820,12 +820,12 @@ def _get_docker_container_status(container_name: str) -> str | None:
 
 @router.get("/{name}/containers", response_model=list[ContainerStatus])
 async def list_containers(name: str):
-    """List all containers for a project."""
+    """List all containers for a project (from in-memory managers only)."""
     from ..services.container_manager import get_all_container_managers
 
     (
         _, _, get_project_path, _, _, _,
-        _, _, _, _, list_project_containers
+        _, _, _, _, _
     ) = _get_registry_functions()
 
     name = validate_project_name(name)
@@ -833,86 +833,32 @@ async def list_containers(name: str):
     if not get_project_path(name):
         raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
 
-    containers = list_project_containers(name)
-
-    # Build a map of container managers for agent info
+    # Get all in-memory managers - this is the source of truth
     managers = get_all_container_managers(name)
-    manager_map = {cm.container_number: cm for cm in managers}
 
     result = []
-    seen_container_nums = set()
-
-    for c in containers:
-        container_number = c["container_number"]
-        # Skip invalid container numbers (e.g., -1 for hound - shouldn't be in DB)
-        if container_number < 0:
-            continue
-        seen_container_nums.add(container_number)
-        # Construct Docker container name from project and container number
-        container_type = c.get("container_type", "coding")
-        if container_type == "init" or container_number == 0:
-            docker_name = f"zerocoder-{name}-init"
-        else:
-            docker_name = f"zerocoder-{name}-{container_number}"
-
-        # Get live status from Docker
-        live_status = _get_docker_container_status(docker_name)
-
-        # Use live status if available
-        db_status = c["status"]
-        if live_status is not None:
-            final_status = live_status
-        elif db_status == "running":
-            # Container doesn't exist in Docker but DB says running - it's stopped
-            final_status = "stopped"
-        else:
-            # Keep database status (created, stopping, stopped)
-            final_status = db_status
-
-        # Get agent info from container manager
-        cm = manager_map.get(container_number)
-        agent_type = None
-        sdk_type = None
-        if cm:
-            agent_type = cm._current_agent_type
-            sdk_type = "claude" if cm._force_claude_sdk or not cm._is_opencode_model() else "opencode"
-
-        result.append(ContainerStatus(
-            id=c["id"],
-            container_number=c["container_number"],
-            container_type=c["container_type"],
-            status=final_status,
-            current_feature=c.get("current_feature"),
-            docker_container_id=c.get("docker_container_id"),
-            agent_type=agent_type,
-            sdk_type=sdk_type,
-        ))
-
-    # Add any managers not in registry (e.g., hound containers with container_number=-1)
     seen_hound = False
-    for cm in managers:
-        # Skip if already added from database
-        if cm.container_number in seen_container_nums:
-            continue
 
+    for cm in managers:
         # Handle hound containers (container_number=-1)
         if cm.container_number < 0:
-            # Only show hound containers (skip other invalid container numbers)
             if cm._current_agent_type != "hound":
                 continue
-            # Prevent duplicate hound entries
             if seen_hound:
                 continue
             seen_hound = True
             docker_name = f"zerocoder-{name}-hound"
+        elif cm.container_type == "init" or cm.container_number == 0:
+            docker_name = f"zerocoder-{name}-init"
         else:
             docker_name = f"zerocoder-{name}-{cm.container_number}"
 
+        # Get live status from Docker
         live_status = _get_docker_container_status(docker_name)
-        final_status = live_status if live_status else "stopped"
+        final_status = live_status if live_status else cm.status
 
         result.append(ContainerStatus(
-            id=-1,  # Synthetic ID for in-memory only containers
+            id=cm.container_number,  # Use container_number as ID
             container_number=cm.container_number,
             container_type=cm.container_type,
             status=final_status,
