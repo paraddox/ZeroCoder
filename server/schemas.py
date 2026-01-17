@@ -113,7 +113,7 @@ class ContainerStatus(BaseModel):
     id: int
     container_number: int
     container_type: Literal["init", "coding"]
-    status: Literal["created", "running", "stopping", "stopped"]
+    status: Literal["not_created", "created", "running", "stopping", "stopped", "completed"]
     current_feature: str | None = None
     docker_container_id: str | None = None
     agent_type: Literal["coder", "overseer", "hound", "initializer"] | None = None
