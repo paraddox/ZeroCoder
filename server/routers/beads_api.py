@@ -54,25 +54,18 @@ def validate_issue_id(issue_id: str) -> str:
     return issue_id
 
 
-async def run_beads_command(project_name: str, args: list[str]) -> dict[str, Any]:
+async def _run_bd(project_path: Path, args: list[str], timeout: int = 60) -> dict[str, Any]:
     """
-    Run bd command in project directory on host.
+    Low-level bd command runner.
 
     Args:
-        project_name: Name of the project
+        project_path: Path to project directory
         args: Command arguments (e.g., ["list", "--json"])
+        timeout: Command timeout in seconds
 
     Returns:
         Parsed JSON output or error dict
     """
-    project_path = _get_project_path(project_name)
-
-    if not project_path:
-        return {"error": f"Project '{project_name}' not found in registry"}
-
-    if not project_path.exists():
-        return {"error": f"Project directory not found: {project_path}"}
-
     try:
         result = await asyncio.to_thread(
             subprocess.run,
@@ -80,7 +73,7 @@ async def run_beads_command(project_name: str, args: list[str]) -> dict[str, Any
             cwd=project_path,
             capture_output=True,
             text=True,
-            timeout=60,
+            timeout=timeout,
         )
 
         if result.returncode != 0:
@@ -108,17 +101,79 @@ async def run_beads_command(project_name: str, args: list[str]) -> dict[str, Any
         return {"error": str(e)}
 
 
+async def _sync_beads(project_path: Path) -> bool:
+    """
+    Run bd sync to synchronize with git remote.
+
+    This is best-effort - failures are logged but don't cause errors.
+
+    Returns:
+        True if sync succeeded, False otherwise
+    """
+    result = await _run_bd(project_path, ["sync"], timeout=30)
+    if "error" in result:
+        logger.warning(f"bd sync failed (best-effort): {result['error']}")
+        return False
+    logger.debug(f"bd sync completed for {project_path}")
+    return True
+
+
+async def run_beads_command(project_name: str, args: list[str]) -> dict[str, Any]:
+    """
+    Run bd command in project directory on host (for read operations).
+
+    Syncs with remote BEFORE running the command to get latest state.
+
+    Args:
+        project_name: Name of the project
+        args: Command arguments (e.g., ["list", "--json"])
+
+    Returns:
+        Parsed JSON output or error dict
+    """
+    project_path = _get_project_path(project_name)
+
+    if not project_path:
+        return {"error": f"Project '{project_name}' not found in registry"}
+
+    if not project_path.exists():
+        return {"error": f"Project directory not found: {project_path}"}
+
+    # All beads operations serialized per-project to avoid conflicts
+    lock = _beads_locks.setdefault(project_name, asyncio.Lock())
+    async with lock:
+        # Sync before read to get latest state from remote
+        await _sync_beads(project_path)
+        # Run the actual command
+        return await _run_bd(project_path, args)
+
+
 async def run_beads_write_command(project_name: str, args: list[str]) -> dict[str, Any]:
     """
     Run a write command with project-level locking.
 
-    Write operations (create, update, close, reopen, sync) are serialized
-    per-project to avoid race conditions.
+    Write operations (create, update, close, reopen) are serialized
+    per-project to avoid race conditions. Syncs AFTER the write to push changes.
     """
+    project_path = _get_project_path(project_name)
+
+    if not project_path:
+        return {"error": f"Project '{project_name}' not found in registry"}
+
+    if not project_path.exists():
+        return {"error": f"Project directory not found: {project_path}"}
+
     lock = _beads_locks.setdefault(project_name, asyncio.Lock())
 
     async with lock:
-        return await run_beads_command(project_name, args)
+        # Run the write command
+        result = await _run_bd(project_path, args)
+
+        # Sync after write to push changes to remote
+        if "error" not in result:
+            await _sync_beads(project_path)
+
+        return result
 
 
 # =============================================================================
