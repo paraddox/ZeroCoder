@@ -210,10 +210,17 @@ async def require_localhost(request: Request, call_next):
     client_host = request.client.host if request.client else None
 
     # Allow localhost connections
-    if client_host not in ("127.0.0.1", "::1", "localhost", None):
-        raise HTTPException(status_code=403, detail="Localhost access only")
+    if client_host in ("127.0.0.1", "::1", "localhost", None):
+        return await call_next(request)
 
-    return await call_next(request)
+    # Allow Docker network IPs (172.17.0.0/16) for beads API endpoints only
+    # Containers need to call host beads API
+    if client_host and client_host.startswith("172.17."):
+        path = request.url.path
+        if path.startswith("/api/projects/") and "/beads/" in path:
+            return await call_next(request)
+
+    raise HTTPException(status_code=403, detail="Localhost access only")
 
 
 # ============================================================================

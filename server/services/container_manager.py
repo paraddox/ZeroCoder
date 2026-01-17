@@ -1035,6 +1035,8 @@ class ContainerManager:
                 cmd = [
                     "docker", "run", "-d",
                     "--name", self.container_name,
+                    # Enable host.docker.internal on Linux (works natively on Mac/Windows)
+                    "--add-host", "host.docker.internal:host-gateway",
                 ]
                 # Pass git URL for cloning (container clones from git instead of volume mount)
                 cmd.extend(["-e", f"GIT_REMOTE_URL={self.git_url}"])
@@ -1954,6 +1956,8 @@ class ContainerManager:
                 cmd = [
                     "docker", "run", "-d",
                     "--name", self.container_name,
+                    # Enable host.docker.internal on Linux (works natively on Mac/Windows)
+                    "--add-host", "host.docker.internal:host-gateway",
                 ]
                 # Pass git URL for cloning (container clones from git instead of volume mount)
                 cmd.extend(["-e", f"GIT_REMOTE_URL={self.git_url}"])

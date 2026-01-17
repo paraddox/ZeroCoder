@@ -48,8 +48,8 @@ def validate_project_name(name: str) -> str:
 
 def validate_issue_id(issue_id: str) -> str:
     """Validate issue ID format."""
-    # Allow formats like: beads-1, feat-42, issue-123
-    if not re.match(r'^[a-zA-Z]+-\d+$', issue_id):
+    # Allow formats like: beads-1, feat-42, project-abc123
+    if not re.match(r'^[a-zA-Z]+-[a-zA-Z0-9]+$', issue_id):
         raise HTTPException(status_code=400, detail="Invalid issue ID format")
     return issue_id
 

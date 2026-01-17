@@ -165,7 +165,8 @@ def start_dev_server(port: int) -> tuple:
     backend = subprocess.Popen([
         str(venv_python), "-m", "uvicorn",
         "server.main:app",
-        "--host", "127.0.0.1",
+        # Bind to 0.0.0.0 so Docker containers can access via host.docker.internal
+        "--host", "0.0.0.0",
         "--port", str(port),
         "--reload"
     ], cwd=str(ROOT))
@@ -190,7 +191,8 @@ def start_production_server(port: int):
     return subprocess.Popen([
         str(venv_python), "-m", "uvicorn",
         "server.main:app",
-        "--host", "127.0.0.1",
+        # Bind to 0.0.0.0 so Docker containers can access via host.docker.internal
+        "--host", "0.0.0.0",
         "--port", str(port)
     ], cwd=str(ROOT))
 
@@ -247,6 +249,9 @@ def main() -> None:
     print_step(step, total_steps, "Starting server")
 
     port = find_available_port()
+
+    # Export PORT for container_manager to use when setting HOST_API_URL
+    os.environ["PORT"] = str(port)
 
     try:
         if dev_mode:
