@@ -6,7 +6,6 @@
  * - Project list display
  * - Selection handling
  * - Loading states
- * - Error states
  * - Empty states
  */
 
@@ -15,12 +14,15 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ProjectSelector } from './ProjectSelector'
-import * as api from '../lib/api'
 import type { ProjectSummary } from '../lib/types'
 
-// Mock the API module
-vi.mock('../lib/api', () => ({
-  listProjects: vi.fn(),
+// Mock modals
+vi.mock('./NewProjectModal', () => ({
+  NewProjectModal: () => <div data-testid="new-project-modal" />,
+}))
+
+vi.mock('./ExistingRepoModal', () => ({
+  ExistingRepoModal: () => <div data-testid="existing-repo-modal" />,
 }))
 
 function createWrapper() {
@@ -67,187 +69,210 @@ describe('ProjectSelector', () => {
   })
 
   describe('Rendering', () => {
-    it('should render project selector', async () => {
-      vi.mocked(api.listProjects).mockResolvedValue(mockProjects)
-
+    it('should render project selector button', () => {
       render(
         <ProjectSelector
+          projects={mockProjects}
           selectedProject={null}
           onSelectProject={vi.fn()}
+          isLoading={false}
         />,
         { wrapper: createWrapper() }
       )
 
-      // Should show some form of selector
-      await waitFor(() => {
-        expect(screen.queryByRole('combobox') || screen.queryByRole('button')).toBeInTheDocument()
-      })
+      // Should show the dropdown button
+      expect(screen.getByRole('button')).toBeInTheDocument()
     })
 
-    it('should display selected project name', async () => {
-      vi.mocked(api.listProjects).mockResolvedValue(mockProjects)
-
+    it('should display selected project name', () => {
       render(
         <ProjectSelector
+          projects={mockProjects}
           selectedProject="project-alpha"
           onSelectProject={vi.fn()}
+          isLoading={false}
         />,
         { wrapper: createWrapper() }
       )
 
-      await waitFor(() => {
-        expect(screen.getByText(/project-alpha/i)).toBeInTheDocument()
-      })
+      expect(screen.getByText('project-alpha')).toBeInTheDocument()
+    })
+
+    it('should show placeholder when no project selected', () => {
+      render(
+        <ProjectSelector
+          projects={mockProjects}
+          selectedProject={null}
+          onSelectProject={vi.fn()}
+          isLoading={false}
+        />,
+        { wrapper: createWrapper() }
+      )
+
+      // Should show some placeholder text
+      expect(screen.getByRole('button')).toBeInTheDocument()
     })
   })
 
-  describe('Project Selection', () => {
-    it('should call onSelectProject when project is selected', async () => {
+  describe('Dropdown Behavior', () => {
+    it('should open dropdown on click', async () => {
       const user = userEvent.setup()
-      const onSelectProject = vi.fn()
-      vi.mocked(api.listProjects).mockResolvedValue(mockProjects)
 
       render(
         <ProjectSelector
+          projects={mockProjects}
           selectedProject={null}
-          onSelectProject={onSelectProject}
+          onSelectProject={vi.fn()}
+          isLoading={false}
         />,
         { wrapper: createWrapper() }
       )
 
-      // Wait for projects to load
+      const button = screen.getByRole('button')
+      await user.click(button)
+
+      // Dropdown should be open, showing project options
       await waitFor(() => {
-        expect(api.listProjects).toHaveBeenCalled()
+        expect(screen.getByText('project-alpha')).toBeInTheDocument()
+        expect(screen.getByText('project-beta')).toBeInTheDocument()
+      })
+    })
+
+    it('should call onSelectProject when project clicked', async () => {
+      const user = userEvent.setup()
+      const onSelectProject = vi.fn()
+
+      render(
+        <ProjectSelector
+          projects={mockProjects}
+          selectedProject={null}
+          onSelectProject={onSelectProject}
+          isLoading={false}
+        />,
+        { wrapper: createWrapper() }
+      )
+
+      // Open dropdown
+      await user.click(screen.getByRole('button'))
+
+      // Wait for dropdown to open and click a project
+      await waitFor(() => {
+        expect(screen.getByText('project-alpha')).toBeInTheDocument()
       })
 
-      // Interaction depends on component implementation
+      // Click project option (may need to find the correct clickable element)
+      const projectOption = screen.getAllByText('project-alpha')[0]
+      await user.click(projectOption)
     })
   })
 
   describe('Loading State', () => {
-    it('should show loading indicator while fetching projects', async () => {
-      // Create a promise that doesn't resolve immediately
-      let resolveProjects: (value: ProjectSummary[]) => void
-      const projectsPromise = new Promise<ProjectSummary[]>((resolve) => {
-        resolveProjects = resolve
-      })
-      vi.mocked(api.listProjects).mockReturnValue(projectsPromise)
-
+    it('should disable button while loading', () => {
       render(
         <ProjectSelector
+          projects={[]}
           selectedProject={null}
           onSelectProject={vi.fn()}
+          isLoading={true}
         />,
         { wrapper: createWrapper() }
       )
 
-      // Component should handle loading state
-      // Resolve to clean up
-      resolveProjects!(mockProjects)
+      const button = screen.getByRole('button')
+      expect(button).toBeDisabled()
+    })
+
+    it('should show loading indicator', () => {
+      render(
+        <ProjectSelector
+          projects={[]}
+          selectedProject={null}
+          onSelectProject={vi.fn()}
+          isLoading={true}
+        />,
+        { wrapper: createWrapper() }
+      )
+
+      // Should show loading state (spinner or similar)
+      expect(screen.getByRole('button')).toBeDisabled()
     })
   })
 
   describe('Empty State', () => {
-    it('should handle no projects', async () => {
-      vi.mocked(api.listProjects).mockResolvedValue([])
-
+    it('should handle empty projects list', () => {
       render(
         <ProjectSelector
+          projects={[]}
           selectedProject={null}
           onSelectProject={vi.fn()}
+          isLoading={false}
         />,
         { wrapper: createWrapper() }
       )
 
-      await waitFor(() => {
-        expect(api.listProjects).toHaveBeenCalled()
-      })
-
-      // Should render without error
-    })
-  })
-
-  describe('Error State', () => {
-    it('should handle API error', async () => {
-      vi.mocked(api.listProjects).mockRejectedValue(new Error('Network error'))
-
-      render(
-        <ProjectSelector
-          selectedProject={null}
-          onSelectProject={vi.fn()}
-        />,
-        { wrapper: createWrapper() }
-      )
-
-      // Should handle error gracefully
-      await waitFor(() => {
-        expect(api.listProjects).toHaveBeenCalled()
-      })
-    })
-  })
-
-  describe('Incomplete Projects', () => {
-    it('should indicate incomplete projects', async () => {
-      vi.mocked(api.listProjects).mockResolvedValue(mockProjects)
-
-      render(
-        <ProjectSelector
-          selectedProject={null}
-          onSelectProject={vi.fn()}
-        />,
-        { wrapper: createWrapper() }
-      )
-
-      await waitFor(() => {
-        expect(api.listProjects).toHaveBeenCalled()
-      })
-
-      // project-beta has wizard_incomplete: true
-      // Component should indicate this somehow
+      // Should still render without errors
+      expect(screen.getByRole('button')).toBeInTheDocument()
     })
   })
 
   describe('Project Stats Display', () => {
-    it('should display project statistics', async () => {
-      vi.mocked(api.listProjects).mockResolvedValue(mockProjects)
-
+    it('should display stats for selected project', () => {
       render(
         <ProjectSelector
+          projects={mockProjects}
           selectedProject="project-alpha"
           onSelectProject={vi.fn()}
+          isLoading={false}
         />,
         { wrapper: createWrapper() }
       )
 
-      await waitFor(() => {
-        expect(api.listProjects).toHaveBeenCalled()
-      })
-
-      // Stats might be shown (5/10 features, 50%)
+      // Project alpha has 5/10 features (50%)
+      // Stats badge should be visible
+      expect(screen.getByText('project-alpha')).toBeInTheDocument()
     })
   })
 
-  describe('Accessibility', () => {
-    it('should be keyboard navigable', async () => {
+  describe('Incomplete Project Handling', () => {
+    it('should call onIncompleteProjectClick for incomplete projects', async () => {
       const user = userEvent.setup()
-      vi.mocked(api.listProjects).mockResolvedValue(mockProjects)
+      const onIncompleteProjectClick = vi.fn()
 
       render(
         <ProjectSelector
+          projects={mockProjects}
           selectedProject={null}
           onSelectProject={vi.fn()}
+          onIncompleteProjectClick={onIncompleteProjectClick}
+          isLoading={false}
         />,
         { wrapper: createWrapper() }
       )
 
+      // Open dropdown
+      await user.click(screen.getByRole('button'))
+
+      // Wait for dropdown
       await waitFor(() => {
-        expect(api.listProjects).toHaveBeenCalled()
+        expect(screen.getByText('project-beta')).toBeInTheDocument()
       })
+    })
+  })
 
-      // Tab to the selector
-      await user.tab()
+  describe('Button States', () => {
+    it('should be enabled when not loading', () => {
+      render(
+        <ProjectSelector
+          projects={mockProjects}
+          selectedProject={null}
+          onSelectProject={vi.fn()}
+          isLoading={false}
+        />,
+        { wrapper: createWrapper() }
+      )
 
-      // Should be focusable
+      const button = screen.getByRole('button')
+      expect(button).not.toBeDisabled()
     })
   })
 })

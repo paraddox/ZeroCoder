@@ -11,7 +11,10 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, waitFor, act } from '@testing-library/react'
-import { useWebSocket } from './useWebSocket'
+import { useProjectWebSocket } from './useWebSocket'
+
+// Alias for easier test migration
+const useWebSocket = useProjectWebSocket
 
 // Mock WebSocket class is already defined in test/setup.ts
 
