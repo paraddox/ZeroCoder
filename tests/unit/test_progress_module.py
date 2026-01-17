@@ -69,7 +69,8 @@ class TestHasFeatures:
         issues_file = beads_dir / "issues.jsonl"
         issues_file.write_text('{"id": "feat-1", "status": "open"}\n')
 
-        result = has_features(project_dir, "test-project")
+        # Don't pass project_name to avoid cache lookup (cache won't exist in test)
+        result = has_features(project_dir)
 
         assert result is True
 
@@ -84,7 +85,8 @@ class TestHasFeatures:
         issues_file = beads_dir / "issues.jsonl"
         issues_file.write_text("")
 
-        result = has_features(project_dir, "test-project")
+        # Don't pass project_name to avoid cache lookup
+        result = has_features(project_dir)
 
         assert result is False
 
@@ -94,7 +96,8 @@ class TestHasFeatures:
         project_dir = tmp_path / "test-project"
         project_dir.mkdir()
 
-        result = has_features(project_dir, "test-project")
+        # Don't pass project_name to avoid cache lookup
+        result = has_features(project_dir)
 
         assert result is False
 
@@ -103,7 +106,7 @@ class TestHasFeatures:
         """Test has_features returns False for nonexistent project."""
         nonexistent = tmp_path / "nonexistent"
 
-        result = has_features(nonexistent, "nonexistent")
+        result = has_features(nonexistent)
 
         assert result is False
 
@@ -200,7 +203,8 @@ class TestGetProgressStats:
             for issue in issues:
                 f.write(json.dumps(issue) + "\n")
 
-        stats = get_progress_stats(project_dir, "test-project")
+        # Don't pass project_name to avoid cache lookup
+        stats = get_progress_stats(project_dir)
 
         assert stats["total"] == 4
         assert stats["passing"] == 2
@@ -218,7 +222,8 @@ class TestGetProgressStats:
         issues_file = beads_dir / "issues.jsonl"
         issues_file.write_text("")
 
-        stats = get_progress_stats(project_dir, "test-project")
+        # Don't pass project_name to avoid cache lookup
+        stats = get_progress_stats(project_dir)
 
         assert stats["total"] == 0
         assert stats["passing"] == 0
@@ -241,7 +246,8 @@ class TestGetProgressStats:
             for issue in issues:
                 f.write(json.dumps(issue) + "\n")
 
-        stats = get_progress_stats(project_dir, "test-project")
+        # Don't pass project_name to avoid cache lookup
+        stats = get_progress_stats(project_dir)
 
         assert stats["total"] == 2
         assert stats["passing"] == 2
@@ -340,7 +346,8 @@ class TestProgressCalculations:
             for issue in issues:
                 f.write(json.dumps(issue) + "\n")
 
-        stats = get_progress_stats(project_dir, "test-project")
+        # Don't pass project_name to avoid cache lookup
+        stats = get_progress_stats(project_dir)
 
         # Should be approximately 33.33
         assert 33.0 <= stats["percentage"] <= 34.0
@@ -351,7 +358,8 @@ class TestProgressCalculations:
         project_dir = tmp_path / "test-project"
         project_dir.mkdir()
 
-        stats = get_progress_stats(project_dir, "test-project")
+        # Don't pass project_name to avoid cache lookup
+        stats = get_progress_stats(project_dir)
 
         # Should not divide by zero
         assert stats["percentage"] == 0.0

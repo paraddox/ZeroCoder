@@ -470,19 +470,24 @@ class TestStateTransitions:
 
     @pytest.mark.unit
     def test_container_state_transitions(self, isolated_registry):
-        """Test valid container state transitions."""
+        """Test valid container state transitions.
+
+        Note: Database only allows 'created', 'running', 'stopping', 'stopped'.
+        'completed' is an in-memory status used by ContainerManager.
+        """
         isolated_registry.register_project(
             name="state-test",
             git_url="https://github.com/user/repo.git"
         )
         isolated_registry.create_container("state-test", 1, "coding")
 
-        # Valid transitions: created -> running -> stopped -> running
+        # Valid transitions for database status
+        # (created -> running -> stopping -> stopped -> running)
         valid_transitions = [
             ("created", "running"),
-            ("running", "stopped"),
+            ("running", "stopping"),
+            ("stopping", "stopped"),
             ("stopped", "running"),
-            ("running", "completed"),
         ]
 
         for from_state, to_state in valid_transitions:

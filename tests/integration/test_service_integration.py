@@ -211,8 +211,10 @@ class TestProgressWebSocketIntegration:
 
         manager = ConnectionManager()
         ws = AsyncMock()
+        ws.accept = AsyncMock()
 
-        await manager.connect("progress-broadcast", ws)
+        # Correct argument order: (websocket, project_name)
+        await manager.connect(ws, "progress-broadcast")
 
         # Simulate progress update
         progress = {
@@ -222,7 +224,7 @@ class TestProgressWebSocketIntegration:
             "percentage": 50.0,
         }
 
-        await manager.broadcast("progress-broadcast", progress)
+        await manager.broadcast_to_project("progress-broadcast", progress)
 
         ws.send_json.assert_called_once_with(progress)
 
@@ -234,8 +236,10 @@ class TestProgressWebSocketIntegration:
 
         manager = ConnectionManager()
         ws = AsyncMock()
+        ws.accept = AsyncMock()
 
-        await manager.connect("feature-broadcast", ws)
+        # Correct argument order: (websocket, project_name)
+        await manager.connect(ws, "feature-broadcast")
 
         # Simulate feature update
         update = {
@@ -244,7 +248,7 @@ class TestProgressWebSocketIntegration:
             "passes": True,
         }
 
-        await manager.broadcast("feature-broadcast", update)
+        await manager.broadcast_to_project("feature-broadcast", update)
 
         ws.send_json.assert_called_once_with(update)
 
@@ -440,13 +444,17 @@ class TestStateSynchronization:
 
     @pytest.mark.integration
     def test_container_state_sync(self, isolated_registry):
-        """Test container state stays synchronized."""
+        """Test container state stays synchronized.
+
+        Note: Database only allows 'created', 'running', 'stopping', 'stopped'.
+        'completed' is an in-memory status used by ContainerManager.
+        """
         # Setup
         isolated_registry.register_project("sync-test", "https://github.com/user/repo.git")
         isolated_registry.create_container("sync-test", 1, "coding")
 
-        # Multiple state updates
-        states = ["running", "stopped", "running", "completed"]
+        # Multiple state updates (only valid database states)
+        states = ["running", "stopping", "stopped", "running"]
 
         for state in states:
             isolated_registry.update_container_status(
@@ -486,22 +494,25 @@ class TestStateSynchronization:
 
         # Add connections
         ws1 = AsyncMock()
+        ws1.accept = AsyncMock()
         ws2 = AsyncMock()
+        ws2.accept = AsyncMock()
 
-        await manager.connect("sync-ws", ws1)
-        await manager.connect("sync-ws", ws2)
+        # Correct argument order: (websocket, project_name)
+        await manager.connect(ws1, "sync-ws")
+        await manager.connect(ws2, "sync-ws")
 
         # Verify state
         assert len(manager.active_connections["sync-ws"]) == 2
 
-        # Remove one
-        manager.disconnect("sync-ws", ws1)
+        # Remove one (disconnect is async)
+        await manager.disconnect(ws1, "sync-ws")
 
         # Verify updated state
         assert len(manager.active_connections["sync-ws"]) == 1
 
         # Remove last
-        manager.disconnect("sync-ws", ws2)
+        await manager.disconnect(ws2, "sync-ws")
 
         # Verify empty
-        assert len(manager.active_connections.get("sync-ws", [])) == 0
+        assert len(manager.active_connections.get("sync-ws", set())) == 0
