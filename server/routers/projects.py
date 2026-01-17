@@ -268,8 +268,8 @@ async def list_projects():
         list_registered_projects, validate_project_path, _, _, _
     ) = _get_registry_functions()
 
-    # Import get_project_container for agent status
-    from .agent import get_project_container
+    # Import container manager functions for agent status
+    from ..services.container_manager import get_all_container_managers
 
     projects = list_registered_projects()
     result = []
@@ -285,16 +285,32 @@ async def list_projects():
         stats = get_project_stats(local_path)
         wizard_incomplete = check_wizard_incomplete(local_path, has_spec)
 
-        # Get agent status for this project
+        # Get aggregate agent status across all containers for this project
         agent_status = None
-        agent_running = None
+        agent_running = False
         try:
-            manager = get_project_container(name)
-            status_dict = manager.get_status_dict()
-            agent_status = status_dict["status"]
-            agent_running = status_dict.get("agent_running", False)
+            managers = get_all_container_managers(name)
+            if managers:
+                # Aggregate status: running > completed > stopped > not_created
+                statuses = []
+                for m in managers:
+                    m._sync_status()
+                    statuses.append(m.status)
+                    if m.is_agent_running():
+                        agent_running = True
+
+                if "running" in statuses:
+                    agent_status = "running"
+                elif "completed" in statuses:
+                    agent_status = "completed"
+                elif "stopped" in statuses:
+                    agent_status = "stopped"
+                else:
+                    agent_status = "not_created"
+            else:
+                agent_status = "not_created"
         except Exception:
-            # If container manager not found or error, leave as None
+            # If error checking containers, leave as None
             pass
 
         # Get agent model from config
