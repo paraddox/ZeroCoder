@@ -437,3 +437,165 @@ def large_issues_dataset():
             for i in range(count)
         ]
     return _generate
+
+
+# =============================================================================
+# WebSocket Test Fixtures
+# =============================================================================
+
+@pytest.fixture
+def websocket_manager():
+    """Create a ConnectionManager instance for testing."""
+    from server.websocket import ConnectionManager
+    return ConnectionManager()
+
+
+@pytest.fixture
+def mock_websocket_client():
+    """Create a mock WebSocket client."""
+    ws = AsyncMock()
+    ws.accept = AsyncMock()
+    ws.send_json = AsyncMock()
+    ws.receive_json = AsyncMock()
+    ws.close = AsyncMock()
+    ws.send_text = AsyncMock()
+    ws.receive_text = AsyncMock()
+    return ws
+
+
+# =============================================================================
+# Container Manager Test Fixtures
+# =============================================================================
+
+@pytest.fixture
+def container_manager_factory(tmp_path):
+    """Factory fixture to create ContainerManager instances."""
+    from server.services.container_manager import ContainerManager, _container_managers
+
+    _container_managers.clear()
+
+    def _create(project_name: str, container_number: int = 1):
+        project_dir = tmp_path / project_name
+        project_dir.mkdir(parents=True, exist_ok=True)
+
+        with patch("server.services.container_manager.get_projects_dir") as mock_dir:
+            mock_dir.return_value = tmp_path
+            with patch.object(ContainerManager, "_sync_status"):
+                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                    return ContainerManager(
+                        project_name=project_name,
+                        git_url=f"https://github.com/user/{project_name}.git",
+                        container_number=container_number,
+                        project_dir=project_dir,
+                        skip_db_persist=True,
+                    )
+    return _create
+
+
+# =============================================================================
+# API Test Fixtures
+# =============================================================================
+
+@pytest.fixture
+def mock_registry_functions():
+    """Mock common registry functions."""
+    with patch("server.routers.projects._get_registry_functions") as mock:
+        mock.return_value = (
+            MagicMock(),  # register_project
+            MagicMock(),  # unregister_project
+            MagicMock(return_value=None),  # get_project_path
+            MagicMock(return_value=None),  # get_project_git_url
+            MagicMock(return_value=None),  # get_project_info
+            MagicMock(return_value=Path("/tmp")),  # get_projects_dir
+            MagicMock(return_value={}),  # list_registered_projects
+            MagicMock(return_value=True),  # validate_project_path
+            MagicMock(),  # mark_project_initialized
+            MagicMock(),  # update_target_container_count
+            MagicMock(return_value=[]),  # list_project_containers
+        )
+        yield mock
+
+
+# =============================================================================
+# Beads Test Fixtures
+# =============================================================================
+
+@pytest.fixture
+def beads_project(tmp_path):
+    """Create a project with initialized beads."""
+    project_dir = tmp_path / "beads-test"
+    project_dir.mkdir()
+
+    beads_dir = project_dir / ".beads"
+    beads_dir.mkdir()
+
+    config_file = beads_dir / "config.yaml"
+    config_file.write_text("prefix: feat\n")
+
+    issues_file = beads_dir / "issues.jsonl"
+    issues_file.write_text("")
+
+    return project_dir
+
+
+@pytest.fixture
+def populated_beads_project(beads_project):
+    """Create a project with beads and sample features."""
+    issues_file = beads_project / ".beads" / "issues.jsonl"
+
+    features = [
+        {"id": "feat-1", "title": "Auth", "status": "open", "priority": 0, "labels": ["auth"]},
+        {"id": "feat-2", "title": "Dashboard", "status": "in_progress", "priority": 1, "labels": ["ui"]},
+        {"id": "feat-3", "title": "API", "status": "closed", "priority": 2, "labels": ["backend"]},
+    ]
+
+    with open(issues_file, "w") as f:
+        for feat in features:
+            f.write(json.dumps(feat) + "\n")
+
+    return beads_project, features
+
+
+# =============================================================================
+# Async Test Utilities
+# =============================================================================
+
+@pytest.fixture
+def run_async():
+    """Helper to run async functions in sync tests."""
+    import asyncio
+
+    def _run(coro):
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
+    return _run
+
+
+# =============================================================================
+# Time-based Test Fixtures
+# =============================================================================
+
+@pytest.fixture
+def frozen_time():
+    """Fixture for time-sensitive tests."""
+    from datetime import datetime
+    import time
+
+    frozen = datetime(2024, 1, 15, 12, 0, 0)
+    frozen_timestamp = frozen.timestamp()
+
+    def mock_now(*args, **kwargs):
+        return frozen
+
+    def mock_time():
+        return frozen_timestamp
+
+    with patch("datetime.datetime") as mock_datetime:
+        mock_datetime.now = mock_now
+        mock_datetime.fromisoformat = datetime.fromisoformat
+        with patch("time.time", mock_time):
+            yield frozen
