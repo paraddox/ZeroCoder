@@ -344,7 +344,7 @@ function App() {
             />
 
             {/* Container List - show running containers with status and controls */}
-            {containers && containers.length > 0 && (
+            {containers && (
               <ContainerList
                 containers={containers}
                 onViewLogs={handleViewContainerLogs}
