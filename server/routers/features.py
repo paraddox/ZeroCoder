@@ -6,6 +6,7 @@ API endpoints for feature/test case management using beads.
 Routes through container via docker exec. Auto-starts container for edits.
 """
 
+import json
 import logging
 import re
 import sys
@@ -45,6 +46,28 @@ def _get_project_git_url(project_name: str) -> str | None:
 
     from registry import get_project_git_url
     return get_project_git_url(project_name)
+
+
+def read_local_beads_features(project_dir: Path) -> list[dict]:
+    """Read features directly from local project's .beads/issues.jsonl."""
+    issues_file = project_dir / ".beads" / "issues.jsonl"
+    if not issues_file.exists():
+        return []
+
+    features = []
+    try:
+        with open(issues_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        task = json.loads(line)
+                        features.append(beads_task_to_feature(task))
+                    except json.JSONDecodeError:
+                        continue
+    except (PermissionError, OSError) as e:
+        logger.warning(f"Failed to read local beads: {e}")
+    return features
 
 
 router = APIRouter(prefix="/api/projects/{project_name}/features", tags=["features"])
@@ -191,6 +214,10 @@ async def list_features(project_name: str):
     # Fall back to cache lookup if beads-sync didn't return data
     if not features:
         features = get_cached_features(project_name)
+
+    # Final fallback: read directly from local project beads
+    if not features:
+        features = read_local_beads_features(project_dir)
 
     pending = []
     in_progress = []
