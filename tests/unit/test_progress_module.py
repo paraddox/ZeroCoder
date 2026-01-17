@@ -19,9 +19,40 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from progress import (
     has_features,
     has_open_features,
-    get_progress_stats,
-    read_beads_issues,
+    count_passing_tests,
+    get_all_passing_features,
 )
+
+
+def get_progress_stats(project_dir: Path, project_name: str = None) -> dict:
+    """Helper function to get progress stats in the expected format."""
+    passing, in_progress, total = count_passing_tests(project_dir, project_name)
+    percentage = (passing / total * 100) if total > 0 else 0.0
+    return {
+        "passing": passing,
+        "in_progress": in_progress,
+        "total": total,
+        "percentage": percentage,
+    }
+
+
+def read_beads_issues(project_dir: Path) -> list:
+    """Helper function to read beads issues from JSONL file."""
+    issues_file = project_dir / ".beads" / "issues.jsonl"
+    if not issues_file.exists():
+        return []
+
+    issues = []
+    with open(issues_file, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                issues.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return issues
 
 
 class TestHasFeatures:
@@ -97,7 +128,8 @@ class TestHasOpenFeatures:
             for issue in issues:
                 f.write(json.dumps(issue) + "\n")
 
-        result = has_open_features(project_dir, "test-project")
+        # Don't pass project_name to force direct file read (no cache lookup)
+        result = has_open_features(project_dir)
 
         assert result is True
 
@@ -118,7 +150,8 @@ class TestHasOpenFeatures:
             for issue in issues:
                 f.write(json.dumps(issue) + "\n")
 
-        result = has_open_features(project_dir, "test-project")
+        # Don't pass project_name to force direct file read (no cache lookup)
+        result = has_open_features(project_dir)
 
         assert result is False
 
@@ -139,7 +172,8 @@ class TestHasOpenFeatures:
             for issue in issues:
                 f.write(json.dumps(issue) + "\n")
 
-        result = has_open_features(project_dir, "test-project")
+        # Don't pass project_name to force direct file read (no cache lookup)
+        result = has_open_features(project_dir)
 
         assert result is True
 

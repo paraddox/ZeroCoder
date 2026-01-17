@@ -18,7 +18,10 @@ import json
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from server.websocket import WebSocketManager
+from server.websocket import ConnectionManager
+
+# Alias for backward compatibility with tests
+WebSocketManager = ConnectionManager
 
 
 class TestWebSocketManager:
@@ -58,9 +61,9 @@ class TestWebSocketManager:
         project_name = "test-project"
 
         await ws_manager.connect(mock_websocket, project_name)
-        ws_manager.disconnect(mock_websocket, project_name)
+        await ws_manager.disconnect(mock_websocket, project_name)
 
-        assert mock_websocket not in ws_manager.active_connections.get(project_name, [])
+        assert mock_websocket not in ws_manager.active_connections.get(project_name, set())
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -69,7 +72,7 @@ class TestWebSocketManager:
         project_name = "test-project"
 
         await ws_manager.connect(mock_websocket, project_name)
-        ws_manager.disconnect(mock_websocket, project_name)
+        await ws_manager.disconnect(mock_websocket, project_name)
 
         # Empty project list should be removed
         assert project_name not in ws_manager.active_connections or \
@@ -83,7 +86,7 @@ class TestWebSocketManager:
         message = {"type": "test", "data": {"value": 123}}
 
         await ws_manager.connect(mock_websocket, project_name)
-        await ws_manager.broadcast(project_name, message)
+        await ws_manager.broadcast_to_project(project_name, message)
 
         mock_websocket.send_json.assert_called_once_with(message)
 
@@ -101,7 +104,7 @@ class TestWebSocketManager:
 
         await ws_manager.connect(ws1, project_name)
         await ws_manager.connect(ws2, project_name)
-        await ws_manager.broadcast(project_name, message)
+        await ws_manager.broadcast_to_project(project_name, message)
 
         ws1.send_json.assert_called_once_with(message)
         ws2.send_json.assert_called_once_with(message)
@@ -111,7 +114,7 @@ class TestWebSocketManager:
     async def test_broadcast_to_nonexistent_project(self, ws_manager):
         """Test broadcasting to project with no clients."""
         # Should not raise error
-        await ws_manager.broadcast("nonexistent", {"type": "test"})
+        await ws_manager.broadcast_to_project("nonexistent", {"type": "test"})
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -129,7 +132,7 @@ class TestWebSocketManager:
         await ws_manager.connect(ws_bad, project_name)
 
         # Should not raise, should handle error gracefully
-        await ws_manager.broadcast(project_name, {"type": "test"})
+        await ws_manager.broadcast_to_project(project_name, {"type": "test"})
 
         ws_good.send_json.assert_called_once()
 
@@ -149,7 +152,7 @@ class TestWebSocketManager:
         assert "project-b" in ws_manager.active_connections
 
         # Broadcast to project-a should only reach ws1
-        await ws_manager.broadcast("project-a", {"type": "test"})
+        await ws_manager.broadcast_to_project("project-a", {"type": "test"})
 
         ws1.send_json.assert_called_once()
         ws2.send_json.assert_not_called()
@@ -187,7 +190,7 @@ class TestWebSocketMessageTypes:
             }
         }
 
-        await ws_manager.broadcast("test", message)
+        await ws_manager.broadcast_to_project("test", message)
 
         mock_websocket.send_json.assert_called_with(message)
 
@@ -206,7 +209,7 @@ class TestWebSocketMessageTypes:
             }
         }
 
-        await ws_manager.broadcast("test", message)
+        await ws_manager.broadcast_to_project("test", message)
 
         mock_websocket.send_json.assert_called_with(message)
 
@@ -223,7 +226,7 @@ class TestWebSocketMessageTypes:
             }
         }
 
-        await ws_manager.broadcast("test", message)
+        await ws_manager.broadcast_to_project("test", message)
 
         mock_websocket.send_json.assert_called_with(message)
 
@@ -241,7 +244,7 @@ class TestWebSocketMessageTypes:
             }
         }
 
-        await ws_manager.broadcast("test", message)
+        await ws_manager.broadcast_to_project("test", message)
 
         mock_websocket.send_json.assert_called_with(message)
 
@@ -267,7 +270,7 @@ class TestWebSocketConcurrency:
         # Connect 10 clients concurrently
         clients = await asyncio.gather(*[connect_client(i) for i in range(10)])
 
-        assert len(ws_manager.active_connections.get("test-project", [])) == 10
+        assert len(ws_manager.active_connections.get("test-project", set())) == 10
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -281,7 +284,7 @@ class TestWebSocketConcurrency:
 
         # Broadcast 10 messages concurrently
         messages = [{"type": "test", "data": {"i": i}} for i in range(10)]
-        await asyncio.gather(*[ws_manager.broadcast("test", m) for m in messages])
+        await asyncio.gather(*[ws_manager.broadcast_to_project("test", m) for m in messages])
 
         assert ws.send_json.call_count == 10
 
@@ -298,7 +301,7 @@ class TestWebSocketConcurrency:
             clients.append((ws, i))
 
         async def remove_client(ws):
-            ws_manager.disconnect(ws, "test")
+            await ws_manager.disconnect(ws, "test")
 
         # Add clients
         await asyncio.gather(*[add_client(i) for i in range(5)])
@@ -313,3 +316,37 @@ class TestWebSocketConcurrency:
         await asyncio.gather(*tasks)
 
         # Should handle without errors
+
+
+class TestConnectionCount:
+    """Tests for connection count functionality."""
+
+    @pytest.fixture
+    def ws_manager(self):
+        """Create a WebSocketManager instance."""
+        return WebSocketManager()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_get_connection_count(self, ws_manager):
+        """Test getting connection count for a project."""
+        assert ws_manager.get_connection_count("test") == 0
+
+        ws1 = AsyncMock()
+        ws1.accept = AsyncMock()
+        await ws_manager.connect(ws1, "test")
+        assert ws_manager.get_connection_count("test") == 1
+
+        ws2 = AsyncMock()
+        ws2.accept = AsyncMock()
+        await ws_manager.connect(ws2, "test")
+        assert ws_manager.get_connection_count("test") == 2
+
+        await ws_manager.disconnect(ws1, "test")
+        assert ws_manager.get_connection_count("test") == 1
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_get_connection_count_nonexistent_project(self, ws_manager):
+        """Test getting connection count for nonexistent project."""
+        assert ws_manager.get_connection_count("nonexistent") == 0
