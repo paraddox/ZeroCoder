@@ -300,19 +300,15 @@ async def start_all_containers(project_name: str):
     if (project_dir / ".git").exists():
         try:
             # Sync beads first to commit any pending task state changes
+            # Use beads API to avoid lock conflicts with container beads operations
             if (project_dir / ".beads").exists():
                 print(f"[StartAll] Syncing beads state...")
-                sync_result = subprocess.run(
-                    ["bd", "--no-daemon", "sync"],
-                    cwd=str(project_dir),
-                    capture_output=True,
-                    text=True,
-                    timeout=60,
-                )
-                if sync_result.returncode == 0:
+                from .beads_api import run_beads_write_command
+                sync_result = await run_beads_write_command(project_name, ["sync"])
+                if "error" not in sync_result:
                     print(f"[StartAll] Beads synced successfully")
                 else:
-                    print(f"[StartAll] Beads sync warning: {sync_result.stderr}")
+                    print(f"[StartAll] Beads sync warning: {sync_result.get('error', 'Unknown error')}")
 
             print(f"[StartAll] Pulling latest changes to local clone...")
 
