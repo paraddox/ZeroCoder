@@ -299,6 +299,21 @@ async def start_all_containers(project_name: str):
     # This ensures we have up-to-date .beads/ data for has_features check
     if (project_dir / ".git").exists():
         try:
+            # Sync beads first to commit any pending task state changes
+            if (project_dir / ".beads").exists():
+                print(f"[StartAll] Syncing beads state...")
+                sync_result = subprocess.run(
+                    ["bd", "--no-daemon", "sync"],
+                    cwd=str(project_dir),
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                if sync_result.returncode == 0:
+                    print(f"[StartAll] Beads synced successfully")
+                else:
+                    print(f"[StartAll] Beads sync warning: {sync_result.stderr}")
+
             print(f"[StartAll] Pulling latest changes to local clone...")
 
             # Stash any unstaged changes first to avoid pull conflicts
