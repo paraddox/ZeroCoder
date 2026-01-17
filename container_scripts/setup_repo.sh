@@ -2,13 +2,16 @@
 # =============================================================================
 # Repository Setup Script
 # =============================================================================
-# Runs after repo clone/pull in container entrypoint to initialize beads.
+# Runs after repo clone/pull in container entrypoint.
+# Handles beads sync via host API (beads_client) instead of local bd.
 #
-# For init containers: Skip bd init (agent creates beads from scratch)
-# For coding containers: Run bd init if .beads/ missing, then doctor and sync
+# For init containers: Skip beads sync (agent creates beads from scratch)
+# For coding containers: Sync beads state via host API
 #
 # Environment variables:
 #   CONTAINER_TYPE: "init" or "coding" (default: coding)
+#   HOST_API_URL: Host API URL for beads operations
+#   PROJECT_NAME: Project name for beads operations
 
 set -o pipefail
 
@@ -23,7 +26,7 @@ log() {
 log "Starting repository setup (type: $CONTAINER_TYPE)"
 cd "$PROJECT_DIR" || exit 1
 
-# Kill any stale daemon and remove lock files
+# Kill any stale daemon processes and remove lock files
 if [ -f "$BEADS_DIR/daemon.pid" ]; then
     DAEMON_PID=$(cat "$BEADS_DIR/daemon.pid" 2>/dev/null)
     if [ -n "$DAEMON_PID" ] && kill -0 "$DAEMON_PID" 2>/dev/null; then
@@ -34,35 +37,20 @@ if [ -f "$BEADS_DIR/daemon.pid" ]; then
     rm -f "$BEADS_DIR/daemon.pid" "$BEADS_DIR/daemon.lock"
 fi
 
-# Skip bd init for init containers - agent will create beads from scratch
+# Skip beads sync for init containers - agent will create beads from scratch
 if [ "$CONTAINER_TYPE" = "init" ]; then
-    log "Init container - skipping beads initialization"
-    # Still run doctor if .beads/ exists (e.g., recovery scenario)
-    if [ -d "$BEADS_DIR" ]; then
-        bd --no-daemon doctor --fix --yes 2>&1 || true
-    fi
+    log "Init container - skipping beads sync"
     exit 0
 fi
 
-# Coding containers: Initialize beads if missing
-if [ ! -d "$BEADS_DIR" ]; then
-    log "Initializing beads with --branch beads-sync..."
-    if ! bd --no-daemon init --branch beads-sync --prefix feat 2>&1; then
-        log "WARNING: bd init failed (may already be initialized)"
-    fi
-fi
-
-# Fix beads configuration and sync
+# Coding containers: Sync beads state via host API
 if [ -d "$BEADS_DIR" ]; then
-    log "Running bd doctor --fix..."
-    bd --no-daemon doctor --fix --yes 2>&1 || log "WARNING: bd doctor failed"
-
-    # Only sync if no other sync is in progress (agent may be syncing)
-    if [ ! -f "$BEADS_DIR/.sync.lock" ]; then
-        log "Syncing beads state..."
-        bd --no-daemon sync 2>&1 || log "WARNING: bd sync failed"
+    # Check if beads_client is available and environment is set
+    if command -v beads_client &> /dev/null && [ -n "$HOST_API_URL" ] && [ -n "$PROJECT_NAME" ]; then
+        log "Syncing beads state via host API..."
+        beads_client sync 2>&1 || log "WARNING: beads_client sync failed (host API may not be ready yet)"
     else
-        log "Skipping sync (another sync in progress, agent will handle it)"
+        log "Skipping beads sync (beads_client not configured)"
     fi
 fi
 

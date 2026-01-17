@@ -59,10 +59,6 @@ RUN npm install -g @anthropic-ai/claude-code
 # Install Claude Agent SDK
 RUN pip install --no-cache-dir claude-agent-sdk
 
-# Install beads CLI
-RUN curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash \
-    && mv /root/.local/bin/bd /usr/local/bin/bd 2>/dev/null || true
-
 # =============================================================================
 # OpenCode SDK Setup (for GLM-4.7 model)
 # =============================================================================
@@ -206,11 +202,6 @@ if [ -n "\$GIT_REMOTE_URL" ]; then
         if su - coder -c "git clone \$GIT_REMOTE_URL /project"; then
             chmod -R a+rwX /project 2>/dev/null || true
             echo "[$(date -Iseconds)] Repository cloned successfully" >> /var/log/agent.log
-            # Set up beads git hooks for sync
-            if [ -d "/project/.beads" ]; then
-                su - coder -c "cd /project && bd sync" 2>/dev/null || true
-                echo "[$(date -Iseconds)] Beads sync initialized" >> /var/log/agent.log
-            fi
         else
             echo "[$(date -Iseconds)] ERROR: Failed to clone repository" >> /var/log/agent.log
         fi
@@ -218,10 +209,6 @@ if [ -n "\$GIT_REMOTE_URL" ]; then
         echo "[$(date -Iseconds)] Repository already cloned, pulling latest..." >> /var/log/agent.log
         # Run git operations as coder user
         su - coder -c "cd /project && git fetch origin && git checkout main && git pull --rebase origin main"
-        # Sync beads after pull
-        if [ -d "/project/.beads" ]; then
-            su - coder -c "cd /project && bd sync" 2>/dev/null || true
-        fi
         echo "[$(date -Iseconds)] Repository updated successfully" >> /var/log/agent.log
     fi
 fi
@@ -237,10 +224,10 @@ if [ -f "/project/.beads/daemon.pid" ]; then
     rm -f /project/.beads/daemon.pid /project/.beads/daemon.lock
 fi
 
-# Run repository setup script (initializes beads based on CONTAINER_TYPE)
+# Run repository setup script (syncs beads via host API)
 if [ -f "/app/setup_repo.sh" ]; then
     echo "[$(date -Iseconds)] Running repository setup (type: \${CONTAINER_TYPE:-coding})..." >> /var/log/agent.log
-    su - coder -c "cd /project && CONTAINER_TYPE=\${CONTAINER_TYPE:-coding} BD_NO_DAEMON=true /app/setup_repo.sh"
+    su - coder -c "cd /project && CONTAINER_TYPE=\${CONTAINER_TYPE:-coding} HOST_API_URL=\${HOST_API_URL:-} PROJECT_NAME=\${PROJECT_NAME:-} /app/setup_repo.sh"
 fi
 
 # Keep container running by tailing the agent log
