@@ -300,6 +300,19 @@ async def start_all_containers(project_name: str):
     if (project_dir / ".git").exists():
         try:
             print(f"[StartAll] Pulling latest changes to local clone...")
+
+            # Stash any unstaged changes first to avoid pull conflicts
+            stash_result = subprocess.run(
+                ["git", "-C", str(project_dir), "stash", "--include-untracked"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            stashed = "No local changes to save" not in stash_result.stdout
+            if stashed:
+                print(f"[StartAll] Stashed local changes")
+
+            # Now pull
             pull_result = subprocess.run(
                 ["git", "-C", str(project_dir), "pull", "--rebase", "origin", "main"],
                 capture_output=True,
@@ -310,6 +323,19 @@ async def start_all_containers(project_name: str):
                 print(f"[StartAll] Local clone updated successfully")
             else:
                 print(f"[StartAll] Git pull warning: {pull_result.stderr}")
+
+            # Restore stashed changes
+            if stashed:
+                pop_result = subprocess.run(
+                    ["git", "-C", str(project_dir), "stash", "pop"],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if pop_result.returncode == 0:
+                    print(f"[StartAll] Restored stashed changes")
+                else:
+                    print(f"[StartAll] Stash pop warning: {pop_result.stderr}")
         except Exception as e:
             print(f"[StartAll] Git pull error (continuing anyway): {e}")
 
