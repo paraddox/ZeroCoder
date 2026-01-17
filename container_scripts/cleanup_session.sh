@@ -46,7 +46,7 @@ done
 # 4. Pull latest from main
 log "Pulling latest..."
 git fetch origin 2>&1 || true
-git pull origin main 2>&1 || git reset --hard origin/main 2>&1 || true
+git pull --rebase origin main 2>&1 || git reset --hard origin/main 2>&1 || true
 
 # 5. Sync beads state (use --no-daemon to avoid conflicts)
 if [ -d "$PROJECT_DIR/.beads" ]; then

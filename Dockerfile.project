@@ -213,7 +213,7 @@ if [ -n "\$GIT_REMOTE_URL" ]; then
     else
         echo "[$(date -Iseconds)] Repository already cloned, pulling latest..." >> /var/log/agent.log
         # Run git operations as coder user
-        su - coder -c "cd /project && git fetch origin && git checkout main && git pull origin main"
+        su - coder -c "cd /project && git fetch origin && git checkout main && git pull --rebase origin main"
         # Sync beads after pull
         if [ -d "/project/.beads" ]; then
             su - coder -c "cd /project && bd sync" 2>/dev/null || true

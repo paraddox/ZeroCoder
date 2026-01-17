@@ -285,7 +285,7 @@ async def start_all_containers(project_name: str):
         try:
             print(f"[StartAll] Pulling latest changes to local clone...")
             pull_result = subprocess.run(
-                ["git", "-C", str(project_dir), "pull", "origin", "main"],
+                ["git", "-C", str(project_dir), "pull", "--rebase", "origin", "main"],
                 capture_output=True,
                 text=True,
                 timeout=30,
