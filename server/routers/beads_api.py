@@ -30,13 +30,18 @@ _beads_locks: dict[str, asyncio.Lock] = {}
 
 
 def _get_project_path(project_name: str) -> Path:
-    """Get project path from registry."""
+    """Get beads-sync clone path for project.
+
+    The beads API must operate on the beads-sync clone (not the main project clone)
+    because the UI reads features from beads-sync via BeadsSyncManager. Write
+    operations must go to the same clone so data stays consistent.
+    """
     _root = Path(__file__).parent.parent.parent
     if str(_root) not in sys.path:
         sys.path.insert(0, str(_root))
 
-    from registry import get_project_path
-    return get_project_path(project_name)
+    from registry import get_beads_sync_dir
+    return get_beads_sync_dir() / project_name
 
 
 def validate_project_name(name: str) -> str:
