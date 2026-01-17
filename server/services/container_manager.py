@@ -226,7 +226,7 @@ class ContainerManager:
             logger.warning(f"Failed to remove user-started marker: {e}")
 
     def _sync_status(self) -> None:
-        """Sync status with actual Docker container state."""
+        """Sync status with actual Docker container state (Docker is source of truth)."""
         # Preserve "completed" status - don't overwrite it
         if self._status == "completed":
             return
@@ -234,37 +234,59 @@ class ContainerManager:
         # Always refresh user_started from marker file (may have been created externally)
         self._user_started = self._check_user_started_marker()
 
-        # First check if container is registered in our database
-        # This prevents Docker containers from previous runs showing as active
-        from registry import get_container
-        db_container = get_container(self.project_name, self.container_number)
-        if db_container is None:
-            # Container not registered - it's not created by our system
-            self._status = "not_created"
-            return
-
-        # Container is registered, now check Docker for live status
+        # Docker is the source of truth - check Docker first
         try:
             result = subprocess.run(
                 ["docker", "inspect", "-f", "{{.State.Status}}", self.container_name],
                 capture_output=True,
                 text=True,
             )
-            if result.returncode == 0:
-                docker_status = result.stdout.strip()
-                if docker_status == "running":
-                    self._status = "running"
-                    # Initialize last_activity from container logs if not set
-                    if self.last_activity is None:
-                        self._init_last_activity_from_logs()
-                else:
-                    self._status = "stopped"
-            else:
-                # Docker container doesn't exist but DB says it was created
-                # Could be removed manually - still show as not_created
-                self._status = "not_created"
+            docker_exists = result.returncode == 0
+            docker_status = result.stdout.strip() if docker_exists else None
         except Exception as e:
-            logger.warning(f"Failed to check container status: {e}")
+            logger.warning(f"Failed to check Docker container status: {e}")
+            docker_exists = False
+            docker_status = None
+
+        # Import registry functions for DB sync
+        from registry import get_container, create_container, delete_container
+
+        if docker_exists:
+            # Docker has this container - ensure DB reflects this
+            db_container = get_container(self.project_name, self.container_number)
+            if db_container is None:
+                # Container exists in Docker but not in DB - register it
+                try:
+                    container_type = "init" if self._is_init_container else "coding"
+                    create_container(
+                        project_name=self.project_name,
+                        container_number=self.container_number,
+                        container_type=container_type
+                    )
+                    logger.info(f"Registered existing Docker container {self.container_name} in database")
+                except Exception as e:
+                    logger.warning(f"Failed to register container in database: {e}")
+
+            # Set status based on Docker state
+            if docker_status == "running":
+                self._status = "running"
+                # Initialize last_activity from container logs if not set
+                if self.last_activity is None:
+                    self._init_last_activity_from_logs()
+            else:
+                self._status = "stopped"
+        else:
+            # Docker doesn't have this container
+            db_container = get_container(self.project_name, self.container_number)
+            if db_container is not None:
+                # DB thinks it exists but Docker doesn't - clean up DB
+                try:
+                    container_type = "init" if self._is_init_container else "coding"
+                    delete_container(self.project_name, self.container_number, container_type)
+                    logger.info(f"Removed stale DB entry for {self.container_name}")
+                except Exception as e:
+                    logger.warning(f"Failed to clean up stale container from database: {e}")
+
             self._status = "not_created"
 
     def _init_last_activity_from_logs(self) -> None:
