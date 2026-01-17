@@ -15,6 +15,11 @@ interface ContainerListProps {
 }
 
 const statusConfig: Record<ContainerStatusType, { color: string; label: string; pulse: boolean }> = {
+  not_created: {
+    color: 'var(--color-text-muted)',
+    label: 'Not Created',
+    pulse: false,
+  },
   created: {
     color: 'var(--color-text-muted)',
     label: 'Created',
@@ -33,6 +38,11 @@ const statusConfig: Record<ContainerStatusType, { color: string; label: string; 
   stopped: {
     color: 'var(--color-text-muted)',
     label: 'Stopped',
+    pulse: false,
+  },
+  completed: {
+    color: 'var(--color-done)',
+    label: 'Completed',
     pulse: false,
   },
 }

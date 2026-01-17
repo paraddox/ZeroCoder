@@ -43,7 +43,7 @@ export interface ProjectSettings {
 
 // Container types
 export type ContainerType = 'init' | 'coding'
-export type ContainerStatusType = 'created' | 'running' | 'stopping' | 'stopped'
+export type ContainerStatusType = 'not_created' | 'created' | 'running' | 'stopping' | 'stopped' | 'completed'
 export type AgentType = 'coder' | 'initializer' | 'hound' | 'overseer'
 export type SdkType = 'claude' | 'opencode'
 
