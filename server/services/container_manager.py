@@ -867,7 +867,7 @@ class ContainerManager:
             # Get in_progress features
             result = subprocess.run(
                 ["docker", "exec", "-u", "coder", self.container_name,
-                 "bd", "list", "--status=in_progress", "--json"],
+                 "beads_client", "list", "--status=in_progress"],
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -896,7 +896,7 @@ class ContainerManager:
 
                 update_result = subprocess.run(
                     ["docker", "exec", "-u", "coder", self.container_name,
-                     "bd", "update", feature_id, "--status=open"],
+                     "beads_client", "update", feature_id, "--status=open"],
                     capture_output=True,
                     text=True,
                     timeout=30,
@@ -906,7 +906,7 @@ class ContainerManager:
 
             # Sync after recovery
             subprocess.run(
-                ["docker", "exec", "-u", "coder", self.container_name, "bd", "sync"],
+                ["docker", "exec", "-u", "coder", self.container_name, "beads_client", "sync"],
                 capture_output=True,
                 text=True,
                 timeout=60,
@@ -1812,7 +1812,7 @@ class ContainerManager:
         try:
             result = subprocess.run(
                 ["docker", "exec", "-u", "coder", self.container_name,
-                 "bd", "stats", "--json"],
+                 "beads_client", "stats"],
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -1849,20 +1849,16 @@ class ContainerManager:
         try:
             result = subprocess.run(
                 ["docker", "exec", "-u", "coder", self.container_name,
-                 "bd", "list", "--status=closed", f"--limit={limit}"],
+                 "beads_client", "list", "--status=closed"],
                 capture_output=True,
                 text=True,
                 timeout=30,
             )
             if result.returncode == 0:
-                # Parse output - each line is a task (format: "id: title")
-                task_ids = []
-                for line in result.stdout.strip().split("\n"):
-                    if line and ":" in line:
-                        task_id = line.split(":")[0].strip()
-                        if task_id:
-                            task_ids.append(task_id)
-                return task_ids
+                # beads_client returns JSON array
+                tasks = json.loads(result.stdout) if result.stdout.strip() else []
+                task_ids = [t.get("id") for t in tasks if t.get("id")]
+                return task_ids[:limit]  # Apply limit in Python since beads_client doesn't support it
         except Exception as e:
             logger.warning(f"Failed to get recent closed tasks: {e}")
         return []
@@ -2576,10 +2572,10 @@ async def get_tasks_for_hound_review(project_name: str, container_name: str) -> 
         List of task IDs to review (up to 20)
     """
     try:
-        # Get all closed tasks as JSON (higher limit to have pool for random selection)
+        # Get all closed tasks as JSON (beads_client returns all, we limit in Python)
         result = subprocess.run(
             ["docker", "exec", "-u", "coder", container_name,
-             "bd", "--no-daemon", "list", "--status=closed", "--limit=100", "--json"],
+             "beads_client", "list", "--status=closed"],
             capture_output=True,
             text=True,
             timeout=30,
@@ -2592,7 +2588,8 @@ async def get_tasks_for_hound_review(project_name: str, container_name: str) -> 
         all_closed = []
         try:
             tasks = json.loads(result.stdout) if result.stdout.strip() else []
-            for task in tasks:
+            # Limit to 100 tasks for random selection pool
+            for task in tasks[:100]:
                 task_id = task.get("id")
                 if task_id:
                     all_closed.append(task_id)

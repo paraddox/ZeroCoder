@@ -253,6 +253,10 @@ def main() -> None:
     # Export PORT for container_manager to use when setting HOST_API_URL
     os.environ["PORT"] = str(port)
 
+    # Write port to file so start-app.sh can read it
+    port_file = Path("/tmp/zerocoder-port.txt")
+    port_file.write_text(str(port))
+
     try:
         if dev_mode:
             backend, frontend = start_dev_server(port)

@@ -4,16 +4,22 @@ cd "$(dirname "$0")"
 # This script launches the web UI for the autonomous coding agent.
 
 # Load environment variables from .env file if it exists
+# Note: PORT is determined dynamically by start-app.py, don't load from .env
 if [ -f ".env" ]; then
     # Source each line to properly handle tilde expansion
     while IFS='=' read -r key value; do
         # Skip empty lines and comments
         [[ -z "$key" || "$key" =~ ^# ]] && continue
+        # Skip PORT - it's determined dynamically by start-app.py
+        [[ "$key" == "PORT" ]] && continue
         # Expand tilde in value
         value="${value/#\~/$HOME}"
         export "$key=$value"
     done < .env
 fi
+
+# Port file written by start-app.py
+PORT_FILE="/tmp/zerocoder-port.txt"
 
 echo ""
 echo "===================================="
@@ -230,14 +236,20 @@ if [[ " $* " == *" -bg "* ]] || [[ " $* " == *" --background "* ]]; then
     nohup python start-app.py $ARGS > /tmp/zerocoder-ui.log 2>&1 &
     BG_PID=$!
     echo "$BG_PID" > "$PID_FILE"
-    sleep 2  # Wait for uvicorn to start
+    sleep 3  # Wait for uvicorn to start and port file to be written
     # Find the actual uvicorn PID
     UVICORN_PID=$(pgrep -f "uvicorn server.main:app" | head -1)
     echo "Shell PID: $BG_PID"
     echo "Uvicorn PID: $UVICORN_PID"
     echo "Log file: /tmp/zerocoder-ui.log"
     echo ""
-    echo "UI available at: http://localhost:8000"
+    # Read port from file written by start-app.py
+    if [ -f "$PORT_FILE" ]; then
+        ACTUAL_PORT=$(cat "$PORT_FILE")
+        echo "UI available at: http://localhost:$ACTUAL_PORT"
+    else
+        echo "UI available at: http://localhost:8888 (port file not found)"
+    fi
     echo "To stop: ./start-app.sh --stop"
 else
     # Run in foreground with signal handling
