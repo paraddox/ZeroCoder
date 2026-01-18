@@ -35,7 +35,7 @@ interface WebSocketState {
 
 const MAX_LOGS = 100 // Keep last 100 log lines
 
-export function useProjectWebSocket(projectName: string | null) {
+export function useWebSocket(projectName: string | null) {
   const [state, setState] = useState<WebSocketState>({
     progress: { passing: 0, in_progress: 0, total: 0, percentage: 0 },
     agentStatus: 'stopped',
@@ -251,3 +251,5 @@ export function useProjectWebSocket(projectName: string | null) {
     clearLogs,
   }
 }
+
+export const useProjectWebSocket = useWebSocket
