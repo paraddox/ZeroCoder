@@ -6,6 +6,11 @@ Main entry point for the Autonomous Coding UI server.
 Provides REST API, WebSocket, and static file serving.
 """
 
+# Initialize centralized logging FIRST, before any other imports
+from .logging_config import cleanup_old_logs, setup_logging
+
+setup_logging()
+
 import asyncio
 import atexit
 import logging
@@ -64,13 +69,23 @@ async def idle_container_monitor():
             await asyncio.sleep(IDLE_CHECK_INTERVAL)
             stopped = await cleanup_idle_containers()
             if stopped:
-                import logging
-                logging.getLogger(__name__).info(f"Stopped idle containers: {stopped}")
+                logger.info(f"Stopped idle containers: {stopped}")
         except asyncio.CancelledError:
             break
         except Exception as e:
-            import logging
-            logging.getLogger(__name__).warning(f"Idle monitor error: {e}")
+            logger.warning(f"Idle monitor error: {e}")
+
+
+async def log_cleanup_task():
+    """Periodically clean up old log files (every hour)."""
+    while True:
+        try:
+            await asyncio.sleep(3600)  # Every hour
+            cleanup_old_logs()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.warning(f"Log cleanup error: {e}")
 
 
 def cleanup_on_exit():
@@ -149,6 +164,7 @@ async def lifespan(app: FastAPI):
     health_monitor_task = asyncio.create_task(start_agent_health_monitor())
     beads_sync_task = asyncio.create_task(start_beads_sync_poller())
     hound_trigger_task = asyncio.create_task(start_hound_trigger_monitor())
+    log_cleanup_monitor_task = asyncio.create_task(log_cleanup_task())
 
     yield
 
@@ -159,6 +175,7 @@ async def lifespan(app: FastAPI):
     health_monitor_task.cancel()
     beads_sync_task.cancel()
     hound_trigger_task.cancel()
+    log_cleanup_monitor_task.cancel()
     try:
         await idle_monitor_task
     except asyncio.CancelledError:
@@ -173,6 +190,10 @@ async def lifespan(app: FastAPI):
         pass
     try:
         await hound_trigger_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await log_cleanup_monitor_task
     except asyncio.CancelledError:
         pass
 
