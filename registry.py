@@ -6,8 +6,10 @@ Cross-platform project registry for storing project name to git URL mappings.
 Uses SQLite database stored at ~/.zerocoder/registry.db.
 
 Local clones are stored at:
-- ~/.zerocoder/projects/{name}/ - Full clone for wizard and edit mode
-- ~/.zerocoder/beads-sync/{name}/ - beads-sync branch clone for task state
+- ~/.zerocoder/projects/{name}/ - Full clone for all operations (wizard, edit, beads)
+
+Note: The separate beads-sync branch clone (~/.zerocoder/beads-sync/) is deprecated.
+All beads operations now use the project directory directly.
 """
 
 import logging
@@ -79,11 +81,6 @@ class Project(Base):
     def local_path(self) -> Path:
         """Get the local clone path for this project."""
         return get_projects_dir() / self.name
-
-    @property
-    def beads_sync_path(self) -> Path:
-        """Get the beads-sync clone path for this project."""
-        return get_beads_sync_dir() / self.name
 
 
 class Container(Base):
@@ -191,11 +188,21 @@ def get_projects_dir() -> Path:
 
 def get_beads_sync_dir() -> Path:
     """
-    Get the beads-sync directory for beads-sync branch clones.
+    DEPRECATED: Get the beads-sync directory for beads-sync branch clones.
+
+    This function is deprecated. All beads operations now use the project
+    directory directly via get_projects_dir(). This function is kept for
+    backwards compatibility but should not be used for new code.
 
     Returns:
         Path to ~/.zerocoder/beads-sync/ (created if it doesn't exist)
     """
+    import warnings
+    warnings.warn(
+        "get_beads_sync_dir() is deprecated. Use get_projects_dir() instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
     beads_sync_dir = get_config_dir() / "beads-sync"
     beads_sync_dir.mkdir(parents=True, exist_ok=True)
     return beads_sync_dir

@@ -80,11 +80,11 @@ async def revert_all_in_progress_tasks() -> dict[str, int]:
     Called on server startup.
     Returns dict of project_name -> tasks_reverted.
     """
-    from registry import list_valid_projects, get_beads_sync_dir
+    from registry import list_valid_projects, get_projects_dir
 
     results = {}
     projects = list_valid_projects()
-    beads_sync_dir = get_beads_sync_dir()
+    projects_dir = get_projects_dir()
 
     if not projects:
         return results
@@ -93,7 +93,7 @@ async def revert_all_in_progress_tasks() -> dict[str, int]:
 
     for project in projects:
         project_name = project["name"]
-        project_path = beads_sync_dir / project_name  # Use beads-sync clone
+        project_path = projects_dir / project_name  # Use project directory directly
 
         if not project_path.exists():
             continue

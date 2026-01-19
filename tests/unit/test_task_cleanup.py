@@ -329,9 +329,9 @@ class TestRevertAllInProgressTasks:
         with patch("registry.list_valid_projects") as mock_list:
             mock_list.return_value = projects
 
-            # Patch get_beads_sync_dir to return tmp_path (function uses this, not get_project_path)
-            with patch("registry.get_beads_sync_dir") as mock_beads_dir:
-                mock_beads_dir.return_value = tmp_path
+            # Patch get_projects_dir to return tmp_path (function uses this, not get_project_path)
+            with patch("registry.get_projects_dir") as mock_projects_dir:
+                mock_projects_dir.return_value = tmp_path
 
                 with patch("server.services.task_cleanup.revert_in_progress_tasks_for_project") as mock_revert:
                     mock_revert.side_effect = [2, 1]

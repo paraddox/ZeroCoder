@@ -6,6 +6,8 @@ This module is DEPRECATED. Import from beads_manager instead.
 
 All functionality has been unified into BeadsManager in beads_manager.py.
 This stub re-exports everything for backwards compatibility with existing code.
+
+Note: get_beads_sync_dir is now deprecated. Use get_projects_dir from registry instead.
 """
 
 # Re-export everything from the unified beads_manager module
@@ -30,14 +32,17 @@ from .beads_manager import (
     # Constants
     POLL_INTERVAL_IDLE,
     POLL_INTERVAL_ACTIVE,
-    # Helper
-    get_beads_sync_dir,
+    # Helper (now uses project dir, not beads-sync)
+    get_projects_dir,
     # Internal (for tests)
     _managers,
     _managers as _sync_managers,  # Backwards compatibility alias
     _managers_lock,
     _managers_lock as _sync_managers_lock,  # Backwards compatibility alias
 )
+
+# Deprecated alias - import from registry instead for the deprecated function
+from registry import get_beads_sync_dir
 
 __all__ = [
     # Main class
@@ -60,8 +65,9 @@ __all__ = [
     # Constants
     "POLL_INTERVAL_IDLE",
     "POLL_INTERVAL_ACTIVE",
-    # Helper
-    "get_beads_sync_dir",
+    # Helpers
+    "get_projects_dir",
+    "get_beads_sync_dir",  # Deprecated
     # Internal (for tests)
     "_managers",
     "_sync_managers",

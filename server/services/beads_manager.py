@@ -2,17 +2,17 @@
 Beads Manager
 =============
 
-Unified manager for all beads operations, combining:
-- BeadsSyncManager: Git operations and local JSONL parsing
-- BeadsAPI: bd CLI commands for write operations
+Unified manager for all beads operations. Reads directly from the project
+directory's SQLite database via the `bd` CLI.
 
 Key design decisions:
 - Single asyncio.Lock per project for all operations (read/write/sync)
-- Reads from local JSONL are fast and don't require lock (atomic file reads)
+- Reads use `bd list --json` for authoritative SQLite database access
 - Writes go through bd CLI, acquire lock, and sync after
-- Pull operations acquire lock to prevent conflicts with writes
+- No separate beads-sync clone needed - uses project directory directly
 
-This replaces both beads_sync_manager.py and the core logic in beads_api.py.
+This provides a single source of truth by reading from ~/.zerocoder/projects/{name}/
+instead of maintaining a separate beads-sync branch clone.
 """
 
 import asyncio
@@ -28,14 +28,14 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-def get_beads_sync_dir() -> Path:
-    """Get the beads-sync directory for beads-sync branch clones."""
+def get_projects_dir() -> Path:
+    """Get the projects directory for local clones."""
     _root = Path(__file__).parent.parent.parent
     if str(_root) not in sys.path:
         sys.path.insert(0, str(_root))
 
-    from registry import get_beads_sync_dir as registry_get_beads_sync_dir
-    return registry_get_beads_sync_dir()
+    from registry import get_projects_dir as registry_get_projects_dir
+    return registry_get_projects_dir()
 
 
 class BeadsManager:
@@ -43,10 +43,12 @@ class BeadsManager:
     Unified manager for all beads operations on a single project.
 
     Handles:
-    - Git operations (clone beads-sync branch, pull latest)
-    - Read operations (fast local JSONL parsing)
+    - Read operations (via bd CLI from project directory)
     - Write operations (bd CLI commands with locking)
     - Sync operations (push changes to remote)
+
+    Uses the project directory directly (~/.zerocoder/projects/{name}/)
+    instead of a separate beads-sync clone.
     """
 
     def __init__(self, project_name: str, git_remote_url: str):
@@ -59,80 +61,52 @@ class BeadsManager:
         """
         self.project_name = project_name
         self.git_remote_url = git_remote_url
-        self.local_path = get_beads_sync_dir() / project_name
+        # Use project directory directly instead of beads-sync clone
+        self.local_path = get_projects_dir() / project_name
         self._lock = asyncio.Lock()  # Single lock for all operations
         self._last_pull: datetime | None = None
 
     # =========================================================================
-    # Git Operations (from BeadsSyncManager)
+    # Project Directory Operations
     # =========================================================================
 
-    async def ensure_cloned(self) -> tuple[bool, str]:
+    async def ensure_project_exists(self) -> tuple[bool, str]:
         """
-        Clone beads-sync branch if not already cloned.
+        Check if the project directory exists.
+
+        LocalProjectManager handles cloning, so we just verify the path exists.
 
         Returns:
             Tuple of (success, message)
         """
         if self.local_path.exists() and (self.local_path / ".git").exists():
-            return True, "Already cloned"
+            return True, "Project exists"
 
-        async with self._lock:
-            # Double-check after acquiring lock
-            if self.local_path.exists() and (self.local_path / ".git").exists():
-                return True, "Already cloned"
+        return False, f"Project directory not found: {self.local_path}"
 
-            try:
-                self.local_path.parent.mkdir(parents=True, exist_ok=True)
-
-                # Clone only beads-sync branch (sparse)
-                result = await asyncio.to_thread(
-                    subprocess.run,
-                    [
-                        "git", "clone",
-                        "--single-branch", "--branch", "beads-sync",
-                        "--depth", "1",
-                        self.git_remote_url,
-                        str(self.local_path)
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=120,  # 2 minute timeout for clone
-                )
-
-                if result.returncode != 0:
-                    # beads-sync branch may not exist yet
-                    if "not found" in result.stderr.lower() or "does not exist" in result.stderr.lower():
-                        logger.info(f"beads-sync branch not found for {self.project_name}, will create on first sync")
-                        return False, "beads-sync branch does not exist yet"
-                    return False, f"Clone failed: {result.stderr}"
-
-                logger.info(f"Cloned beads-sync branch for {self.project_name}")
-                return True, "Cloned successfully"
-
-            except subprocess.TimeoutExpired:
-                return False, "Clone timed out"
-            except Exception as e:
-                logger.exception(f"Failed to clone beads-sync for {self.project_name}")
-                return False, f"Clone error: {e}"
+    # Backwards compatibility alias
+    async def ensure_cloned(self) -> tuple[bool, str]:
+        """Deprecated: Use ensure_project_exists() instead."""
+        return await self.ensure_project_exists()
 
     async def pull_latest(self) -> tuple[bool, str]:
         """
-        Pull latest beads state from remote.
+        Pull latest from remote main branch.
 
-        Acquires lock to prevent conflicts with write operations.
+        Note: This is a simplified pull from main, not beads-sync.
+        The project directory is the single source of truth.
 
         Returns:
             Tuple of (success, message)
         """
         if not self.local_path.exists():
-            return await self.ensure_cloned()
+            return False, "Project directory does not exist"
 
         async with self._lock:
             try:
                 result = await asyncio.to_thread(
                     subprocess.run,
-                    ["git", "-C", str(self.local_path), "pull", "--ff-only", "origin", "beads-sync"],
+                    ["git", "-C", str(self.local_path), "pull", "--ff-only"],
                     capture_output=True,
                     text=True,
                     timeout=30,
@@ -142,74 +116,67 @@ class BeadsManager:
                     self._last_pull = datetime.now()
                     return True, "Pulled successfully"
 
-                # Pull failed - try fetch + reset as fallback
-                logger.warning(f"Git pull failed for {self.project_name}: {result.stderr}, trying fetch+reset")
-
-                fetch_result = await asyncio.to_thread(
-                    subprocess.run,
-                    ["git", "-C", str(self.local_path), "fetch", "origin", "beads-sync"],
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
-                if fetch_result.returncode != 0:
-                    logger.error(f"Git fetch failed for {self.project_name}: {fetch_result.stderr}")
-                    return False, f"Fetch failed: {fetch_result.stderr}"
-
-                reset_result = await asyncio.to_thread(
-                    subprocess.run,
-                    ["git", "-C", str(self.local_path), "reset", "--hard", "origin/beads-sync"],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                )
-                if reset_result.returncode != 0:
-                    logger.error(f"Git reset failed for {self.project_name}: {reset_result.stderr}")
-                    return False, f"Reset failed: {reset_result.stderr}"
-
-                # Fallback succeeded
-                self._last_pull = datetime.now()
-                return True, "Pulled via fetch+reset"
+                # Pull failed - log but don't error (project may have local changes)
+                logger.debug(f"Git pull skipped for {self.project_name}: {result.stderr}")
+                return True, "Pull skipped (local changes or up-to-date)"
 
             except subprocess.TimeoutExpired:
                 return False, "Pull timed out"
             except Exception as e:
-                logger.warning(f"Failed to pull beads-sync for {self.project_name}: {e}")
+                logger.warning(f"Failed to pull for {self.project_name}: {e}")
                 return False, f"Pull error: {e}"
 
     # =========================================================================
-    # Read Operations - Fast Local Access (from BeadsSyncManager)
-    # No lock needed - atomic file reads
+    # Read Operations - Via bd CLI (queries SQLite database)
     # =========================================================================
 
     def get_tasks(self) -> list[dict]:
         """
-        Read tasks directly from local .beads/issues.jsonl.
+        Read tasks using bd CLI from local project directory.
 
-        This is a fast local read that doesn't require locking.
+        This queries the SQLite database directly via bd list --json,
+        providing the authoritative source of truth.
 
         Returns:
             List of task dictionaries
         """
-        issues_file = self.local_path / ".beads" / "issues.jsonl"
-        if not issues_file.exists():
+        if not self.local_path.exists():
             return []
 
-        tasks = []
-        try:
-            with open(issues_file, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        try:
-                            tasks.append(json.loads(line))
-                        except json.JSONDecodeError as e:
-                            logger.warning(f"Skipped corrupt JSON in {self.project_name} issues.jsonl: {e}")
-                            continue
-        except Exception as e:
-            logger.warning(f"Failed to read issues file for {self.project_name}: {e}")
+        # Check if .beads directory exists
+        beads_dir = self.local_path / ".beads"
+        if not beads_dir.exists():
+            return []
 
-        return tasks
+        try:
+            result = subprocess.run(
+                ["bd", "--no-daemon", "list", "--json"],
+                cwd=self.local_path,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                logger.debug(f"bd list failed for {self.project_name}: {result.stderr}")
+                return []
+
+            stdout = result.stdout.strip()
+            if not stdout:
+                return []
+
+            return json.loads(stdout)
+        except subprocess.TimeoutExpired:
+            logger.warning(f"bd list timed out for {self.project_name}")
+            return []
+        except FileNotFoundError:
+            logger.debug("bd CLI not found")
+            return []
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse bd list output for {self.project_name}: {e}")
+            return []
+        except Exception as e:
+            logger.warning(f"Failed to get tasks for {self.project_name}: {e}")
+            return []
 
     def get_stats(self) -> dict[str, Any]:
         """
@@ -350,7 +317,7 @@ class BeadsManager:
             Parsed JSON output or error dict
         """
         if not self.local_path.exists():
-            return {"error": f"Beads sync directory not found: {self.local_path}"}
+            return {"error": f"Project directory not found: {self.local_path}"}
 
         async with self._lock:
             # Sync before read to get latest state from remote
@@ -372,7 +339,7 @@ class BeadsManager:
             Parsed JSON output or error dict
         """
         if not self.local_path.exists():
-            return {"error": f"Beads sync directory not found: {self.local_path}"}
+            return {"error": f"Project directory not found: {self.local_path}"}
 
         async with self._lock:
             # Run the write command
@@ -595,7 +562,7 @@ def clear_beads_manager(project_name: str) -> None:
 
 def get_cached_stats(project_name: str) -> dict:
     """
-    Get cached stats for a project from beads-sync.
+    Get stats for a project from the local project directory.
 
     This is a convenience function for use by progress.py and other modules
     that don't have the git_url handy.
@@ -644,7 +611,7 @@ def get_cached_stats(project_name: str) -> dict:
 
 def get_cached_features(project_name: str) -> list[dict]:
     """
-    Get cached features for a project from beads-sync.
+    Get features for a project from the local project directory.
 
     This is a convenience function for use by progress.py and other modules.
     Returns features in the format expected by the UI (compatible with feature_poller).
@@ -713,10 +680,10 @@ def _tasks_to_features(tasks: list[dict]) -> list[dict]:
 
 async def initialize_all_projects() -> dict[str, bool]:
     """
-    Clone beads-sync branches for all registered projects on server startup.
+    Initialize BeadsManagers for all registered projects on server startup.
 
-    This ensures we have local copies of beads data for all projects
-    before the polling loop starts.
+    This creates manager instances for all projects that have local clones.
+    LocalProjectManager handles actual cloning - we just verify paths exist.
 
     Returns:
         Dict mapping project name to success status
@@ -729,30 +696,33 @@ async def initialize_all_projects() -> dict[str, bool]:
 
     results = {}
     projects = list_valid_projects()
-    logger.info(f"Initializing beads-sync for {len(projects)} registered projects")
+    logger.info(f"Initializing beads managers for {len(projects)} registered projects")
 
     for project in projects:
         project_name = project["name"]
         git_url = get_project_git_url(project_name)
         if git_url:
             manager = await get_beads_manager(project_name, git_url)
-            success, message = await manager.ensure_cloned()
+            success, message = await manager.ensure_project_exists()
             results[project_name] = success
             if success:
-                logger.debug(f"Beads-sync initialized for {project_name}: {message}")
+                logger.debug(f"Beads manager initialized for {project_name}: {message}")
             else:
-                logger.info(f"Beads-sync init for {project_name}: {message}")
+                logger.info(f"Beads manager init for {project_name}: {message}")
         else:
             logger.debug(f"Skipping {project_name}: no git URL")
 
     successes = sum(1 for v in results.values() if v)
-    logger.info(f"Beads-sync initialization complete: {successes}/{len(results)} successful")
+    logger.info(f"Beads manager initialization complete: {successes}/{len(results)} successful")
     return results
 
 
 async def pull_all_beads_sync() -> dict[str, bool]:
     """
-    Pull latest for projects with active containers only.
+    Sync beads for projects with active containers.
+
+    This is now a lightweight operation since we read directly from
+    the project directory's SQLite database.
 
     Returns:
         Dict mapping project name to success status
@@ -767,15 +737,16 @@ async def pull_all_beads_sync() -> dict[str, bool]:
     for project_name in active_projects:
         manager = get_beads_manager_sync(project_name)
         if manager:
-            success, _ = await manager.pull_latest()
+            # Just run bd sync to push any local changes
+            success = await manager._sync_with_remote()
             results[project_name] = success
 
     return results
 
 
 # Background polling task
-POLL_INTERVAL_IDLE = 15  # seconds when no containers running
-POLL_INTERVAL_ACTIVE = 5  # seconds when containers are running
+POLL_INTERVAL_IDLE = 30  # seconds when no containers running (increased since no git pull needed)
+POLL_INTERVAL_ACTIVE = 10  # seconds when containers are running
 
 
 def _has_running_containers() -> bool:
@@ -790,15 +761,18 @@ def _has_running_containers() -> bool:
 
 async def start_beads_sync_poller() -> None:
     """
-    Start a background task that polls beads-sync for all projects.
+    Start a background task that syncs beads for active projects.
+
+    Since we now read directly from the project directory, this is mainly
+    for pushing local changes to remote (bd sync).
 
     Uses dynamic polling interval:
-    - 5 seconds when containers are running (for faster UI updates)
-    - 15 seconds when idle (to reduce resource usage)
+    - 10 seconds when containers are running (for faster sync)
+    - 30 seconds when idle (to reduce resource usage)
 
     This should be called when the server starts.
     """
-    logger.info(f"Starting beads-sync poller (idle: {POLL_INTERVAL_IDLE}s, active: {POLL_INTERVAL_ACTIVE}s)")
+    logger.info(f"Starting beads sync poller (idle: {POLL_INTERVAL_IDLE}s, active: {POLL_INTERVAL_ACTIVE}s)")
 
     while True:
         try:

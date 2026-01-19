@@ -224,19 +224,19 @@ class TestGetProjectPath:
     """Tests for BeadsManager.local_path property."""
 
     @pytest.mark.unit
-    def test_returns_beads_sync_path(self, tmp_path, monkeypatch):
-        """Test that BeadsManager.local_path returns beads-sync directory path."""
+    def test_returns_projects_path(self, tmp_path, monkeypatch):
+        """Test that BeadsManager.local_path returns projects directory path."""
         from server.services.beads_manager import BeadsManager
 
-        beads_sync_dir = tmp_path / "beads-sync"
-        beads_sync_dir.mkdir()
+        projects_dir = tmp_path / "projects"
+        projects_dir.mkdir()
 
-        # Patch get_beads_sync_dir to return our test directory
-        with patch("server.services.beads_manager.get_beads_sync_dir") as mock_sync:
-            mock_sync.return_value = beads_sync_dir
+        # Patch get_projects_dir to return our test directory
+        with patch("server.services.beads_manager.get_projects_dir") as mock_projects:
+            mock_projects.return_value = projects_dir
             manager = BeadsManager("test-project", "https://github.com/test/repo.git")
 
-        assert manager.local_path == beads_sync_dir / "test-project"
+        assert manager.local_path == projects_dir / "test-project"
 
 
 class TestRunBd:

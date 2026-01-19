@@ -490,30 +490,51 @@ class LocalProjectManager:
 
     def get_tasks(self) -> list[dict]:
         """
-        Read tasks from local .beads/issues.jsonl.
+        Read tasks using bd CLI from local project directory.
+
+        Uses bd list --json to query the SQLite database directly,
+        providing the authoritative source of truth.
 
         Returns:
             List of task dictionaries
         """
-        issues_file = self.local_path / ".beads" / "issues.jsonl"
-        if not issues_file.exists():
+        if not self.local_path.exists():
             return []
 
-        tasks = []
-        try:
-            with open(issues_file, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        try:
-                            tasks.append(json.loads(line))
-                        except json.JSONDecodeError as e:
-                            logger.warning(f"Skipped corrupt JSON in {self.project_name} issues.jsonl: {e}")
-                            continue
-        except Exception as e:
-            logger.warning(f"Failed to read issues file for {self.project_name}: {e}")
+        # Check if .beads directory exists
+        beads_dir = self.local_path / ".beads"
+        if not beads_dir.exists():
+            return []
 
-        return tasks
+        try:
+            result = subprocess.run(
+                ["bd", "--no-daemon", "list", "--json"],
+                cwd=self.local_path,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                logger.debug(f"bd list failed for {self.project_name}: {result.stderr}")
+                return []
+
+            stdout = result.stdout.strip()
+            if not stdout:
+                return []
+
+            return json.loads(stdout)
+        except subprocess.TimeoutExpired:
+            logger.warning(f"bd list timed out for {self.project_name}")
+            return []
+        except FileNotFoundError:
+            logger.debug("bd CLI not found")
+            return []
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse bd list output for {self.project_name}: {e}")
+            return []
+        except Exception as e:
+            logger.warning(f"Failed to get tasks for {self.project_name}: {e}")
+            return []
 
     def get_stats(self) -> dict[str, Any]:
         """Get task statistics."""

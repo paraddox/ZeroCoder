@@ -53,26 +53,26 @@ def _is_container_running(project_name: str) -> bool:
 
 async def _trigger_feature_refresh(project_name: str) -> None:
     """
-    Trigger an immediate beads-sync pull to refresh local cache.
-    Called after creating an issue so UI updates immediately.
+    Trigger a beads sync to push changes to remote.
+    Called after creating an issue so changes are persisted.
     """
-    from server.services.beads_manager import get_beads_sync_manager
+    from server.services.beads_manager import get_beads_manager
     from registry import get_project_git_url
 
     try:
         git_url = get_project_git_url(project_name)
         if git_url:
-            manager = get_beads_sync_manager(project_name, git_url)
-            success, _ = await manager.pull_latest()
+            manager = await get_beads_manager(project_name, git_url)
+            success, msg = await manager.sync()
             if success:
-                logger.info(f"Beads-sync refreshed for {project_name}")
+                logger.info(f"Beads synced for {project_name}")
             else:
-                logger.warning(f"Beads-sync pull returned no data for {project_name}")
+                logger.warning(f"Beads sync failed for {project_name}: {msg}")
         else:
             logger.warning(f"No git URL found for project {project_name}")
     except Exception as e:
-        # Don't fail the issue creation if refresh fails
-        logger.warning(f"Failed to refresh beads-sync: {e}")
+        # Don't fail the issue creation if sync fails
+        logger.warning(f"Failed to sync beads: {e}")
 
 
 async def ensure_container_running(project_name: str, project_dir: Path) -> tuple[bool, str]:

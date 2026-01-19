@@ -139,11 +139,11 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Failed to cleanup stale containers: {e}")
 
-    # Initialize beads-sync for all registered projects
+    # Initialize beads managers for all registered projects
     try:
         await initialize_all_projects()
     except Exception as e:
-        logger.warning(f"Failed to initialize beads-sync: {e}")
+        logger.warning(f"Failed to initialize beads managers: {e}")
 
     # Clean up remote feature branches for all projects
     try:

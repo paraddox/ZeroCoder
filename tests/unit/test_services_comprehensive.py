@@ -677,26 +677,25 @@ class TestBeadsSyncManager:
     @pytest.fixture
     def mock_sync_dir(self, tmp_path):
         """Create mock beads-sync directory."""
-        sync_dir = tmp_path / "beads-sync" / "test-project"
-        sync_dir.mkdir(parents=True)
-        return sync_dir
+        project_dir = tmp_path / "projects" / "test-project"
+        project_dir.mkdir(parents=True)
+        return project_dir
 
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_ensure_cloned_new_repo(self, tmp_path):
-        """Test cloning when repo doesn't exist."""
+        """Test ensure_cloned when project doesn't exist returns False."""
         from server.services.beads_sync_manager import BeadsSyncManager
 
-        with patch("server.services.beads_manager.get_beads_sync_dir") as mock_dir:
+        with patch("server.services.beads_manager.get_projects_dir") as mock_dir:
             mock_dir.return_value = tmp_path
-            with patch("asyncio.to_thread") as mock_thread:
-                mock_thread.return_value = MagicMock(returncode=0)
 
-                manager = BeadsSyncManager("test-project", "https://github.com/user/repo.git")
-                await manager.ensure_cloned()
+            manager = BeadsSyncManager("test-project", "https://github.com/user/repo.git")
+            success, message = await manager.ensure_cloned()
 
-                # Git clone should have been called
-                assert mock_thread.called
+            # Project doesn't exist, so should return False
+            assert success is False
+            assert "not found" in message.lower()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -707,36 +706,39 @@ class TestBeadsSyncManager:
         # Create .git directory to simulate existing clone
         (mock_sync_dir / ".git").mkdir()
 
-        with patch("server.services.beads_manager.get_beads_sync_dir") as mock_dir:
-            mock_dir.return_value = tmp_path / "beads-sync"
+        with patch("server.services.beads_manager.get_projects_dir") as mock_dir:
+            mock_dir.return_value = tmp_path / "projects"
             with patch("asyncio.to_thread") as mock_thread:
                 mock_thread.return_value = MagicMock(returncode=0)
 
                 manager = BeadsSyncManager("test-project", "https://github.com/user/repo.git")
-                manager._cloned = True
                 await manager.pull_latest()
 
                 assert mock_thread.called
 
     @pytest.mark.unit
-    def test_get_tasks_from_jsonl(self, mock_sync_dir, tmp_path):
-        """Test parsing tasks from JSONL file."""
+    def test_get_tasks_from_bd_cli(self, mock_sync_dir, tmp_path):
+        """Test getting tasks via bd CLI."""
+        import json
         from server.services.beads_sync_manager import BeadsSyncManager
 
-        # Create beads issues file
+        # Create beads directory
         beads_dir = mock_sync_dir / ".beads"
         beads_dir.mkdir()
-        issues_file = beads_dir / "issues.jsonl"
-        issues_file.write_text(
-            '{"id": "feat-1", "title": "Test 1", "status": "open", "priority": 1}\n'
-            '{"id": "feat-2", "title": "Test 2", "status": "closed", "priority": 2}\n'
-        )
 
-        with patch("server.services.beads_manager.get_beads_sync_dir") as mock_dir:
-            mock_dir.return_value = tmp_path / "beads-sync"
+        tasks_data = [
+            {"id": "feat-1", "title": "Test 1", "status": "open", "priority": 1},
+            {"id": "feat-2", "title": "Test 2", "status": "closed", "priority": 2},
+        ]
+
+        with patch("server.services.beads_manager.get_projects_dir") as mock_dir:
+            mock_dir.return_value = tmp_path / "projects"
 
             manager = BeadsSyncManager("test-project", "https://github.com/user/repo.git")
-            tasks = manager.get_tasks()
+
+            mock_result = MagicMock(returncode=0, stdout=json.dumps(tasks_data), stderr="")
+            with patch("subprocess.run", return_value=mock_result):
+                tasks = manager.get_tasks()
 
         assert len(tasks) == 2
         assert tasks[0]["id"] == "feat-1"
