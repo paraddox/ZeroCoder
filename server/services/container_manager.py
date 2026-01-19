@@ -1129,15 +1129,20 @@ class ContainerManager:
                     return False, "Project worktree not mounted correctly"
                 logger.info(f"Init container {self.container_name}: worktree mounted successfully")
 
-                # Wait for SSH setup to complete (entrypoint runs ssh-keyscan)
+                # Wait for SSH setup to complete (entrypoint copies key and runs ssh-keyscan)
+                # Test actual SSH connectivity rather than just file existence
                 for attempt in range(10):
                     check = subprocess.run(
                         ["docker", "exec", "-u", "coder", self.container_name,
-                         "test", "-f", "/home/coder/.ssh/known_hosts"],
+                         "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
+                         "-T", "git@github.com"],
                         capture_output=True,
                         text=True,
+                        timeout=10,
                     )
-                    if check.returncode == 0:
+                    # SSH to GitHub returns exit code 1 with "successfully authenticated" message
+                    if "successfully authenticated" in check.stderr:
+                        logger.info(f"Init container {self.container_name}: SSH setup verified")
                         break
                     await asyncio.sleep(1)
                     logger.info(f"Waiting for SSH setup (attempt {attempt + 1}/10)")

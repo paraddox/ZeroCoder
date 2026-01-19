@@ -429,6 +429,23 @@ async def start_all_containers(project_name: str):
             )
         print(f"[StartAll] Init container worktree mounted successfully")
 
+        # Wait for SSH setup to complete (entrypoint copies key and runs ssh-keyscan)
+        for attempt in range(10):
+            check = subprocess.run(
+                ["docker", "exec", "-u", "coder", init_manager.container_name,
+                 "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
+                 "-T", "git@github.com"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            # SSH to GitHub returns exit code 1 with "successfully authenticated" message
+            if "successfully authenticated" in check.stderr:
+                print(f"[StartAll] Init container SSH setup verified")
+                break
+            await asyncio.sleep(1)
+            print(f"[StartAll] Waiting for SSH setup (attempt {attempt + 1}/10)")
+
         # Run pre_agent_sync and recover_stuck_features
         sync_ok, sync_msg = await init_manager.pre_agent_sync()
         if not sync_ok:
