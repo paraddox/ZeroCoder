@@ -289,7 +289,9 @@ class BeadsManager:
 
             if result.returncode != 0:
                 error_msg = result.stderr.strip() if result.stderr else f"Command failed with exit code {result.returncode}"
-                logger.warning(f"bd command failed: bd {' '.join(args)} - {error_msg}")
+                # Don't log warning for "another sync in progress" - it's expected behavior
+                if "another sync is in progress" not in error_msg.lower():
+                    logger.warning(f"bd command failed: bd {' '.join(args)} - {error_msg}")
                 return {"error": error_msg}
 
             # Try to parse JSON output
