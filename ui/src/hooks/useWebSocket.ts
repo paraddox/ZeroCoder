@@ -33,7 +33,7 @@ interface WebSocketState {
   containerUpdateCounter: number // Increments when container_update received
 }
 
-const MAX_LOGS = 100 // Keep last 100 log lines
+const MAX_LOGS = 500 // Keep last 500 log lines (full-screen viewer needs more capacity)
 
 export function useWebSocket(projectName: string | null) {
   const [state, setState] = useState<WebSocketState>({
@@ -105,7 +105,7 @@ export function useWebSocket(projectName: string | null) {
               }
               setState(prev => {
                 const newLogs = [...prev.logs, logEntry]
-                // Keep last 100 logs
+                // Keep last MAX_LOGS entries
                 const trimmedLogs = newLogs.slice(-MAX_LOGS)
 
                 // Update cache for current project

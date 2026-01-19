@@ -17,7 +17,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 // Mock the AddFeatureForm component for testing
 // In actual implementation, import the real component
 const MockAddFeatureForm = ({
-  projectName,
+  projectName: _projectName,
   onSubmit,
   onCancel,
 }: {

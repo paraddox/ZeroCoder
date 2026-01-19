@@ -15,6 +15,7 @@ import { FeatureModal } from './components/FeatureModal'
 import { FeatureEditModal } from './components/FeatureEditModal'
 import { ProjectSettingsModal } from './components/ProjectSettingsModal'
 import { AgentLogViewer } from './components/AgentLogViewer'
+import { FullScreenLogViewer } from './components/FullScreenLogViewer'
 import { AssistantFAB } from './components/AssistantFAB'
 import { AssistantPanel } from './components/AssistantPanel'
 import { IncompleteProjectModal } from './components/IncompleteProjectModal'
@@ -39,6 +40,7 @@ function App() {
   const [setupComplete, setSetupComplete] = useState(true) // Start optimistic
   const [logViewerExpanded, setLogViewerExpanded] = useState(false)
   const [logContainerFilter, setLogContainerFilter] = useState<number | null>(null)
+  const [showFullScreenLogs, setShowFullScreenLogs] = useState(false)
   const [assistantOpen, setAssistantOpen] = useState(false)
 
   // Incomplete project wizard resume state
@@ -221,6 +223,13 @@ function App() {
         return
       }
 
+      // Shift+D : Open full-screen log viewer
+      if (e.shiftKey && (e.key === 'd' || e.key === 'D')) {
+        e.preventDefault()
+        setShowFullScreenLogs(prev => !prev)
+        return
+      }
+
       // D : Toggle log viewer
       if (e.key === 'd' || e.key === 'D') {
         e.preventDefault()
@@ -241,7 +250,9 @@ function App() {
 
       // Escape : Close modals
       if (e.key === 'Escape') {
-        if (assistantOpen) {
+        if (showFullScreenLogs) {
+          setShowFullScreenLogs(false)
+        } else if (assistantOpen) {
           setAssistantOpen(false)
         } else if (showSettingsModal) {
           setShowSettingsModal(false)
@@ -259,7 +270,7 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [selectedProject, showAddFeature, selectedFeature, editingFeature, logViewerExpanded, assistantOpen, showSettingsModal])
+  }, [selectedProject, showAddFeature, selectedFeature, editingFeature, logViewerExpanded, assistantOpen, showSettingsModal, showFullScreenLogs])
 
   // Combine WebSocket progress with feature data
   const progress = wsState.progress.total > 0 ? wsState.progress : {
@@ -368,6 +379,7 @@ function App() {
               containerFilter={logContainerFilter}
               onContainerFilterChange={setLogContainerFilter}
               registeredContainers={wsState.containers}
+              onOpenFullScreen={() => setShowFullScreenLogs(true)}
             />
 
             {/* Initializing Features State - show when agent is running but no features yet */}
@@ -473,6 +485,15 @@ function App() {
         project={projects?.find(p => p.name === selectedProject) ?? null}
         onClose={() => setShowDeleteModal(false)}
         onDeleted={handleProjectDeleted}
+      />
+
+      {/* Full Screen Log Viewer */}
+      <FullScreenLogViewer
+        isOpen={showFullScreenLogs}
+        onClose={() => setShowFullScreenLogs(false)}
+        logs={wsState.logs}
+        projectName={selectedProject}
+        registeredContainers={wsState.containers}
       />
     </div>
   )

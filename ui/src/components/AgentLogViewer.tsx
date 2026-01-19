@@ -7,7 +7,7 @@
  */
 
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
-import { Brain, Sparkles, ChevronUp, ChevronDown, Trash2, GripHorizontal } from 'lucide-react'
+import { Brain, Sparkles, ChevronUp, ChevronDown, Trash2, GripHorizontal, Maximize2, Search, ArrowDown, Copy, Check } from 'lucide-react'
 import type { AgentStatus } from '../lib/types'
 import type { LogEntry, ContainerInfo } from '../hooks/useWebSocket'
 
@@ -27,6 +27,7 @@ interface AgentLogViewerProps {
   containerFilter?: number | null
   onContainerFilterChange?: (container: number | null) => void
   registeredContainers?: ContainerInfo[]
+  onOpenFullScreen?: () => void
 }
 
 type LogLevel = 'error' | 'warn' | 'debug' | 'info'
@@ -121,6 +122,25 @@ function formatTimestamp(timestamp: string): string {
   }
 }
 
+/**
+ * Highlight search matches in text
+ */
+function highlightText(text: string, search: string): React.ReactNode {
+  if (!search.trim()) return text
+
+  const parts = text.split(new RegExp(`(${search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'))
+
+  return parts.map((part, i) =>
+    part.toLowerCase() === search.toLowerCase() ? (
+      <mark key={i} className="bg-amber-500/40 text-white rounded px-0.5">
+        {part}
+      </mark>
+    ) : (
+      part
+    )
+  )
+}
+
 export function AgentLogViewer({
   logs,
   agentStatus,
@@ -131,7 +151,12 @@ export function AgentLogViewer({
   containerFilter,
   onContainerFilterChange,
   registeredContainers,
+  onOpenFullScreen,
 }: AgentLogViewerProps) {
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('')
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null)
+
   // Get available container numbers - prefer registered containers, fall back to logs
   const availableContainers = useMemo(() => {
     // Use registered containers if provided
@@ -148,13 +173,43 @@ export function AgentLogViewer({
     return Array.from(containers).sort((a, b) => a - b)
   }, [registeredContainers, logs])
 
-  // Filter logs by container if filter is set
+  // Filter logs by container and search query
   const filteredLogs = useMemo(() => {
-    if (containerFilter === null || containerFilter === undefined) {
-      return logs
+    let filtered = logs
+
+    // Container filter
+    if (containerFilter !== null && containerFilter !== undefined) {
+      filtered = filtered.filter(log => log.container_number === containerFilter)
     }
-    return logs.filter(log => log.container_number === containerFilter)
-  }, [logs, containerFilter])
+
+    // Search filter (only when expanded)
+    if (isExpanded && searchQuery.trim()) {
+      filtered = filtered.filter(log =>
+        log.line.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    }
+
+    return filtered
+  }, [logs, containerFilter, isExpanded, searchQuery])
+
+  // Copy log line handler
+  const copyLogLine = useCallback(async (line: string, index: number) => {
+    try {
+      await navigator.clipboard.writeText(line)
+      setCopiedIndex(index)
+      setTimeout(() => setCopiedIndex(null), 2000)
+    } catch {
+      console.error('Failed to copy to clipboard')
+    }
+  }, [])
+
+  // Scroll to bottom handler
+  const scrollToBottom = useCallback(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+      setAutoScroll(true)
+    }
+  }, [])
 
   // From AgentThought - use filtered logs
   const thought = useMemo(() => getLatestThought(filteredLogs), [filteredLogs])
@@ -398,7 +453,7 @@ export function AgentLogViewer({
           </kbd>
           {filteredLogs.length > 0 && (
             <span className="px-2 py-0.5 text-xs font-mono bg-slate-900 text-slate-400 rounded-full">
-              {filteredLogs.length}
+              {filteredLogs.length}{searchQuery && ` / ${logs.length}`}
             </span>
           )}
           {!autoScroll && (
@@ -409,6 +464,21 @@ export function AgentLogViewer({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Search input */}
+          <div
+            className="relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input
+              type="text"
+              placeholder="Search..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-32 pl-6 pr-2 py-1 text-xs bg-slate-900 border border-slate-700 rounded text-slate-300 placeholder-slate-600 focus:outline-none focus:border-emerald-500"
+            />
+          </div>
+
           {/* Container filter tabs (only show when multiple containers) */}
           {hasMultipleContainers && (
             <div
@@ -445,6 +515,21 @@ export function AgentLogViewer({
               })}
             </div>
           )}
+
+          {/* Full screen button */}
+          {onOpenFullScreen && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onOpenFullScreen()
+              }}
+              className="p-1.5 hover:bg-slate-700 rounded transition-colors"
+              title="Full screen (Shift+D)"
+            >
+              <Maximize2 size={14} className="text-slate-500 hover:text-slate-400" />
+            </button>
+          )}
+
           <button
             onClick={(e) => {
               e.stopPropagation()
@@ -469,7 +554,9 @@ export function AgentLogViewer({
       >
         {filteredLogs.length === 0 ? (
           <div className="flex items-center justify-center h-full text-slate-600">
-            {containerFilter !== null && containerFilter !== undefined
+            {searchQuery
+              ? `No logs matching "${searchQuery}"`
+              : containerFilter !== null && containerFilter !== undefined
               ? `No logs for container #${containerFilter}. Try selecting "All".`
               : 'No logs yet. Start the agent to see output.'}
           </div>
@@ -484,8 +571,14 @@ export function AgentLogViewer({
               return (
                 <div
                   key={`${log.timestamp}-${index}`}
-                  className="flex gap-3 hover:bg-slate-800/50 px-2 py-0.5 rounded"
+                  className="group flex gap-3 hover:bg-slate-800/50 px-2 py-0.5 rounded cursor-pointer"
+                  onClick={() => copyLogLine(log.line, index)}
+                  title="Click to copy"
                 >
+                  {/* Line number */}
+                  <span className="text-slate-700 select-none shrink-0 text-xs w-8 text-right">
+                    {index + 1}
+                  </span>
                   <span className="text-slate-600 select-none shrink-0 text-xs">
                     {timestamp}
                   </span>
@@ -497,8 +590,16 @@ export function AgentLogViewer({
                       })()}
                     </span>
                   )}
-                  <span className={`${colorClass} whitespace-pre-wrap break-all text-xs leading-relaxed`}>
-                    {log.line}
+                  <span className={`${colorClass} whitespace-pre-wrap break-all text-xs leading-relaxed flex-1`}>
+                    {highlightText(log.line, searchQuery)}
+                  </span>
+                  {/* Copy indicator */}
+                  <span className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                    {copiedIndex === index ? (
+                      <Check size={12} className="text-emerald-400" />
+                    ) : (
+                      <Copy size={12} className="text-slate-500" />
+                    )}
                   </span>
                 </div>
               )
@@ -506,6 +607,17 @@ export function AgentLogViewer({
           </div>
         )}
       </div>
+
+      {/* Jump to bottom button */}
+      {!autoScroll && (
+        <button
+          onClick={scrollToBottom}
+          className="absolute bottom-4 right-4 flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium rounded-full shadow-lg transition-all hover:scale-105"
+        >
+          <ArrowDown size={12} />
+          Jump to Bottom
+        </button>
+      )}
     </div>
   )
 }
