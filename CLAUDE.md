@@ -88,6 +88,17 @@ docker build -f Dockerfile.project -t zerocoder-project .
 
 **Container naming:** `zerocoder-{project-name}`
 
+### Git Hooks
+
+Pre-commit hooks run unit tests before each commit. To enable:
+
+```bash
+./.githooks/setup.sh
+# Or manually: git config core.hooksPath .githooks
+```
+
+To bypass hooks when needed: `git commit --no-verify`
+
 ## Architecture
 
 ### Core Python Modules
