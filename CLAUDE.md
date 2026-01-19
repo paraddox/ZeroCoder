@@ -67,11 +67,12 @@ docker build -f Dockerfile.project -t zerocoder-project .
 **Architecture:**
 - Host runs FastAPI server + React UI (project management, progress monitoring)
 - Each project gets its own Docker container with Claude Code + beads CLI
+- Project worktree mounted via `-v` for instant startup (no clone needed)
 - Multiple containers can run simultaneously for different projects
 
 **Container lifecycle:**
 - `not_created` → `running` → `stopped` (15 min idle timeout) → `completed`
-- Stopped containers persist and restart quickly
+- Stopped containers persist and restart instantly (worktree already mounted)
 - Progress visible via cached data (polled from container every 30s)
 - `completed` status when all features are done
 
@@ -108,10 +109,23 @@ To bypass hooks when needed: `git commit --no-verify`
 - `progress.py` - Progress tracking using beads, webhook notifications
 - `registry.py` - Project registry for mapping names to paths (cross-platform)
 
-### Project Registry
+### Project Registry & Worktrees
 
-Projects can be stored in any directory. The registry maps project names to paths using SQLite:
-- **All platforms**: `~/.zerocoder/registry.db`
+Projects use git worktrees for fast startup and shared git data:
+- **Registry**: `~/.zerocoder/registry.db` (SQLite)
+- **Bare repos**: `~/.zerocoder/repos/{name}.git`
+- **Worktrees**: `~/.zerocoder/worktrees/{name}/{purpose}/`
+  - `main/` - for wizard/edit mode (UI operations)
+  - `container-1/`, `container-2/`, etc. - for coding containers
+
+**Benefits:**
+- Instant container startup (no clone needed)
+- Shared git object database reduces disk usage
+- Each container has isolated working directory
+
+**Key services:**
+- `server/services/worktree_manager.py` - Creates/manages worktrees
+- `registry.py` - Stores worktree metadata in `Worktree` model
 
 The registry uses:
 - SQLite database with SQLAlchemy ORM
@@ -125,7 +139,6 @@ The FastAPI server provides REST endpoints for the UI:
 - `server/routers/projects.py` - Project CRUD with registry integration
 - `server/routers/features.py` - Feature management via container docker exec
 - `server/routers/agent.py` - Container control (start/stop/remove)
-- `server/routers/filesystem.py` - Filesystem browser API with security controls
 - `server/routers/spec_creation.py` - WebSocket for interactive spec creation
 - `server/services/container_manager.py` - Per-project Docker container lifecycle
 - `server/services/container_beads.py` - Send beads commands to containers via docker exec
@@ -166,7 +179,6 @@ Features are tracked using **beads** (git-backed issue tracking). Each project h
 - `src/hooks/useProjects.ts` - React Query hooks for API calls
 - `src/lib/api.ts` - REST API client
 - `src/lib/types.ts` - TypeScript type definitions
-- `src/components/FolderBrowser.tsx` - Server-side filesystem browser for project folder selection
 - `src/components/NewProjectModal.tsx` - Multi-step project creation wizard (persists state to `.wizard_status.json`)
 - `src/components/IncompleteProjectModal.tsx` - Resume/restart options for interrupted setup
 - `src/components/ProjectSelector.tsx` - Project dropdown with incomplete project detection

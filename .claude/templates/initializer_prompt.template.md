@@ -3,7 +3,7 @@
 You are the FIRST agent in a long-running autonomous development process.
 Your job is to set up the foundation for all future coding agents.
 
-**Environment:** This agent runs in a Docker container with `$GIT_REMOTE_URL` set for parallel container workflow. Beads syncs to a dedicated branch for multi-container collaboration.
+**Environment:** This agent runs in a Docker container with the project worktree mounted at `/project`. Beads syncs to a dedicated branch for multi-container collaboration.
 
 ---
 

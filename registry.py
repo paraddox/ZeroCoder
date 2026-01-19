@@ -146,6 +146,27 @@ class FeatureStatsCache(Base):
     poll_error = Column(String(500), nullable=True)
 
 
+class Worktree(Base):
+    """Tracks git worktrees for projects."""
+    __tablename__ = "worktrees"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    project_name = Column(
+        String(50),
+        ForeignKey("projects.name", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    worktree_name = Column(String(50), nullable=False)  # "main", "container-1", etc.
+    worktree_path = Column(String, nullable=False)
+    branch_name = Column(String(100), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint('project_name', 'worktree_name', name='uq_project_worktree'),
+    )
+
+
 # =============================================================================
 # Database Connection
 # =============================================================================
@@ -176,7 +197,10 @@ def get_config_dir() -> Path:
 
 def get_projects_dir() -> Path:
     """
-    Get the projects directory for local clones.
+    DEPRECATED: Get the projects directory for local clones.
+
+    This directory is deprecated. Use get_worktrees_dir() instead.
+    Projects are now managed via git worktrees.
 
     Returns:
         Path to ~/.zerocoder/projects/ (created if it doesn't exist)
@@ -184,6 +208,36 @@ def get_projects_dir() -> Path:
     projects_dir = get_config_dir() / "projects"
     projects_dir.mkdir(parents=True, exist_ok=True)
     return projects_dir
+
+
+def get_repos_dir() -> Path:
+    """
+    Get the bare repositories directory.
+
+    Bare repos are stored at ~/.zerocoder/repos/{name}.git
+
+    Returns:
+        Path to ~/.zerocoder/repos/ (created if it doesn't exist)
+    """
+    repos_dir = get_config_dir() / "repos"
+    repos_dir.mkdir(parents=True, exist_ok=True)
+    return repos_dir
+
+
+def get_worktrees_dir() -> Path:
+    """
+    Get the worktrees directory.
+
+    Worktrees are stored at ~/.zerocoder/worktrees/{name}/{purpose}/
+    - main/ - for wizard/edit mode
+    - container-1/, container-2/, etc. - for coding containers
+
+    Returns:
+        Path to ~/.zerocoder/worktrees/ (created if it doesn't exist)
+    """
+    worktrees_dir = get_config_dir() / "worktrees"
+    worktrees_dir.mkdir(parents=True, exist_ok=True)
+    return worktrees_dir
 
 
 def get_beads_sync_dir() -> Path:
@@ -882,3 +936,184 @@ def list_all_containers() -> list[dict]:
         ]
     finally:
         session.close()
+
+
+# =============================================================================
+# Worktree CRUD Functions
+# =============================================================================
+
+def register_worktree(
+    project_name: str,
+    worktree_name: str,
+    worktree_path: str,
+    branch_name: str,
+) -> int:
+    """
+    Register a worktree in the database.
+
+    If a worktree with the same (project_name, worktree_name) exists,
+    updates it. Otherwise creates a new record.
+
+    Args:
+        project_name: The project this worktree belongs to.
+        worktree_name: The worktree name (e.g., "main", "container-1").
+        worktree_path: The filesystem path to the worktree.
+        branch_name: The git branch name for this worktree.
+
+    Returns:
+        The worktree's ID.
+    """
+    with _get_session() as session:
+        # Check if worktree already exists
+        existing = session.query(Worktree).filter(
+            Worktree.project_name == project_name,
+            Worktree.worktree_name == worktree_name,
+        ).first()
+
+        if existing:
+            # Update existing
+            existing.worktree_path = worktree_path
+            existing.branch_name = branch_name
+            session.flush()
+            return existing.id
+
+        # Create new worktree
+        worktree = Worktree(
+            project_name=project_name,
+            worktree_name=worktree_name,
+            worktree_path=worktree_path,
+            branch_name=branch_name,
+            created_at=datetime.now()
+        )
+        session.add(worktree)
+        session.flush()
+        return worktree.id
+
+
+def unregister_worktree(project_name: str, worktree_name: str) -> bool:
+    """
+    Remove a worktree from the database.
+
+    Args:
+        project_name: The project name.
+        worktree_name: The worktree name to remove.
+
+    Returns:
+        True if removed, False if not found.
+    """
+    with _get_session() as session:
+        worktree = session.query(Worktree).filter(
+            Worktree.project_name == project_name,
+            Worktree.worktree_name == worktree_name,
+        ).first()
+
+        if not worktree:
+            return False
+
+        session.delete(worktree)
+    return True
+
+
+def get_worktree(project_name: str, worktree_name: str) -> dict[str, Any] | None:
+    """
+    Get a worktree record.
+
+    Args:
+        project_name: The project name.
+        worktree_name: The worktree name.
+
+    Returns:
+        Worktree info dict, or None if not found.
+    """
+    _, SessionLocal = _get_engine()
+    session = SessionLocal()
+    try:
+        worktree = session.query(Worktree).filter(
+            Worktree.project_name == project_name,
+            Worktree.worktree_name == worktree_name,
+        ).first()
+
+        if not worktree:
+            return None
+
+        return {
+            "id": worktree.id,
+            "project_name": worktree.project_name,
+            "worktree_name": worktree.worktree_name,
+            "worktree_path": worktree.worktree_path,
+            "branch_name": worktree.branch_name,
+            "created_at": worktree.created_at.isoformat() if worktree.created_at else None,
+        }
+    finally:
+        session.close()
+
+
+def list_project_worktrees(project_name: str) -> list[dict[str, Any]]:
+    """
+    List all worktrees for a project.
+
+    Args:
+        project_name: The project name.
+
+    Returns:
+        List of worktree info dicts.
+    """
+    _, SessionLocal = _get_engine()
+    session = SessionLocal()
+    try:
+        worktrees = session.query(Worktree).filter(
+            Worktree.project_name == project_name
+        ).all()
+
+        return [
+            {
+                "id": w.id,
+                "project_name": w.project_name,
+                "worktree_name": w.worktree_name,
+                "worktree_path": w.worktree_path,
+                "branch_name": w.branch_name,
+                "created_at": w.created_at.isoformat() if w.created_at else None,
+            }
+            for w in worktrees
+        ]
+    finally:
+        session.close()
+
+
+def delete_all_project_worktrees(project_name: str) -> int:
+    """
+    Delete all worktree records for a project.
+
+    Note: This only removes database records, not the actual worktrees.
+    Use WorktreeManager.remove_worktree() to remove actual worktrees.
+
+    Args:
+        project_name: The project name.
+
+    Returns:
+        Number of worktrees deleted.
+    """
+    with _get_session() as session:
+        deleted = session.query(Worktree).filter(
+            Worktree.project_name == project_name
+        ).delete()
+    return deleted
+
+
+def get_project_main_worktree_path(project_name: str) -> Path | None:
+    """
+    Get the main worktree path for a project.
+
+    This is the preferred way to get a project's local path for
+    wizard/edit mode operations.
+
+    Args:
+        project_name: The project name.
+
+    Returns:
+        Path to the main worktree, or None if not found.
+    """
+    worktree = get_worktree(project_name, "main")
+    if worktree:
+        return Path(worktree["worktree_path"])
+    return None

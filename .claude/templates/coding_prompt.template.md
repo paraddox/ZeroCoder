@@ -86,6 +86,8 @@ Plans are cheap. Don't salvage stale plans.
 
 ### STEP 2: CLAIM FEATURE + CREATE BRANCH
 
+**Note:** You're on a worktree branch (e.g., `worktree-projectname-1`). Create feature branches from here.
+
 ```bash
 # Get first available feature
 FEATURE_ID=$(beads_client ready --json | jq -r '[.[] | select(.status == "open")][0].id')
@@ -98,7 +100,7 @@ fi
 # Claim it (REQUIRED before writing any code)
 beads_client update "$FEATURE_ID" --status=in_progress
 
-# Create feature branch
+# Create feature branch from current worktree branch
 FEATURE_TITLE=$(beads_client show "$FEATURE_ID" --json | jq -r '.[0].title' | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd '[:alnum:]-' | cut -c1-30)
 BRANCH="feature/${FEATURE_ID}-${FEATURE_TITLE}"
 git checkout -b "$BRANCH"
@@ -301,9 +303,18 @@ git checkout main && git pull origin main
 git merge "$BRANCH" --no-ff -m "Merge: $FEATURE_TITLE"
 git push origin main
 
-# Cleanup
+# Delete feature branch
 git branch -d "$BRANCH"
 git push origin --delete "$BRANCH" 2>/dev/null || true
+
+# Return to worktree branch and reset to main (ready for next feature)
+# The worktree branch name follows pattern: worktree-{project}-{number}
+WORKTREE_BRANCH=$(git branch --list "worktree-*" | head -1 | tr -d ' *')
+if [ -n "$WORKTREE_BRANCH" ]; then
+    git checkout "$WORKTREE_BRANCH"
+    git reset --hard main
+fi
+
 beads_client sync
 ```
 
