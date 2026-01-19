@@ -77,19 +77,9 @@ export function ContainerList({
     )
   }
 
-  if (containers.length === 0) {
-    return (
-      <div className="card p-6">
-        <div className="text-center text-[var(--color-text-muted)] text-sm">
-          No containers available
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div className="card overflow-hidden">
-      {/* Header with Status Badge and Slider */}
+      {/* Header with Status Badge and Slider - ALWAYS visible */}
       <div className="column-header bg-[var(--color-bg-subtle)] flex-wrap gap-y-2">
         {/* Status Badge */}
         <StatusBadge status={agentStatus} isIdleMode={isIdleMode} gracefulStopRequested={gracefulStopRequested} />
@@ -150,9 +140,10 @@ export function ContainerList({
         </div>
       </div>
 
-      {/* Container List */}
-      <div className="divide-y divide-[var(--color-border)]">
-        {containers.map((container, index) => {
+      {/* Container List - conditional */}
+      {containers.length > 0 ? (
+        <div className="divide-y divide-[var(--color-border)]">
+          {containers.map((container, index) => {
           const config = statusConfig[container.status]
 
           return (
@@ -227,8 +218,15 @@ export function ContainerList({
               </div>
             </div>
           )
-        })}
-      </div>
+          })}
+        </div>
+      ) : (
+        <div className="p-6">
+          <div className="text-center text-[var(--color-text-muted)] text-sm">
+            No containers available
+          </div>
+        </div>
+      )}
     </div>
   )
 }
