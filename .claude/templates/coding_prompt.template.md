@@ -5,6 +5,22 @@ This is a FRESH context window - you have no memory of previous sessions.
 
 ---
 
+## CONTEXT EFFICIENCY (CRITICAL)
+
+Your context is precious (176K tokens). Fill it with implementation, not exploration.
+
+**Spawn subagents for:**
+- Large codebase exploration (5+ files)
+- Pattern search across many files
+- Understanding unfamiliar architecture
+
+**Keep in main context:**
+- Current feature implementation code
+- Validation output (tests, lint, typecheck)
+- AGENTS.md operational commands
+
+---
+
 ## BEADS WORKFLOW (MANDATORY)
 
 **You MUST follow this workflow exactly - the monitoring system depends on it:**
@@ -12,7 +28,7 @@ This is a FRESH context window - you have no memory of previous sessions.
 ```bash
 beads_client ready                              # Get available features
 beads_client update <id> --status=in_progress   # Claim feature BEFORE coding
-beads_client close <id>                         # Mark complete AFTER validation
+beads_client close <id>                         # Mark complete AFTER validation passes
 beads_client sync                               # Sync at session end
 ```
 
@@ -23,34 +39,48 @@ beads_client sync                               # Sync at session end
 ## SESSION FLOW OVERVIEW
 
 ```
-Step 1: Read artifacts (3 min max)
+Step 1: Read artifacts (deterministic order)
 Step 2: Claim feature + create branch
 Step 3: Install dependencies + start servers
 Step 4: Gap analysis + task breakdown (1 min)
 Step 5: Implement feature (primary goal)
-Step 6: Verify 3 closed features (5 min max)
-Step 7: Archive, merge, push, exit
+Step 6: VALIDATION GATE → must pass before close
+Step 7: Self-review + close feature
+Step 8: Archive, merge, push, exit
 ```
 
 ---
 
-### STEP 1: ORIENTATION + READ ARTIFACTS (3 MIN MAX)
+### STEP 1: CONTEXT LOADING (Execute in order - 3 MIN MAX)
 
 ```bash
+# 1. Operational knowledge (~60 lines max)
+cat AGENTS.md 2>/dev/null || echo "No AGENTS.md yet"
+
+# 2. Current feature plan (if any)
+cat IMPLEMENTATION_PLAN.md 2>/dev/null || echo "No plan"
+
+# 3. Recent history (last 30 lines only)
+tail -30 IMPLEMENTATION_HISTORY.md 2>/dev/null || echo "No history"
+
+# 4. Get current feature
 beads_client stats
 beads_client ready
-
-# Read persistent knowledge files
-cat AGENTS.md 2>/dev/null || echo "No AGENTS.md yet"
-cat IMPLEMENTATION_PLAN.md 2>/dev/null || echo "No plan yet"
-tail -50 IMPLEMENTATION_HISTORY.md 2>/dev/null || echo "No history yet"
 ```
 
 **AGENTS.md** = operational knowledge (commands, patterns, gotchas)
 **IMPLEMENTATION_PLAN.md** = current feature task breakdown
-**IMPLEMENTATION_HISTORY.md** = archived plans (only read last 50 lines)
+**IMPLEMENTATION_HISTORY.md** = archived plans (only read last 30 lines)
 
 If these files exist, READ THEM - they prevent rediscovering things.
+
+### PLAN FRESHNESS
+
+If IMPLEMENTATION_PLAN.md references a different feature than you're working on:
+```bash
+rm IMPLEMENTATION_PLAN.md  # Stale - delete it
+```
+Plans are cheap. Don't salvage stale plans.
 
 ---
 
@@ -178,26 +208,53 @@ This is your main job. Work through the tasks in IMPLEMENTATION_PLAN.md:
 
 **If truly blocked:**
 - Document the blocker in IMPLEMENTATION_PLAN.md
-- Commit WIP, keep feature `in_progress`, exit (see Step 7 error path)
+- Commit WIP, keep feature `in_progress`, exit (see Step 8 error path)
 
-#### Validation (MUST PASS BEFORE CLOSE)
+---
 
-Check AGENTS.md for project-specific commands, or use these defaults:
+### STEP 6: VALIDATION GATE (MANDATORY - BLOCKS CLOSE)
+
+**You CANNOT close a feature until ALL validation passes.** This is non-negotiable backpressure.
 
 ```bash
-# Lint
-npm run lint 2>/dev/null || echo "No lint configured"
-
-# Type check
-npm run typecheck 2>/dev/null || npx tsc --noEmit 2>/dev/null || echo "No typecheck"
-
-# Tests
-npm test 2>/dev/null || echo "Tests not configured"
+# Check AGENTS.md for project-specific commands, or use defaults:
+./validate.sh 2>/dev/null || {
+    # Fallback if validate.sh doesn't exist
+    npm run lint 2>/dev/null && \
+    npm run typecheck 2>/dev/null && \
+    npm test
+}
 ```
 
-**IF VALIDATION FAILS:** Fix issues and re-run. Do NOT close with failing validation.
+**If ANY validation fails:**
+1. Fix the issues
+2. Re-run validation
+3. Repeat until ALL pass
+4. Only then proceed to Step 7
 
-**ONLY after all validation passes:**
+**DO NOT:**
+- Close with failing tests
+- Skip lint errors
+- Ignore type errors
+- Use `--no-verify` to bypass
+
+---
+
+### STEP 7: SELF-REVIEW + CLOSE FEATURE
+
+Before closing your feature, verify your own work:
+
+**Quick self-review checklist:**
+- [ ] No TODO/FIXME comments left in new code
+- [ ] No hardcoded mock data (real data or proper test fixtures)
+- [ ] Tests actually test the feature behavior (not just placeholders)
+- [ ] Error paths are handled (not swallowed or ignored)
+- [ ] No "coming soon" or placeholder text in UI
+- [ ] No empty function bodies or pass-through stubs
+
+**If you find issues:** Fix them now. Don't close incomplete work.
+
+**ONLY after validation passes AND self-review is clean:**
 
 ```bash
 FEATURE_TITLE=$(beads_client show "$FEATURE_ID" --json | jq -r '.[0].title')
@@ -207,34 +264,7 @@ git add . && git commit -m "Implement: $FEATURE_TITLE"
 
 ---
 
-### STEP 6: VERIFY 3 CLOSED FEATURES (5 MIN MAX)
-
-After implementing your feature, verify 3 random closed features.
-
-```bash
-# Get 3 random closed features (not yours)
-CLOSED=$(beads_client list --status=closed --json | jq -r '.[].id' | grep -v "$FEATURE_ID" | shuf | head -3)
-
-for id in $CLOSED; do
-    echo "Verifying: $id"
-    beads_client show "$id"
-    # Quick check - does it still work?
-done
-```
-
-**Verification criteria - a feature is "broken" if:**
-- Page/route doesn't load (404, 500, crash)
-- Core action fails (button does nothing, form doesn't submit)
-- Data doesn't persist (refresh loses changes)
-
-**Rules:**
-- Only verify CLOSED features
-- If broken, note it but do NOT change status (Hound's job)
-- Max 5 minutes total
-
----
-
-### STEP 7: ARCHIVE + MERGE + EXIT
+### STEP 8: ARCHIVE + MERGE + EXIT
 
 #### Success Path (feature complete)
 
@@ -302,12 +332,14 @@ beads_client sync
 | Rule | Why |
 |------|-----|
 | Read artifacts first | Prevents rediscovering things |
+| Delete stale plans | Plans are cheap, don't salvage |
 | Plan before coding | Creates clear task breakdown |
 | Mark in_progress before coding | Enables progress monitoring |
-| **Write tests before committing** | Pre-commit hook enforces this |
-| Validate before close | Ensures quality |
-| Only close what you implement | Maintains integrity |
+| **Validation MUST pass** | Non-negotiable backpressure |
+| **Self-review before close** | Catches incomplete work |
+| Only close what's complete | No TODOs, no placeholders |
 | Archive plans after completion | Builds knowledge base |
+| Use subagents for exploration | Preserve main context |
 
 ## TEST-DRIVEN MINDSET
 

@@ -25,8 +25,6 @@ import concurrent.futures
 import sys
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-
-
 # =============================================================================
 # Retry Pattern Tests
 # =============================================================================
@@ -97,8 +95,6 @@ class TestRetryPatterns:
         # At least some should succeed
         successes = sum(1 for r in results if r is True)
         assert successes >= 1
-
-
 # =============================================================================
 # Timeout Handling Tests
 # =============================================================================
@@ -124,7 +120,7 @@ class TestTimeoutHandling:
                         project_name="timeout-test",
                         git_url="https://github.com/user/repo.git",
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
 
                     # Verify timeout configuration exists
@@ -151,8 +147,6 @@ class TestTimeoutHandling:
         default_timeout = 30  # seconds
         assert default_timeout > 0
         assert default_timeout <= 60
-
-
 # =============================================================================
 # Graceful Degradation Tests
 # =============================================================================
@@ -213,8 +207,6 @@ class TestGracefulDegradation:
 
         # Cache should be readable even when container is unavailable
         assert cache_data["features"][0]["title"] == "Cached Feature"
-
-
 # =============================================================================
 # Resource Cleanup Tests
 # =============================================================================
@@ -242,7 +234,7 @@ class TestResourceCleanup:
                         project_name="cleanup-test",
                         git_url="https://github.com/user/repo.git",
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
 
                     # Simulate error during start
@@ -292,8 +284,6 @@ class TestResourceCleanup:
 
         # After test, tmp_path fixture cleans up
         assert temp_file.exists()
-
-
 # =============================================================================
 # Backpressure Management Tests
 # =============================================================================
@@ -382,8 +372,6 @@ class TestBackpressureManagement:
 
         # Verify operations completed
         assert max_seen > 0
-
-
 # =============================================================================
 # Idempotency Tests
 # =============================================================================
@@ -439,8 +427,6 @@ class TestIdempotency:
         # Final state should be consistent
         container = isolated_registry.get_container("status-idem", 1, "coding")
         assert container["status"] == "running"
-
-
 # =============================================================================
 # Error Recovery Tests
 # =============================================================================
@@ -517,8 +503,6 @@ class TestErrorRecovery:
         # Note: SQLite CASCADE delete may not work without PRAGMA foreign_keys = ON
         # The containers may or may not be deleted depending on configuration
         # The important assertion is that the project is deleted
-
-
 # =============================================================================
 # Memory Management Tests
 # =============================================================================
@@ -560,8 +544,6 @@ class TestMemoryManagement:
 
         # After test, should be cleaned up
         # This is a documentation test
-
-
 # =============================================================================
 # Race Condition Prevention Tests
 # =============================================================================
@@ -628,7 +610,7 @@ class TestRaceConditionPrevention:
                         project_name="race-callback",
                         git_url="https://github.com/user/repo.git",
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
 
                     # Add callbacks concurrently

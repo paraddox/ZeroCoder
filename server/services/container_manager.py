@@ -138,7 +138,6 @@ class ContainerManager:
         git_url: str,
         container_number: int = 1,  # Container number for parallel execution (0 = init container)
         project_dir: Path | None = None,  # For local clone path (wizard/edit)
-        skip_db_persist: bool = False,  # Skip database registration (for hound containers)
     ):
         """
         Initialize the container manager.
@@ -176,21 +175,16 @@ class ContainerManager:
         self._restarting: bool = False
         # Track if the last agent was overseer (for completion detection)
         self._last_agent_was_overseer: bool = False
-        # Track if the last agent was hound (for hound → overseer flow)
-        self._last_agent_was_hound: bool = False
         # Track if graceful stop was requested
         self._graceful_stop_requested: bool = False
         # Track current agent type for OpenCode SDK routing
-        self._current_agent_type: Literal["coder", "overseer", "hound"] = "coder"
+        self._current_agent_type: Literal["coder", "overseer"] = "coder"
         # Force Claude SDK for initializer (regardless of project model)
         self._force_claude_sdk: bool = False
         # Track current feature being worked on (detected from logs)
         self._current_feature: str | None = None
         # Model to use when forcing Claude SDK (defaults to Opus 4.5)
         self._forced_model: str = "claude-opus-4-5-20251101"
-
-        # Skip database persistence (for hound containers that are in-memory only)
-        self._skip_db_persist = skip_db_persist
 
         # Callbacks for WebSocket notifications
         self._output_callbacks: Set[Callable[[str], Awaitable[None]]] = set()
@@ -918,17 +912,16 @@ class ContainerManager:
                 )
                 if result.returncode != 0:
                     return False, f"Failed to start container: {result.stderr}"
-                # Update registry status (skip for hound containers)
-                if not self._skip_db_persist:
-                    try:
-                        from registry import update_container_status
-                        update_container_status(
-                            project_name=self.project_name,
-                            container_number=self.container_number,
-                            status='running'
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to update container status in database: {e}")
+                # Update registry status
+                try:
+                    from registry import update_container_status
+                    update_container_status(
+                        project_name=self.project_name,
+                        container_number=self.container_number,
+                        status='running'
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to update container status in database: {e}")
             else:
                 # Ensure Docker image exists (build if necessary)
                 image_ok, image_msg = ensure_image_exists()
@@ -990,30 +983,29 @@ class ContainerManager:
                 if result.returncode != 0:
                     return False, f"Failed to create container: {result.stderr}"
 
-                # Register new container in database (skip for hound containers)
-                if not self._skip_db_persist:
-                    try:
-                        from registry import create_container, update_container_status
-                        create_container(
-                            project_name=self.project_name,
-                            container_number=self.container_number,
-                            container_type=self.container_type
-                        )
-                        # Get docker container ID
-                        inspect_result = subprocess.run(
-                            ["docker", "inspect", "--format", "{{.Id}}", self.container_name],
-                            capture_output=True, text=True
-                        )
-                        docker_id = inspect_result.stdout.strip() if inspect_result.returncode == 0 else None
-                        update_container_status(
-                            project_name=self.project_name,
-                            container_number=self.container_number,
-                            docker_container_id=docker_id,
-                            status='running'
-                        )
-                        logger.info(f"Registered container {self.container_name} in database")
-                    except Exception as e:
-                        logger.warning(f"Failed to register container in database: {e}")
+                # Register new container in database
+                try:
+                    from registry import create_container, update_container_status
+                    create_container(
+                        project_name=self.project_name,
+                        container_number=self.container_number,
+                        container_type=self.container_type
+                    )
+                    # Get docker container ID
+                    inspect_result = subprocess.run(
+                        ["docker", "inspect", "--format", "{{.Id}}", self.container_name],
+                        capture_output=True, text=True
+                    )
+                    docker_id = inspect_result.stdout.strip() if inspect_result.returncode == 0 else None
+                    update_container_status(
+                        project_name=self.project_name,
+                        container_number=self.container_number,
+                        docker_container_id=docker_id,
+                        status='running'
+                    )
+                    logger.info(f"Registered container {self.container_name} in database")
+                except Exception as e:
+                    logger.warning(f"Failed to register container in database: {e}")
 
             self.started_at = datetime.now()
             self._update_activity()
@@ -1180,7 +1172,7 @@ class ContainerManager:
             self._remove_user_started_marker()
 
             # Clear verification state if this container was running verification
-            if self._last_agent_was_hound or self._last_agent_was_overseer:
+            if self._last_agent_was_overseer:
                 clear_verification_state(self.project_name)
 
             logger.info(f"[STOP] Executing docker stop for {self.container_name}")
@@ -1458,7 +1450,6 @@ class ContainerManager:
             logger.info(f"Context limit reached in {self.container_name}, restarting with fresh context...")
             await self._broadcast_output("[System] Context limit reached. Restarting with fresh context...")
             self._last_agent_was_overseer = False
-            self._last_agent_was_hound = False
             return await self.restart_agent()
 
         # Handle graceful stop - exit code 129 or flag is set
@@ -1491,12 +1482,9 @@ class ContainerManager:
 
             if self._user_started and self.has_open_features():
                 # Features remain - restart coding agent
-                # Note: Periodic hound reviews (every 10 completed tasks) now run
-                # in parallel via dedicated hound container (hound_trigger_monitor)
                 logger.info(f"[EXIT] Features remain in {self.container_name}, restarting coding agent...")
                 await self._broadcast_output("[System] Session complete. Starting fresh context for next task...")
                 self._last_agent_was_overseer = False
-                self._last_agent_was_hound = False
                 return await self.restart_agent()
             elif self._user_started and not self.has_open_features():
                 # All features closed - determine verification flow
@@ -1510,7 +1498,6 @@ class ContainerManager:
                         await self._broadcast_output("[System] Verification found issues. Restarting to fix them...")
                         await self._restart_other_containers()
                         self._last_agent_was_overseer = False
-                        self._last_agent_was_hound = False
                         return await self.restart_agent()
                     else:
                         # Project is truly complete
@@ -1521,31 +1508,13 @@ class ContainerManager:
                         self._remove_user_started_marker()
                         await self._stop_other_containers()
                         return True, "All features verified complete"
-
-                elif self._last_agent_was_hound:
-                    # Hound completed - check if it reopened issues
-                    if self.has_open_features():
-                        # Hound reopened issues - release lock and restart all containers
-                        clear_verification_state(self.project_name)
-                        logger.info(f"Hound reopened issues in {self.project_name}, restarting containers...")
-                        await self._broadcast_output("[System] Code review found issues. Restarting to fix them...")
-                        await self._restart_other_containers()
-                        self._last_agent_was_overseer = False
-                        self._last_agent_was_hound = False
-                        return await self.restart_agent()
-                    else:
-                        # No issues reopened - proceed to overseer
-                        logger.info(f"Hound review complete in {self.container_name}, running overseer verification...")
-                        await self._broadcast_output("[System] Code review complete. Running final verification...")
-                        return await self.restart_with_overseer()
                 else:
-                    # Try to acquire verification lock - only one container runs hound/overseer
+                    # Try to acquire verification lock - only one container runs overseer
                     if set_verification_running(self.project_name, True):
-                        # We got the lock - run hound
-                        logger.info(f"All features closed in {self.container_name}, running hound review before overseer...")
-                        await self._broadcast_output("[System] All features complete. Running code review before verification...")
-                        task_ids = await self.get_recent_closed_tasks(30)
-                        return await self.restart_with_hound(task_ids)
+                        # We got the lock - run overseer directly (simplified flow)
+                        logger.info(f"All features closed in {self.container_name}, running overseer verification...")
+                        await self._broadcast_output("[System] All features complete. Running final verification...")
+                        return await self.restart_with_overseer()
                     else:
                         # Another container is already running verification - wait (stop gracefully)
                         logger.info(f"Verification already running for {self.project_name}, stopping {self.container_name}")
@@ -1586,7 +1555,6 @@ class ContainerManager:
                 await self._broadcast_output("[System] Auto-restarting after error...")
                 await asyncio.sleep(5)  # Brief delay before restart
                 self._last_agent_was_overseer = False
-                self._last_agent_was_hound = False
                 return await self.restart_agent()
             else:
                 return False, f"Agent failed: {error_info}"
@@ -1741,146 +1709,7 @@ class ContainerManager:
                 if manager.status == "stopped" and manager._user_started:
                     logger.info(f"Restarting {manager.container_name} (new issues to work on)")
                     manager._last_agent_was_overseer = False
-                    manager._last_agent_was_hound = False
                     await manager.restart_agent()
-
-    # =========================================================================
-    # Hound Agent Support
-    # =========================================================================
-
-    def _get_hound_state(self) -> dict:
-        """Read hound state from project directory."""
-        state_file = Path(self.project_dir) / ".hound_state.json"
-        if not state_file.exists():
-            return {"last_milestone": 0}
-        try:
-            state = json.loads(state_file.read_text())
-            # Migrate old format if needed
-            if "last_run_closed_count" in state and "last_milestone" not in state:
-                old_count = state.get("last_run_closed_count", 0)
-                state["last_milestone"] = (old_count // 10) * 10
-            return state
-        except Exception as e:
-            logger.warning(f"Failed to read hound state: {e}")
-            return {"last_milestone": 0}
-
-    def _save_hound_state(self, milestone: int) -> None:
-        """Save hound state after hound runs."""
-        state_file = Path(self.project_dir) / ".hound_state.json"
-        try:
-            state_file.write_text(json.dumps({
-                "last_milestone": milestone,
-                "last_run_at": datetime.now().isoformat(),
-            }))
-            logger.info(f"Saved hound state: last_milestone={milestone}")
-        except Exception as e:
-            logger.warning(f"Failed to save hound state: {e}")
-
-    def _get_closed_count(self) -> int:
-        """Get current closed task count from BeadsSyncManager (instant, no network)."""
-        from .beads_manager import get_beads_sync_manager
-
-        try:
-            manager = get_beads_sync_manager(self.project_name, self.git_url)
-            stats = manager.get_stats()
-            return stats.get("closed", 0)
-        except Exception as e:
-            logger.warning(f"Failed to get closed count: {e}")
-            return 0
-
-    def _should_run_hound(self) -> bool:
-        """Check if completed_tasks % 10 == 0 and milestone not yet processed."""
-        state = self._get_hound_state()
-        last_milestone = state.get("last_milestone", 0)
-        current_closed = self._get_closed_count()
-        current_milestone = (current_closed // 10) * 10  # Round down to nearest 10
-
-        # Trigger if we hit a new milestone (10, 20, 30, etc.)
-        should_run = current_milestone > last_milestone and current_milestone > 0
-        logger.info(f"Hound check: last_milestone={last_milestone}, current_closed={current_closed}, "
-                   f"current_milestone={current_milestone}, should_run={should_run}")
-        return should_run
-
-    def _get_current_milestone(self) -> int:
-        """Get the current milestone (nearest 10 below current closed count)."""
-        current_closed = self._get_closed_count()
-        return (current_closed // 10) * 10
-
-    async def get_recent_closed_tasks(self, limit: int = 15) -> list[str]:
-        """Get the last N closed task IDs from BeadsSyncManager."""
-        from .beads_manager import get_beads_sync_manager
-
-        try:
-            manager = get_beads_sync_manager(self.project_name, self.git_url)
-            closed_tasks = manager.get_tasks_by_status("closed")
-            task_ids = [t.get("id") for t in closed_tasks if t.get("id")]
-            return task_ids[-limit:]  # Return last N (most recent)
-        except Exception as e:
-            logger.warning(f"Failed to get recent closed tasks: {e}")
-            return []
-
-    async def restart_with_hound(self, task_ids: list[str]) -> tuple[bool, str]:
-        """
-        Restart the agent with the hound prompt.
-
-        The hound reviews recently closed tasks and reopens incomplete ones.
-
-        Args:
-            task_ids: List of task IDs to review
-
-        Returns:
-            Tuple of (success, message)
-        """
-        logger.info(f"Starting hound review in container {self.container_name} for {len(task_ids)} tasks")
-
-        self._restarting = True
-        try:
-            # Stop the container
-            await self.stop()
-
-            # Read the hound prompt from the project
-            hound_prompt_path = self.project_dir / "prompts" / "hound_prompt.md"
-            if not hound_prompt_path.exists():
-                # Fall back to template if project-specific doesn't exist
-                from prompts import get_hound_prompt
-                try:
-                    instruction = get_hound_prompt(self.project_dir)
-                except FileNotFoundError:
-                    clear_verification_state(self.project_name)
-                    return False, "No hound_prompt.md found in project or templates"
-            else:
-                try:
-                    instruction = hound_prompt_path.read_text()
-                except Exception as e:
-                    clear_verification_state(self.project_name)
-                    return False, f"Failed to read hound prompt: {e}"
-
-            # Inject task IDs into prompt
-            task_list = "\n".join([f"- {task_id}" for task_id in task_ids])
-            instruction = instruction.replace("{task_ids}", task_list)
-
-            # Mark that we're running hound
-            self._last_agent_was_hound = True
-            self._last_agent_was_overseer = False
-            # Set agent type for OpenCode routing
-            self._current_agent_type = "hound"
-            # Force Claude SDK for hound agent code reviews
-            self._force_claude_sdk = True
-
-            # Save current milestone for next hound trigger check
-            current_milestone = self._get_current_milestone()
-            self._save_hound_state(current_milestone)
-
-            # Start container with instruction
-            success, message = await self.start(instruction)
-            if not success:
-                clear_verification_state(self.project_name)
-            return success, message
-        except Exception as e:
-            clear_verification_state(self.project_name)
-            raise
-        finally:
-            self._restarting = False
 
     async def start_container_only(self) -> tuple[bool, str]:
         """
@@ -2009,13 +1838,13 @@ _managers_lock = threading.Lock()
 _container_managers = _managers
 
 # Project-level verification state tracking
-# When all features are closed, only ONE container should run hound → overseer
+# When all features are closed, only ONE container should run the overseer
 _verification_running: dict[str, bool] = {}  # project_name -> is_running
 _verification_lock = threading.Lock()
 
 
 def is_verification_running(project_name: str) -> bool:
-    """Check if hound/overseer verification is already running for project."""
+    """Check if overseer verification is already running for project."""
     with _verification_lock:
         return _verification_running.get(project_name, False)
 
@@ -2090,15 +1919,11 @@ def get_existing_container_manager(
 
 
 def get_all_container_managers(project_name: str) -> list[ContainerManager]:
-    """Get all container managers for a project (thread-safe), including hound containers."""
+    """Get all container managers for a project (thread-safe)."""
     result = []
     with _managers_lock:
         if project_name in _managers:
             result.extend(_managers[project_name].values())
-    # Also include hound container if present
-    with _hound_lock:
-        if project_name in _hound_containers:
-            result.append(_hound_containers[project_name])
     return result
 
 
@@ -2542,254 +2367,3 @@ async def start_agent_health_monitor() -> None:
             logger.exception(f"Error in agent health monitor: {e}")
 
 
-# =============================================================================
-# Dedicated Hound Container Support
-# =============================================================================
-
-# Hound trigger check interval in seconds (5 minutes)
-HOUND_CHECK_INTERVAL = 300
-
-# Track running hound containers to prevent duplicates
-_hound_containers: dict[str, ContainerManager] = {}
-_hound_lock = threading.Lock()
-
-
-async def get_tasks_for_hound_review(project_name: str, git_url: str) -> list[str]:
-    """
-    Get tasks for hound review: last 15 closed tasks from BeadsSyncManager.
-
-    Args:
-        project_name: Name of the project
-        git_url: Git URL for the project (used to get BeadsSyncManager)
-
-    Returns:
-        List of task IDs to review (up to 15)
-    """
-    from .beads_manager import get_beads_sync_manager
-
-    try:
-        manager = get_beads_sync_manager(project_name, git_url)
-        closed_tasks = manager.get_tasks_by_status("closed")
-
-        # Limit to 100 tasks for selection pool
-        task_ids = [t.get("id") for t in closed_tasks[:100] if t.get("id")]
-
-        if not task_ids:
-            return []
-
-        # Return last 15 closed tasks (most recent)
-        result_tasks = task_ids[-15:] if len(task_ids) >= 15 else task_ids
-        logger.info(f"Selected {len(result_tasks)} tasks for hound review")
-        return result_tasks
-
-    except Exception as e:
-        logger.exception(f"Error getting tasks for hound review: {e}")
-        return []
-
-
-async def spawn_hound_container(project_name: str, git_url: str, task_ids: list[str]) -> tuple[bool, str]:
-    """
-    Spawn a dedicated hound container for code review.
-
-    The hound container:
-    - Runs independently alongside coder containers
-    - Reviews the specified tasks
-    - Terminates when done (no restart loop)
-
-    Args:
-        project_name: Name of the project
-        git_url: Git URL for the project repository
-        task_ids: List of task IDs to review
-
-    Returns:
-        Tuple of (success, message)
-    """
-    container_name = f"zerocoder-{project_name}-hound"
-
-    # Check if hound container already running
-    with _hound_lock:
-        if project_name in _hound_containers:
-            existing = _hound_containers[project_name]
-            if existing.status == "running":
-                return False, "Hound container already running"
-
-    logger.info(f"Spawning dedicated hound container {container_name} for {len(task_ids)} tasks")
-
-    try:
-        # Remove existing hound container if it exists
-        subprocess.run(
-            ["docker", "rm", "-f", container_name],
-            capture_output=True,
-            timeout=30,
-        )
-
-        # Get project directory
-        from registry import get_projects_dir
-        project_dir = get_projects_dir() / project_name
-
-        # Read the hound prompt
-        hound_prompt_path = project_dir / "prompts" / "hound_prompt.md"
-        if not hound_prompt_path.exists():
-            from prompts import get_hound_prompt
-            try:
-                instruction = get_hound_prompt(project_dir)
-            except FileNotFoundError:
-                return False, "No hound_prompt.md found in project or templates"
-        else:
-            try:
-                instruction = hound_prompt_path.read_text()
-            except Exception as e:
-                return False, f"Failed to read hound prompt: {e}"
-
-        # Inject task IDs into prompt
-        task_list = "\n".join([f"- {task_id}" for task_id in task_ids])
-        instruction = instruction.replace("{task_ids}", task_list)
-
-        # Create hound container manager with container_number=-1 (special hound indicator)
-        # We use a separate manager instance to not interfere with coding containers
-        hound_manager = ContainerManager(
-            project_name=project_name,
-            git_url=git_url,
-            container_number=-1,  # Special marker for hound container
-            project_dir=project_dir,
-            skip_db_persist=True,  # Hound containers are in-memory only
-        )
-        # Override the container name since -1 would give "zerocoder-{project}--1"
-        hound_manager.container_name = container_name
-        hound_manager._current_agent_type = "hound"
-        # Force Claude SDK for hound agent code reviews
-        hound_manager._force_claude_sdk = True
-
-        # Register hound container
-        with _hound_lock:
-            _hound_containers[project_name] = hound_manager
-
-        # Start the hound container
-        success, message = await hound_manager.start(instruction)
-
-        if success:
-            # Save milestone after spawning hound
-            milestone = hound_manager._get_current_milestone()
-            hound_manager._save_hound_state(milestone)
-            logger.info(f"Hound container {container_name} started successfully, saved milestone {milestone}")
-        else:
-            # Clean up on failure
-            with _hound_lock:
-                if project_name in _hound_containers:
-                    del _hound_containers[project_name]
-
-        return success, message
-
-    except Exception as e:
-        logger.exception(f"Error spawning hound container: {e}")
-        with _hound_lock:
-            if project_name in _hound_containers:
-                del _hound_containers[project_name]
-        return False, str(e)
-
-
-def get_hound_container_status(project_name: str) -> str | None:
-    """Get the status of the hound container for a project, if any."""
-    with _hound_lock:
-        if project_name in _hound_containers:
-            return _hound_containers[project_name].status
-    return None
-
-
-async def cleanup_finished_hound_containers() -> list[str]:
-    """Clean up hound containers that have finished."""
-    cleaned = []
-    with _hound_lock:
-        to_remove = []
-        for project_name, manager in _hound_containers.items():
-            manager._sync_status()
-            # Remove if stopped or completed (hound finished)
-            if manager.status in ("stopped", "completed", "not_created"):
-                to_remove.append(project_name)
-                cleaned.append(manager.container_name)
-
-        for project_name in to_remove:
-            del _hound_containers[project_name]
-
-    return cleaned
-
-
-async def check_hound_triggers() -> list[str]:
-    """
-    Check all active projects and spawn hound containers where needed.
-
-    Returns:
-        List of project names where hound was triggered
-    """
-    triggered = []
-
-    # Get all projects with running containers
-    with _managers_lock:
-        active_projects = []
-        for project_name, containers in _managers.items():
-            for manager in containers.values():
-                if manager.status == "running" and manager.container_number > 0:
-                    # Use this container for checking (coder container)
-                    active_projects.append((project_name, manager))
-                    break
-
-    for project_name, manager in active_projects:
-        try:
-            # Skip if hound already running for this project
-            if get_hound_container_status(project_name) == "running":
-                continue
-
-            # Check if hound should run
-            if manager._should_run_hound():
-                logger.info(f"Hound trigger condition met for {project_name}")
-
-                # Get tasks for review
-                task_ids = await get_tasks_for_hound_review(project_name, manager.git_url)
-                if not task_ids:
-                    logger.warning(f"No tasks found for hound review in {project_name}")
-                    continue
-
-                # Spawn hound container
-                success, message = await spawn_hound_container(
-                    project_name, manager.git_url, task_ids
-                )
-                if success:
-                    triggered.append(project_name)
-                    logger.info(f"Spawned hound container for {project_name}")
-                else:
-                    logger.error(f"Failed to spawn hound for {project_name}: {message}")
-
-        except Exception as e:
-            logger.exception(f"Error checking hound trigger for {project_name}: {e}")
-
-    return triggered
-
-
-async def start_hound_trigger_monitor() -> None:
-    """
-    Start a background task that periodically checks if hound should run.
-
-    This runs every HOUND_CHECK_INTERVAL seconds and spawns dedicated hound
-    containers for projects that have hit a new milestone (10, 20, 30... completed tasks).
-    """
-    logger.info(f"Starting hound trigger monitor (interval: {HOUND_CHECK_INTERVAL}s)")
-
-    while True:
-        try:
-            await asyncio.sleep(HOUND_CHECK_INTERVAL)
-
-            # Clean up finished hound containers first
-            cleaned = await cleanup_finished_hound_containers()
-            if cleaned:
-                logger.info(f"Cleaned up finished hound containers: {cleaned}")
-
-            # Check triggers and spawn hound containers
-            triggered = await check_hound_triggers()
-            if triggered:
-                logger.info(f"Hound triggered for projects: {triggered}")
-
-        except asyncio.CancelledError:
-            logger.info("Hound trigger monitor stopped")
-            break
-        except Exception as e:
-            logger.exception(f"Error in hound trigger monitor: {e}")

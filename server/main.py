@@ -47,7 +47,6 @@ from .services.container_manager import (
     cleanup_stale_containers,
     restore_managers_from_registry,
     start_agent_health_monitor,
-    start_hound_trigger_monitor,
 )
 from .services.beads_manager import initialize_all_projects, start_beads_sync_poller
 from .services.branch_cleanup import cleanup_all_remote_branches
@@ -163,7 +162,6 @@ async def lifespan(app: FastAPI):
     idle_monitor_task = asyncio.create_task(idle_container_monitor())
     health_monitor_task = asyncio.create_task(start_agent_health_monitor())
     beads_sync_task = asyncio.create_task(start_beads_sync_poller())
-    hound_trigger_task = asyncio.create_task(start_hound_trigger_monitor())
     log_cleanup_monitor_task = asyncio.create_task(log_cleanup_task())
 
     yield
@@ -174,7 +172,6 @@ async def lifespan(app: FastAPI):
     idle_monitor_task.cancel()
     health_monitor_task.cancel()
     beads_sync_task.cancel()
-    hound_trigger_task.cancel()
     log_cleanup_monitor_task.cancel()
     try:
         await idle_monitor_task
@@ -186,10 +183,6 @@ async def lifespan(app: FastAPI):
         pass
     try:
         await beads_sync_task
-    except asyncio.CancelledError:
-        pass
-    try:
-        await hound_trigger_task
     except asyncio.CancelledError:
         pass
     try:

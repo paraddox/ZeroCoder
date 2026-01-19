@@ -487,7 +487,6 @@ def container_manager_factory(tmp_path):
                         git_url=f"https://github.com/user/{project_name}.git",
                         container_number=container_number,
                         project_dir=project_dir,
-                        skip_db_persist=True,
                     )
     return _create
 

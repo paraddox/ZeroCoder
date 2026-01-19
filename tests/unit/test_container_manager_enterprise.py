@@ -26,8 +26,6 @@ from typing import Generator
 import sys
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-
-
 # =============================================================================
 # Container State Machine Tests
 # =============================================================================
@@ -53,7 +51,7 @@ class TestContainerStateMachine:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
         return manager
 
@@ -86,8 +84,6 @@ class TestContainerStateMachine:
 
         container_manager._status = "stopped"
         assert container_manager.status == "stopped"
-
-
 # =============================================================================
 # Output Sanitization Tests
 # =============================================================================
@@ -217,8 +213,6 @@ class TestOutputSanitization:
         for line in lines:
             result = sanitize_output(line)
             assert "[REDACTED]" in result
-
-
 # =============================================================================
 # Image Management Tests
 # =============================================================================
@@ -316,8 +310,6 @@ class TestImageManagement:
 
         assert success is True
         mock_build.assert_called_once()
-
-
 # =============================================================================
 # Container Naming Tests
 # =============================================================================
@@ -344,7 +336,7 @@ class TestContainerNaming:
                             git_url="https://github.com/user/repo.git",
                             container_number=container_number,
                             project_dir=project_dir,
-                            skip_db_persist=True,
+                            
                         )
         return create
 
@@ -376,8 +368,6 @@ class TestContainerNaming:
         """Test container naming with underscored project name."""
         manager = manager_factory("my_project", 1)
         assert manager.container_name == "zerocoder-my_project-1"
-
-
 # =============================================================================
 # Callback Management Tests
 # =============================================================================
@@ -403,7 +393,7 @@ class TestCallbackManagement:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
         return manager
 
@@ -470,8 +460,6 @@ class TestCallbackManagement:
         await asyncio.sleep(0.1)
 
         success_callback.assert_called_once()
-
-
 # =============================================================================
 # Status Dict Tests
 # =============================================================================
@@ -497,7 +485,7 @@ class TestStatusDict:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
         return manager
 
@@ -536,8 +524,6 @@ class TestStatusDict:
         container_manager.last_activity = datetime.now() - timedelta(minutes=5)
         status = container_manager.get_status_dict()
         assert 290 <= status["idle_seconds"] <= 310
-
-
 # =============================================================================
 # Agent Running Detection Tests
 # =============================================================================
@@ -563,7 +549,7 @@ class TestAgentRunningDetection:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
         return manager
 
@@ -600,8 +586,6 @@ class TestAgentRunningDetection:
             result = container_manager.is_agent_running()
 
         assert result is False
-
-
 # =============================================================================
 # Container Manager Registry Tests
 # =============================================================================
@@ -684,8 +668,6 @@ class TestContainerManagerRegistry:
 
         manager = get_existing_container_manager("nonexistent", container_number=1)
         assert manager is None
-
-
 # =============================================================================
 # Idle Timeout Tests
 # =============================================================================
@@ -711,7 +693,7 @@ class TestIdleTimeout:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
         return manager
 
@@ -737,8 +719,6 @@ class TestIdleTimeout:
         container_manager.last_activity = datetime.now() - timedelta(minutes=IDLE_TIMEOUT_MINUTES + 1)
         result = container_manager.is_idle()
         assert result is True
-
-
 # =============================================================================
 # Graceful Stop Tests
 # =============================================================================
@@ -764,7 +744,7 @@ class TestGracefulStop:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
         return manager
 
@@ -778,8 +758,6 @@ class TestGracefulStop:
         """Test graceful stop flag can be set directly."""
         container_manager._graceful_stop_requested = True
         assert container_manager._graceful_stop_requested is True
-
-
 # =============================================================================
 # Agent Type Tests
 # =============================================================================
@@ -805,7 +783,7 @@ class TestAgentTypes:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
         return manager
 
@@ -819,6 +797,3 @@ class TestAgentTypes:
         """Test agent type can be changed."""
         container_manager._current_agent_type = "overseer"
         assert container_manager._current_agent_type == "overseer"
-
-        container_manager._current_agent_type = "hound"
-        assert container_manager._current_agent_type == "hound"

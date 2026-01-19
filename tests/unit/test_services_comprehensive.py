@@ -23,8 +23,6 @@ from unittest.mock import AsyncMock, MagicMock, patch, call, PropertyMock
 import sys
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-
-
 # =============================================================================
 # Container Manager Service Tests
 # =============================================================================
@@ -54,7 +52,7 @@ class TestContainerManagerInitialization:
                     git_url="https://github.com/user/repo.git",
                     container_number=3,
                     project_dir=project_dir,
-                    skip_db_persist=True,
+                    
                 )
 
         assert manager.container_name == "zerocoder-my-app-3"
@@ -75,7 +73,7 @@ class TestContainerManagerInitialization:
                     git_url="https://github.com/user/repo.git",
                     container_number=0,
                     project_dir=project_dir,
-                    skip_db_persist=True,
+                    
                 )
 
         assert manager.container_name == "zerocoder-my-app-init"
@@ -96,7 +94,7 @@ class TestContainerManagerInitialization:
                     git_url="https://github.com/user/repo.git",
                     container_number=1,
                     project_dir=project_dir,
-                    skip_db_persist=True,
+                    
                 )
 
         assert manager._status == "not_created"
@@ -120,20 +118,18 @@ class TestContainerManagerInitialization:
                     git_url="https://github.com/user/repo.git",
                     container_number=0,
                     project_dir=project_dir,
-                    skip_db_persist=True,
+                    
                 )
                 coding_manager = ContainerManager(
                     project_name="test",
                     git_url="https://github.com/user/repo.git",
                     container_number=1,
                     project_dir=project_dir,
-                    skip_db_persist=True,
+                    
                 )
 
         assert init_manager.container_type == "init"
         assert coding_manager.container_type == "coding"
-
-
 class TestContainerManagerStatusSync:
     """Tests for container status synchronization with Docker."""
 
@@ -154,7 +150,7 @@ class TestContainerManagerStatusSync:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
         return manager
 
@@ -210,8 +206,6 @@ class TestContainerManagerStatusSync:
             container_manager._sync_status()
 
         assert container_manager._status == "completed"
-
-
 class TestContainerManagerAgentModel:
     """Tests for agent model configuration."""
 
@@ -233,7 +227,7 @@ class TestContainerManagerAgentModel:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
         return manager
 
@@ -267,8 +261,6 @@ class TestContainerManagerAgentModel:
         config_path.write_text(json.dumps({"agent_model": "claude-sonnet-4-5-20250514"}))
 
         assert container_manager._is_opencode_model() is False
-
-
 class TestContainerManagerIdleTimeout:
     """Tests for idle timeout functionality."""
 
@@ -289,7 +281,7 @@ class TestContainerManagerIdleTimeout:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
         return manager
 
@@ -323,8 +315,6 @@ class TestContainerManagerIdleTimeout:
         container_manager.last_activity = datetime.now() - timedelta(seconds=60)
         idle = container_manager.get_idle_seconds()
         assert 55 <= idle <= 65  # Allow some tolerance
-
-
 class TestContainerManagerAgentStuck:
     """Tests for stuck agent detection."""
 
@@ -345,7 +335,7 @@ class TestContainerManagerAgentStuck:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
         return manager
 
@@ -368,8 +358,6 @@ class TestContainerManagerAgentStuck:
         container_manager.last_activity = datetime.now() - timedelta(minutes=15)
         with patch.object(container_manager, "is_agent_running", return_value=True):
             assert container_manager.is_agent_stuck() is True
-
-
 class TestContainerManagerCallbacks:
     """Tests for callback management."""
 
@@ -390,7 +378,7 @@ class TestContainerManagerCallbacks:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
         return manager
 
@@ -445,8 +433,6 @@ class TestContainerManagerCallbacks:
         await asyncio.sleep(0.01)
         callback1.assert_called_once_with("running")
         callback2.assert_called_once_with("running")
-
-
 class TestContainerManagerMarkerFiles:
     """Tests for user-started marker file management."""
 
@@ -467,7 +453,7 @@ class TestContainerManagerMarkerFiles:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
         return manager
 
@@ -508,8 +494,6 @@ class TestContainerManagerMarkerFiles:
         marker_path.touch()
 
         assert container_manager._check_user_started_marker() is True
-
-
 # =============================================================================
 # Container Beads Service Tests
 # =============================================================================
@@ -631,8 +615,6 @@ class TestContainerBeadsClient:
 
         # list_all() returns list[dict] directly
         assert result == mock_features
-
-
 class TestSendBeadsCommand:
     """Tests for send_beads_command function."""
 
@@ -665,8 +647,6 @@ class TestSendBeadsCommand:
         with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
             with pytest.raises(RuntimeError, match="Container command failed"):
                 await send_beads_command("test-project", {"action": "invalid"})
-
-
 # =============================================================================
 # Beads Sync Manager Tests
 # =============================================================================
@@ -743,8 +723,6 @@ class TestBeadsSyncManager:
         assert len(tasks) == 2
         assert tasks[0]["id"] == "feat-1"
         assert tasks[1]["status"] == "closed"
-
-
 # =============================================================================
 # Local Project Manager Tests
 # =============================================================================
@@ -849,8 +827,6 @@ class TestLocalProjectManager:
                 )
 
                 assert mock_thread.called
-
-
 # =============================================================================
 # Output Sanitization Tests
 # =============================================================================
@@ -942,8 +918,6 @@ class TestOutputSanitization:
         for line in test_cases:
             result = sanitize_output(line)
             assert "[REDACTED]" in result, f"Failed for: {line}"
-
-
 # =============================================================================
 # Docker Image Management Tests
 # =============================================================================
@@ -1054,8 +1028,6 @@ class TestDockerImageManagement:
 
                 assert success is True
                 mock_build.assert_called_once()
-
-
 # =============================================================================
 # Container Manager Registry Tests
 # =============================================================================
@@ -1174,8 +1146,6 @@ class TestContainerManagerRegistry:
         clear_container_manager("to-clear")
 
         assert "to-clear" not in _container_managers
-
-
 # =============================================================================
 # Performance Tests
 # =============================================================================
@@ -1217,7 +1187,7 @@ class TestServicePerformance:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
 
         # Add many callbacks

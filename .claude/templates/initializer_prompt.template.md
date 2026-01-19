@@ -295,7 +295,7 @@ Create `AGENTS.md` at project root. This persists operational knowledge for all 
 - Styling: [approach]
 ```
 
-**Size limit:** Keep AGENTS.md under 100 lines.
+**Size limit:** Keep AGENTS.md under 60 lines. Be concise - this is read every session.
 
 ---
 

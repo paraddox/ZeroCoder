@@ -445,7 +445,6 @@ class TestErrorRecovery:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
                     )
 
         # Add failing and successful callbacks

@@ -329,7 +329,7 @@ class TestContainerStatus:
     @pytest.mark.unit
     def test_agent_types(self):
         """Test all valid agent types."""
-        agent_types = ["coder", "overseer", "hound", "initializer"]
+        agent_types = ["coder", "overseer", "initializer"]
         for agent_type in agent_types:
             status = ContainerStatus(
                 id=1,

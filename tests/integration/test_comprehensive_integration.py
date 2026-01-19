@@ -21,8 +21,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import sys
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-
-
 # =============================================================================
 # Project Lifecycle Integration Tests
 # =============================================================================
@@ -118,8 +116,6 @@ class TestProjectLifecycleIntegration:
         mark_project_initialized("init-test")
 
         assert get_project_info("init-test")["is_new"] is False
-
-
 # =============================================================================
 # Container Management Integration Tests
 # =============================================================================
@@ -217,8 +213,6 @@ class TestContainerManagementIntegration:
                     # Get all managers
                     all_managers = get_all_container_managers("multi-test")
                     assert len(all_managers) == 3
-
-
 # =============================================================================
 # API Integration Tests
 # =============================================================================
@@ -306,8 +300,6 @@ class TestAPIIntegration:
 
                     if response.status_code == 200:
                         mock_write.assert_called_once()
-
-
 # =============================================================================
 # WebSocket Integration Tests
 # =============================================================================
@@ -377,8 +369,6 @@ class TestWebSocketIntegration:
         await manager.broadcast_to_project("test-project", {"type": "test"})
 
         healthy_client.send_json.assert_called_once()
-
-
 # =============================================================================
 # Feature Management Integration Tests
 # =============================================================================
@@ -434,8 +424,6 @@ class TestFeatureManagementIntegration:
             assert feature["id"] == issue["id"]
             assert feature["name"] == issue["title"]
             assert feature["priority"] == issue["priority"]
-
-
 # =============================================================================
 # Progress Tracking Integration Tests
 # =============================================================================
@@ -507,8 +495,6 @@ class TestProgressTrackingIntegration:
         result = has_features(empty_project)
 
         assert result is False
-
-
 # =============================================================================
 # Prompts Integration Tests
 # =============================================================================
@@ -558,8 +544,6 @@ class TestPromptsIntegration:
         (prompts_dir / "app_spec.txt").write_text("<app-spec><name>Test</name></app-spec>")
 
         assert has_project_prompts(project_dir) is True
-
-
 # =============================================================================
 # Beads Sync Integration Tests
 # =============================================================================
@@ -605,8 +589,6 @@ class TestBeadsSyncIntegration:
         assert len(tasks) == 2
         assert tasks[0]["id"] == "feat-1"
         assert tasks[1]["status"] == "closed"
-
-
 # =============================================================================
 # Error Recovery Integration Tests
 # =============================================================================
@@ -627,7 +609,7 @@ class TestErrorRecoveryIntegration:
                     manager = ContainerManager(
                         project_name="error-test",
                         git_url="https://github.com/user/repo.git",
-                        skip_db_persist=True,
+                        
                     )
 
         # Add failing and successful callbacks
@@ -663,8 +645,6 @@ class TestErrorRecoveryIntegration:
         await manager.broadcast_to_project("test", {"type": "test"})
 
         healthy.send_json.assert_called_once()
-
-
 # =============================================================================
 # Concurrent Access Integration Tests
 # =============================================================================
@@ -722,8 +702,6 @@ class TestConcurrentAccessIntegration:
 
         # All should return the same instance
         assert all(m is managers[0] for m in managers)
-
-
 # =============================================================================
 # Data Integrity Integration Tests
 # =============================================================================
@@ -787,8 +765,6 @@ class TestDataIntegrityIntegration:
             for i, line in enumerate(f):
                 parsed = json.loads(line.strip())
                 assert parsed["id"] == f"feat-{i + 1}"
-
-
 # =============================================================================
 # Performance Integration Tests
 # =============================================================================

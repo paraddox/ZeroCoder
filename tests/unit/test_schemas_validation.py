@@ -269,7 +269,7 @@ class TestContainerStatus:
     @pytest.mark.unit
     def test_agent_type_literal(self):
         """Test agent_type only accepts valid values."""
-        valid_types = ["coder", "overseer", "hound", "initializer", None]
+        valid_types = ["coder", "overseer", "initializer", None]
         for atype in valid_types:
             container = ContainerStatus(
                 id=1,

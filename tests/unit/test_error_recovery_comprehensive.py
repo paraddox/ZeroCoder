@@ -20,8 +20,6 @@ import subprocess
 import sys
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-
-
 # =============================================================================
 # Registry Error Recovery Tests
 # =============================================================================
@@ -80,8 +78,6 @@ class TestRegistryErrorRecovery:
         """Test that unregistering nonexistent project returns False."""
         result = isolated_registry.unregister_project("nonexistent")
         assert result is False
-
-
 # =============================================================================
 # Container Manager Error Recovery Tests
 # =============================================================================
@@ -107,7 +103,7 @@ class TestContainerManagerErrorRecovery:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
         return manager
 
@@ -168,8 +164,6 @@ class TestContainerManagerErrorRecovery:
             # Should not raise, should return False
             result = container_manager.is_agent_running()
             assert result is False
-
-
 # =============================================================================
 # WebSocket Error Recovery Tests
 # =============================================================================
@@ -219,8 +213,6 @@ class TestWebSocketErrorRecovery:
 
         # Should not raise
         await manager.broadcast_to_project("empty-project", {"type": "test"})
-
-
 # =============================================================================
 # Beads Command Error Recovery Tests
 # =============================================================================
@@ -269,8 +261,6 @@ class TestBeadsErrorRecovery:
 
             with pytest.raises(Exception, match="Command failed"):
                 await client.list_all()
-
-
 # =============================================================================
 # Prompt Loading Error Recovery Tests
 # =============================================================================
@@ -324,8 +314,6 @@ class TestPromptLoadingErrorRecovery:
         # Should fall back to template or raise FileNotFoundError
         with pytest.raises(FileNotFoundError):
             load_prompt("test", project_dir)
-
-
 # =============================================================================
 # API Router Error Recovery Tests
 # =============================================================================
@@ -361,8 +349,6 @@ class TestAPIRouterErrorRecovery:
         # So we test with actual invalid characters in the project name
         response = test_client.get("/api/projects/invalid@name!with#special")
         assert response.status_code in [400, 404, 422]
-
-
 # =============================================================================
 # Progress Module Error Recovery Tests
 # =============================================================================
@@ -402,8 +388,6 @@ class TestProgressErrorRecovery:
         assert passing == 0
         assert in_progress == 0
         assert total == 0
-
-
 # =============================================================================
 # Concurrent Error Recovery Tests
 # =============================================================================
@@ -479,8 +463,6 @@ class TestConcurrentErrorRecovery:
 
         # Should not raise
         await asyncio.gather(*[broadcast() for _ in range(5)])
-
-
 # =============================================================================
 # Resource Cleanup Error Recovery Tests
 # =============================================================================
@@ -507,7 +489,7 @@ class TestResourceCleanupErrorRecovery:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
 
         callback = AsyncMock()
@@ -537,8 +519,6 @@ class TestResourceCleanupErrorRecovery:
         # File should be closed, can be deleted
         test_file.unlink()
         assert not test_file.exists()
-
-
 # =============================================================================
 # Graceful Degradation Tests
 # =============================================================================

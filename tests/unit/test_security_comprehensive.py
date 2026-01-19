@@ -21,8 +21,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import sys
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-
-
 # =============================================================================
 # Input Validation Security Tests
 # =============================================================================
@@ -111,8 +109,6 @@ class TestProjectNameSecurity:
                     name=name,
                     git_url="https://github.com/user/repo.git"
                 )
-
-
 class TestGitUrlSecurity:
     """Security tests for Git URL validation."""
 
@@ -204,8 +200,6 @@ class TestGitUrlSecurity:
                 )
             except ValueError:
                 pass  # If rejected, that's fine too
-
-
 # =============================================================================
 # Output Sanitization Security Tests
 # =============================================================================
@@ -270,8 +264,6 @@ class TestOutputSanitizationSecurity:
         result = sanitize_output(input_with_secrets)
         # Key-value patterns should be redacted
         assert "[REDACTED]" in result
-
-
 # =============================================================================
 # SQL Injection Prevention Tests
 # =============================================================================
@@ -318,8 +310,6 @@ class TestSQLInjectionPrevention:
         info = isolated_registry.get_project_info("sql-safe-test")
         assert info is not None
         assert info["git_url"] == sql_like_url
-
-
 # =============================================================================
 # Command Injection Prevention Tests
 # =============================================================================
@@ -349,13 +339,11 @@ class TestCommandInjectionPrevention:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
 
         # Container name should only contain safe characters
         assert safe_chars_only.match(manager.container_name)
-
-
 # =============================================================================
 # Path Traversal Prevention Tests
 # =============================================================================
@@ -400,8 +388,6 @@ class TestPathTraversalPrevention:
         # Verify it's within the expected directory
         projects_dir = isolated_registry.get_projects_dir()
         assert str(path).startswith(str(projects_dir))
-
-
 # =============================================================================
 # Feature Data Security Tests
 # =============================================================================
@@ -473,8 +459,6 @@ class TestFeatureDataSecurity:
         # This test documents that data is passed through as-is
         assert isinstance(result, list)
         assert len(result) == 1
-
-
 # =============================================================================
 # JSON Parsing Security Tests
 # =============================================================================
@@ -526,8 +510,6 @@ class TestJSONParsingSecurity:
         result = read_local_beads_features(project_dir)
         assert isinstance(result, list)
         assert len(result) == 1
-
-
 # =============================================================================
 # File Size and Resource Limit Tests
 # =============================================================================
@@ -590,8 +572,6 @@ class TestResourceLimits:
         # Returns an empty list
         assert isinstance(result, list)
         assert result == []
-
-
 # =============================================================================
 # Concurrent Access Security Tests
 # =============================================================================
@@ -631,8 +611,6 @@ class TestConcurrentAccessSecurity:
         # Exactly one should succeed
         assert results["success"] >= 1, "At least one registration should succeed"
         assert results["success"] + results["error"] == 10
-
-
 # =============================================================================
 # Schema Validation Security Tests
 # =============================================================================

@@ -18,8 +18,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import sys
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-
-
 # =============================================================================
 # Container State Machine Tests
 # =============================================================================
@@ -45,7 +43,7 @@ class TestContainerStateMachine:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
         return manager
 
@@ -156,8 +154,6 @@ class TestContainerStateMachine:
         assert "idle_seconds" in status
         assert "agent_running" in status
         assert "graceful_stop_requested" in status
-
-
 class TestContainerStateInvariants:
     """Tests for state machine invariants that must always hold."""
 
@@ -179,7 +175,7 @@ class TestContainerStateInvariants:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
         return manager
 
@@ -210,8 +206,6 @@ class TestContainerStateInvariants:
     def test_graceful_stop_flag_default_false(self, container_manager):
         """Invariant: graceful_stop_requested starts as False."""
         assert container_manager._graceful_stop_requested is False
-
-
 class TestContainerStatePersistence:
     """Tests for container state persistence and recovery."""
 
@@ -233,7 +227,7 @@ class TestContainerStatePersistence:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
         return manager
 
@@ -270,8 +264,6 @@ class TestContainerStatePersistence:
 
         # Completed status should be preserved
         assert container_manager._status == "completed"
-
-
 # =============================================================================
 # Agent State Machine Tests
 # =============================================================================
@@ -297,7 +289,7 @@ class TestAgentStateMachine:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
         return manager
 
@@ -357,8 +349,6 @@ class TestAgentStateMachine:
         # Old activity - idle
         container_manager.last_activity = datetime.now() - timedelta(minutes=IDLE_TIMEOUT_MINUTES + 1)
         assert container_manager.is_idle() is True
-
-
 class TestAgentTypeTransitions:
     """Tests for agent type transitions during container lifecycle."""
 
@@ -380,7 +370,7 @@ class TestAgentTypeTransitions:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
         return manager
 
@@ -407,13 +397,11 @@ class TestAgentTypeTransitions:
                         git_url="https://github.com/user/repo.git",
                         container_number=0,  # Init container
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
 
         assert manager._is_init_container is True
         assert manager.container_type == "init"
-
-
 # =============================================================================
 # Feature State Machine Tests
 # =============================================================================
@@ -504,8 +492,6 @@ class TestFeatureStateMachine:
             loaded = json.loads(f.readline())
 
         assert loaded["status"] == "open"
-
-
 # =============================================================================
 # Callback State Tests
 # =============================================================================
@@ -531,7 +517,7 @@ class TestCallbackStateManagement:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
         return manager
 
@@ -593,8 +579,6 @@ class TestCallbackStateManagement:
         # Behavior depends on implementation - list allows duplicates
         # Check callback is present
         assert cb in container_manager._output_callbacks
-
-
 # =============================================================================
 # Manager Registry State Tests
 # =============================================================================

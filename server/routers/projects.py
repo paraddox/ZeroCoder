@@ -837,17 +837,11 @@ async def list_containers(name: str):
     managers = get_all_container_managers(name)
 
     result = []
-    seen_hound = False
 
     for cm in managers:
-        # Handle hound containers (container_number=-1)
+        # Skip containers with invalid container numbers
         if cm.container_number < 0:
-            if cm._current_agent_type != "hound":
-                continue
-            if seen_hound:
-                continue
-            seen_hound = True
-            docker_name = f"zerocoder-{name}-hound"
+            continue
         elif cm.container_type == "init" or cm.container_number == 0:
             docker_name = f"zerocoder-{name}-init"
         else:

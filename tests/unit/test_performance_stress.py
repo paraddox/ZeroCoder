@@ -25,8 +25,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import sys
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-
-
 # =============================================================================
 # Registry Performance Tests
 # =============================================================================
@@ -113,8 +111,6 @@ class TestRegistryPerformance:
 
         assert len(errors) == 0, f"Errors occurred: {errors}"
         assert total_duration < 10.0, f"Concurrent access took too long: {total_duration}s"
-
-
 class TestContainerCachePerformance:
     """Performance tests for container cache operations."""
 
@@ -159,8 +155,6 @@ class TestContainerCachePerformance:
         duration = time.time() - start
 
         assert duration < 2.0, f"Container listing took too long: {duration}s"
-
-
 # =============================================================================
 # Feature Processing Performance Tests
 # =============================================================================
@@ -233,8 +227,6 @@ class TestFeatureProcessingPerformance:
         duration = time.time() - start
 
         assert duration < 5.0, f"Sorting took too long: {duration}s"
-
-
 # =============================================================================
 # WebSocket Performance Tests
 # =============================================================================
@@ -296,8 +288,6 @@ class TestWebSocketPerformance:
         disconnect_duration = time.time() - start
 
         assert disconnect_duration < 2.0, f"Disconnections took too long: {disconnect_duration}s"
-
-
 # =============================================================================
 # Output Sanitization Performance Tests
 # =============================================================================
@@ -342,8 +332,6 @@ class TestSanitizationPerformance:
 
         assert duration < 2.0, f"Sanitization took too long: {duration}s"
         assert "[REDACTED]" in result
-
-
 # =============================================================================
 # Memory Usage Tests
 # =============================================================================
@@ -412,8 +400,6 @@ class TestMemoryUsage:
 
         growth = final - initial
         assert growth < 10000, f"Memory growth: {growth} objects"
-
-
 # =============================================================================
 # Container Manager Performance Tests
 # =============================================================================
@@ -438,7 +424,7 @@ class TestContainerManagerPerformance:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
 
         # Measure callback registration/removal performance
@@ -465,8 +451,6 @@ class TestContainerManagerPerformance:
 
         assert len(manager._status_callbacks) == 0
         assert remove_duration < 1.0, f"Removing callbacks took too long: {remove_duration}s"
-
-
 # =============================================================================
 # Database Connection Performance Tests
 # =============================================================================
@@ -506,8 +490,6 @@ class TestDatabaseConnectionPerformance:
         duration = time.time() - start
 
         assert duration < 5.0, f"Transactions took too long: {duration}s"
-
-
 # =============================================================================
 # Stress Tests
 # =============================================================================
@@ -600,8 +582,6 @@ class TestStressConditions:
         assert isinstance(result, list)
         # Should have at least some valid entries (those not corrupted)
         assert len(result) > 0
-
-
 # =============================================================================
 # Benchmark Tests
 # =============================================================================

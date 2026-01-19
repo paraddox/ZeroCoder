@@ -14,7 +14,7 @@ export interface LogEntry {
 export interface ContainerInfo {
   number: number
   type: 'init' | 'coding'
-  agent_type?: 'coder' | 'initializer' | 'hound' | 'overseer'
+  agent_type?: 'coder' | 'initializer' | 'overseer'
   sdk_type?: 'claude' | 'opencode'
 }
 

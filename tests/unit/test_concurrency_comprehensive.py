@@ -21,8 +21,6 @@ from concurrent.futures import ThreadPoolExecutor
 import sys
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-
-
 # =============================================================================
 # Registry Concurrency Tests
 # =============================================================================
@@ -166,8 +164,6 @@ class TestRegistryConcurrency:
         assert all(read_results)
         # Some writes should succeed
         assert sum(write_results) >= 1
-
-
 # =============================================================================
 # WebSocket Concurrency Tests
 # =============================================================================
@@ -268,8 +264,6 @@ class TestWebSocketConcurrency:
         # Each project should have 5 connections
         for proj in projects:
             assert manager.get_connection_count(proj) == 5
-
-
 # =============================================================================
 # Container Manager Concurrency Tests
 # =============================================================================
@@ -295,7 +289,7 @@ class TestContainerManagerConcurrency:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
         return manager
 
@@ -348,8 +342,6 @@ class TestContainerManagerConcurrency:
 
         # All should be removed
         assert len(container_manager._status_callbacks) == 0
-
-
 # =============================================================================
 # Async Operation Coordination Tests
 # =============================================================================
@@ -404,7 +396,7 @@ class TestAsyncCoordination:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
 
         # Test flag visibility across concurrent operations
@@ -416,8 +408,6 @@ class TestAsyncCoordination:
                 await asyncio.sleep(0.001)
 
         await asyncio.gather(*[check_flag() for _ in range(5)])
-
-
 # =============================================================================
 # Thread Pool Executor Tests
 # =============================================================================
@@ -461,8 +451,6 @@ class TestThreadPoolConcurrency:
 
         # All reads should return same count
         assert all(r == 10 for r in results)
-
-
 # =============================================================================
 # Lock Contention Tests
 # =============================================================================
@@ -549,8 +537,6 @@ class TestLockContention:
         success_rate = sum(results) / len(results)
         assert success_rate > 0.5, f"Success rate: {success_rate}"
         assert duration < 30.0
-
-
 # =============================================================================
 # Deadlock Prevention Tests
 # =============================================================================
@@ -599,7 +585,7 @@ class TestDeadlockPrevention:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        skip_db_persist=True,
+                        
                     )
 
         # Add callback that raises
@@ -614,8 +600,6 @@ class TestDeadlockPrevention:
 
         # Callback should have been called (and error handled gracefully)
         assert failing.call_count == 1
-
-
 # =============================================================================
 # Resource Starvation Tests
 # =============================================================================

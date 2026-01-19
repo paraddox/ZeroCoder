@@ -304,7 +304,6 @@ class TestContainerManagerIntegration:
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=container_env,
-                        skip_db_persist=True,
                     )
 
         # Track callback invocations

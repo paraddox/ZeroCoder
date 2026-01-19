@@ -130,20 +130,6 @@ class TestConvenienceFunctions:
         content = get_overseer_prompt(project_dir)
         assert "Overseer" in content
 
-    @pytest.mark.unit
-    def test_get_hound_prompt(self, tmp_path):
-        """Test get_hound_prompt function."""
-        from prompts import get_hound_prompt
-
-        project_dir = tmp_path / "test-project"
-        prompts_dir = project_dir / "prompts"
-        prompts_dir.mkdir(parents=True)
-
-        (prompts_dir / "hound_prompt.md").write_text("# Hound Agent")
-
-        content = get_hound_prompt(project_dir)
-        assert "Hound" in content
-
 
 class TestAppSpec:
     """Tests for app spec loading."""
