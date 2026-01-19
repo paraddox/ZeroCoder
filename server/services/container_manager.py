@@ -857,34 +857,23 @@ class ContainerManager:
         This should be called on startup for existing projects to recover
         features that were left in_progress when containers were force-stopped.
 
+        Uses BeadsSyncManager for reads (instant) and run_beads_write_command for writes.
+
         Returns:
             Tuple of (success, message)
         """
-        if self._status != "running":
-            return False, "Container must be running for recovery"
+        from .beads_sync_manager import get_beads_sync_manager
+        from server.routers.beads_api import run_beads_write_command
 
         try:
-            # Get in_progress features
-            result = subprocess.run(
-                ["docker", "exec", "-u", "coder", self.container_name,
-                 "beads_client", "list", "--status=in_progress"],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-
-            if result.returncode != 0 or not result.stdout.strip():
-                return True, "No stuck features to recover"
-
-            try:
-                features = json.loads(result.stdout)
-            except json.JSONDecodeError:
-                return True, "No stuck features to recover"
+            # READ: Get in_progress features locally (instant)
+            manager = get_beads_sync_manager(self.project_name, self.git_url)
+            features = manager.get_tasks_by_status("in_progress")
 
             if not features:
                 return True, "No stuck features to recover"
 
-            # Reset each to open
+            # WRITE: Reset each to open via host bd command
             recovered = 0
             for feature in features:
                 feature_id = feature.get("id")
@@ -894,29 +883,19 @@ class ContainerManager:
                 logger.info(f"Recovering stuck feature: {feature_id}")
                 await self._broadcast_output(f"[System] Recovering stuck feature: {feature_id}")
 
-                update_result = subprocess.run(
-                    ["docker", "exec", "-u", "coder", self.container_name,
-                     "beads_client", "update", feature_id, "--status=open"],
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
+                result = await run_beads_write_command(
+                    self.project_name,
+                    ["update", feature_id, "--status", "open"]
                 )
-                if update_result.returncode == 0:
+                if "error" not in result:
                     recovered += 1
 
-            # Sync after recovery
-            subprocess.run(
-                ["docker", "exec", "-u", "coder", self.container_name, "beads_client", "sync"],
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
+            # WRITE: Sync after recovery
+            await run_beads_write_command(self.project_name, ["sync"])
 
             logger.info(f"Recovered {recovered} stuck features for {self.project_name}")
             return True, f"Recovered {recovered} stuck features"
 
-        except subprocess.TimeoutExpired:
-            return False, "Recovery timed out"
         except Exception as e:
             logger.exception(f"Error recovering stuck features for {self.project_name}")
             return False, f"Recovery error: {e}"
@@ -1874,23 +1853,16 @@ class ContainerManager:
             logger.warning(f"Failed to save hound state: {e}")
 
     def _get_closed_count(self) -> int:
-        """Get current closed task count from beads stats."""
+        """Get current closed task count from BeadsSyncManager (instant, no network)."""
+        from .beads_sync_manager import get_beads_sync_manager
+
         try:
-            result = subprocess.run(
-                ["docker", "exec", "-u", "coder", self.container_name,
-                 "beads_client", "stats"],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if result.returncode == 0:
-                stats = json.loads(result.stdout)
-                # bd stats --json returns nested structure: summary.closed_issues
-                summary = stats.get("summary", {})
-                return summary.get("closed_issues", 0)
+            manager = get_beads_sync_manager(self.project_name, self.git_url)
+            stats = manager.get_stats()
+            return stats.get("closed", 0)
         except Exception as e:
             logger.warning(f"Failed to get closed count: {e}")
-        return 0
+            return 0
 
     def _should_run_hound(self) -> bool:
         """Check if completed_tasks % 10 == 0 and milestone not yet processed."""
@@ -1911,23 +1883,17 @@ class ContainerManager:
         return (current_closed // 10) * 10
 
     async def get_recent_closed_tasks(self, limit: int = 15) -> list[str]:
-        """Get the last N closed task IDs from container."""
+        """Get the last N closed task IDs from BeadsSyncManager."""
+        from .beads_sync_manager import get_beads_sync_manager
+
         try:
-            result = subprocess.run(
-                ["docker", "exec", "-u", "coder", self.container_name,
-                 "beads_client", "list", "--status=closed"],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if result.returncode == 0:
-                # beads_client returns JSON array
-                tasks = json.loads(result.stdout) if result.stdout.strip() else []
-                task_ids = [t.get("id") for t in tasks if t.get("id")]
-                return task_ids[:limit]  # Apply limit in Python since beads_client doesn't support it
+            manager = get_beads_sync_manager(self.project_name, self.git_url)
+            closed_tasks = manager.get_tasks_by_status("closed")
+            task_ids = [t.get("id") for t in closed_tasks if t.get("id")]
+            return task_ids[-limit:]  # Return last N (most recent)
         except Exception as e:
             logger.warning(f"Failed to get recent closed tasks: {e}")
-        return []
+            return []
 
     async def restart_with_hound(self, task_ids: list[str]) -> tuple[bool, str]:
         """
@@ -2664,48 +2630,31 @@ _hound_containers: dict[str, ContainerManager] = {}
 _hound_lock = threading.Lock()
 
 
-async def get_tasks_for_hound_review(project_name: str, container_name: str) -> list[str]:
+async def get_tasks_for_hound_review(project_name: str, git_url: str) -> list[str]:
     """
-    Get tasks for hound review: last 15 closed tasks.
+    Get tasks for hound review: last 15 closed tasks from BeadsSyncManager.
 
     Args:
         project_name: Name of the project
-        container_name: Name of an existing coder container to query
+        git_url: Git URL for the project (used to get BeadsSyncManager)
 
     Returns:
         List of task IDs to review (up to 15)
     """
+    from .beads_sync_manager import get_beads_sync_manager
+
     try:
-        # Get all closed tasks as JSON (beads_client returns all, we limit in Python)
-        result = subprocess.run(
-            ["docker", "exec", "-u", "coder", container_name,
-             "beads_client", "list", "--status=closed"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if result.returncode != 0:
-            logger.warning(f"Failed to get closed tasks: {result.stderr}")
-            return []
+        manager = get_beads_sync_manager(project_name, git_url)
+        closed_tasks = manager.get_tasks_by_status("closed")
 
-        # Parse JSON output
-        all_closed = []
-        try:
-            tasks = json.loads(result.stdout) if result.stdout.strip() else []
-            # Limit to 100 tasks for random selection pool
-            for task in tasks[:100]:
-                task_id = task.get("id")
-                if task_id:
-                    all_closed.append(task_id)
-        except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse closed tasks JSON: {e}")
-            return []
+        # Limit to 100 tasks for selection pool
+        task_ids = [t.get("id") for t in closed_tasks[:100] if t.get("id")]
 
-        if not all_closed:
+        if not task_ids:
             return []
 
         # Return last 15 closed tasks (most recent)
-        result_tasks = all_closed[-15:] if len(all_closed) >= 15 else all_closed
+        result_tasks = task_ids[-15:] if len(task_ids) >= 15 else task_ids
         logger.info(f"Selected {len(result_tasks)} tasks for hound review")
         return result_tasks
 
@@ -2871,7 +2820,7 @@ async def check_hound_triggers() -> list[str]:
                 logger.info(f"Hound trigger condition met for {project_name}")
 
                 # Get tasks for review
-                task_ids = await get_tasks_for_hound_review(project_name, manager.container_name)
+                task_ids = await get_tasks_for_hound_review(project_name, manager.git_url)
                 if not task_ids:
                     logger.warning(f"No tasks found for hound review in {project_name}")
                     continue

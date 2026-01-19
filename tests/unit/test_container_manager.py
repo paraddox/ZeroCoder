@@ -559,3 +559,260 @@ class TestContainerManagerRegistry:
         manager = get_existing_container_manager("nonexistent", container_number=1)
 
         assert manager is None
+
+
+class TestBeadsSyncManagerIntegration:
+    """Tests for beads operations using BeadsSyncManager."""
+
+    @pytest.fixture
+    def container_manager(self, tmp_path):
+        """Create a ContainerManager for beads tests."""
+        project_dir = tmp_path / "beads-test-project"
+        project_dir.mkdir(parents=True)
+
+        with patch("server.services.container_manager.get_projects_dir") as mock_dir:
+            mock_dir.return_value = tmp_path
+
+            with patch.object(ContainerManager, "_sync_status"):
+                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                    manager = ContainerManager(
+                        project_name="beads-test-project",
+                        git_url="https://github.com/user/repo.git",
+                        container_number=1,
+                        project_dir=project_dir,
+                        skip_db_persist=True,
+                    )
+        return manager
+
+    @pytest.fixture
+    def mock_beads_sync_manager(self):
+        """Mock BeadsSyncManager for testing."""
+        mock_manager = MagicMock()
+        mock_manager.get_stats.return_value = {
+            "open": 5,
+            "in_progress": 2,
+            "closed": 10,
+            "total": 17,
+        }
+        mock_manager.get_tasks_by_status.return_value = [
+            {"id": "beads-1", "status": "closed"},
+            {"id": "beads-2", "status": "closed"},
+            {"id": "beads-3", "status": "closed"},
+        ]
+        return mock_manager
+
+    @pytest.mark.unit
+    def test_get_closed_count_uses_beads_sync_manager(self, container_manager, mock_beads_sync_manager):
+        """Test _get_closed_count uses BeadsSyncManager instead of docker exec."""
+        with patch("server.services.beads_sync_manager.get_beads_sync_manager") as mock_get_manager:
+            mock_get_manager.return_value = mock_beads_sync_manager
+
+            count = container_manager._get_closed_count()
+
+            assert count == 10
+            mock_get_manager.assert_called_once_with(
+                container_manager.project_name,
+                container_manager.git_url
+            )
+            mock_beads_sync_manager.get_stats.assert_called_once()
+
+    @pytest.mark.unit
+    def test_get_closed_count_returns_zero_on_error(self, container_manager):
+        """Test _get_closed_count returns 0 on error."""
+        with patch("server.services.beads_sync_manager.get_beads_sync_manager") as mock_get_manager:
+            mock_get_manager.side_effect = Exception("Connection failed")
+
+            count = container_manager._get_closed_count()
+
+            assert count == 0
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_get_recent_closed_tasks_uses_beads_sync_manager(self, container_manager, mock_beads_sync_manager):
+        """Test get_recent_closed_tasks uses BeadsSyncManager."""
+        with patch("server.services.beads_sync_manager.get_beads_sync_manager") as mock_get_manager:
+            mock_get_manager.return_value = mock_beads_sync_manager
+
+            task_ids = await container_manager.get_recent_closed_tasks(limit=2)
+
+            assert len(task_ids) == 2
+            assert task_ids == ["beads-2", "beads-3"]  # Last 2 from the list
+            mock_beads_sync_manager.get_tasks_by_status.assert_called_once_with("closed")
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_get_recent_closed_tasks_returns_empty_on_error(self, container_manager):
+        """Test get_recent_closed_tasks returns empty list on error."""
+        with patch("server.services.beads_sync_manager.get_beads_sync_manager") as mock_get_manager:
+            mock_get_manager.side_effect = Exception("Connection failed")
+
+            task_ids = await container_manager.get_recent_closed_tasks()
+
+            assert task_ids == []
+
+
+class TestRecoverStuckFeatures:
+    """Tests for recover_stuck_features using local operations."""
+
+    @pytest.fixture
+    def container_manager(self, tmp_path):
+        """Create a ContainerManager for recovery tests."""
+        project_dir = tmp_path / "recovery-test-project"
+        project_dir.mkdir(parents=True)
+
+        with patch("server.services.container_manager.get_projects_dir") as mock_dir:
+            mock_dir.return_value = tmp_path
+
+            with patch.object(ContainerManager, "_sync_status"):
+                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                    manager = ContainerManager(
+                        project_name="recovery-test-project",
+                        git_url="https://github.com/user/repo.git",
+                        container_number=1,
+                        project_dir=project_dir,
+                        skip_db_persist=True,
+                    )
+        return manager
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_recover_stuck_features_no_stuck_features(self, container_manager):
+        """Test recovery when no stuck features exist."""
+        mock_manager = MagicMock()
+        mock_manager.get_tasks_by_status.return_value = []
+
+        with patch("server.services.beads_sync_manager.get_beads_sync_manager") as mock_get_manager:
+            mock_get_manager.return_value = mock_manager
+
+            success, message = await container_manager.recover_stuck_features()
+
+            assert success is True
+            assert "No stuck features" in message
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_recover_stuck_features_resets_to_open(self, container_manager):
+        """Test recovery resets in_progress features to open."""
+        mock_manager = MagicMock()
+        mock_manager.get_tasks_by_status.return_value = [
+            {"id": "beads-1", "status": "in_progress"},
+            {"id": "beads-2", "status": "in_progress"},
+        ]
+
+        mock_write_cmd = AsyncMock(return_value={"success": True})
+
+        with patch("server.services.beads_sync_manager.get_beads_sync_manager") as mock_get_manager:
+            mock_get_manager.return_value = mock_manager
+
+            with patch("server.routers.beads_api.run_beads_write_command", mock_write_cmd):
+                with patch.object(container_manager, "_broadcast_output", new_callable=AsyncMock):
+                    success, message = await container_manager.recover_stuck_features()
+
+        assert success is True
+        assert "Recovered 2 stuck features" in message
+
+        # Check that update was called for each feature
+        calls = mock_write_cmd.call_args_list
+        assert len(calls) == 3  # 2 updates + 1 sync
+
+        # Verify update calls
+        assert calls[0] == call("recovery-test-project", ["update", "beads-1", "--status", "open"])
+        assert calls[1] == call("recovery-test-project", ["update", "beads-2", "--status", "open"])
+        # Verify sync call
+        assert calls[2] == call("recovery-test-project", ["sync"])
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_recover_stuck_features_handles_error(self, container_manager):
+        """Test recovery handles errors gracefully."""
+        with patch("server.services.beads_sync_manager.get_beads_sync_manager") as mock_get_manager:
+            mock_get_manager.side_effect = Exception("Database error")
+
+            success, message = await container_manager.recover_stuck_features()
+
+            assert success is False
+            assert "Recovery error" in message
+
+
+class TestGetTasksForHoundReview:
+    """Tests for get_tasks_for_hound_review function."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_get_tasks_for_hound_review_returns_task_ids(self):
+        """Test get_tasks_for_hound_review returns correct task IDs."""
+        from server.services.container_manager import get_tasks_for_hound_review
+
+        mock_manager = MagicMock()
+        mock_manager.get_tasks_by_status.return_value = [
+            {"id": f"beads-{i}", "status": "closed"} for i in range(20)
+        ]
+
+        with patch("server.services.beads_sync_manager.get_beads_sync_manager") as mock_get_manager:
+            mock_get_manager.return_value = mock_manager
+
+            task_ids = await get_tasks_for_hound_review(
+                "test-project",
+                "https://github.com/user/repo.git"
+            )
+
+        # Should return last 15 tasks
+        assert len(task_ids) == 15
+        assert task_ids == [f"beads-{i}" for i in range(5, 20)]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_get_tasks_for_hound_review_returns_all_when_less_than_15(self):
+        """Test get_tasks_for_hound_review returns all when less than 15 tasks."""
+        from server.services.container_manager import get_tasks_for_hound_review
+
+        mock_manager = MagicMock()
+        mock_manager.get_tasks_by_status.return_value = [
+            {"id": f"beads-{i}", "status": "closed"} for i in range(5)
+        ]
+
+        with patch("server.services.beads_sync_manager.get_beads_sync_manager") as mock_get_manager:
+            mock_get_manager.return_value = mock_manager
+
+            task_ids = await get_tasks_for_hound_review(
+                "test-project",
+                "https://github.com/user/repo.git"
+            )
+
+        assert len(task_ids) == 5
+        assert task_ids == [f"beads-{i}" for i in range(5)]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_get_tasks_for_hound_review_returns_empty_on_error(self):
+        """Test get_tasks_for_hound_review returns empty list on error."""
+        from server.services.container_manager import get_tasks_for_hound_review
+
+        with patch("server.services.beads_sync_manager.get_beads_sync_manager") as mock_get_manager:
+            mock_get_manager.side_effect = Exception("Connection failed")
+
+            task_ids = await get_tasks_for_hound_review(
+                "test-project",
+                "https://github.com/user/repo.git"
+            )
+
+        assert task_ids == []
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_get_tasks_for_hound_review_returns_empty_when_no_tasks(self):
+        """Test get_tasks_for_hound_review returns empty when no closed tasks."""
+        from server.services.container_manager import get_tasks_for_hound_review
+
+        mock_manager = MagicMock()
+        mock_manager.get_tasks_by_status.return_value = []
+
+        with patch("server.services.beads_sync_manager.get_beads_sync_manager") as mock_get_manager:
+            mock_get_manager.return_value = mock_manager
+
+            task_ids = await get_tasks_for_hound_review(
+                "test-project",
+                "https://github.com/user/repo.git"
+            )
+
+        assert task_ids == []
