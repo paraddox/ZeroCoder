@@ -599,3 +599,143 @@ def frozen_time():
         mock_datetime.fromisoformat = datetime.fromisoformat
         with patch("time.time", mock_time):
             yield frozen
+
+
+# =============================================================================
+# Beads API Test Fixtures
+# =============================================================================
+
+@pytest.fixture
+def beads_api_project(tmp_path):
+    """Create a project with beads initialized in beads-sync style directory.
+
+    This simulates the beads-sync clone that beads_api.py operates on.
+    """
+    beads_sync_dir = tmp_path / "beads-sync"
+    beads_sync_dir.mkdir(parents=True)
+
+    project_dir = beads_sync_dir / "test-api-project"
+    project_dir.mkdir()
+
+    beads_dir = project_dir / ".beads"
+    beads_dir.mkdir()
+
+    config_file = beads_dir / "config.yaml"
+    config_file.write_text("prefix: feat\n")
+
+    issues_file = beads_dir / "issues.jsonl"
+    issues_file.write_text("")
+
+    # Also create a git directory to simulate a git repo
+    git_dir = project_dir / ".git"
+    git_dir.mkdir()
+
+    return {
+        "beads_sync_dir": beads_sync_dir,
+        "project_dir": project_dir,
+        "beads_dir": beads_dir,
+        "issues_file": issues_file,
+        "project_name": "test-api-project",
+    }
+
+
+@pytest.fixture
+def sample_issues_for_api() -> list[dict]:
+    """Sample issue data for beads API testing."""
+    return [
+        {
+            "id": "feat-1",
+            "title": "User Authentication",
+            "status": "open",
+            "priority": "P0",
+            "labels": ["category:auth", "priority:0"],
+            "description": "Implement user authentication\n\n## Steps\n- [ ] Create login form\n- [ ] Add validation",
+            "created_at": "2024-01-01T00:00:00Z",
+        },
+        {
+            "id": "feat-2",
+            "title": "Dashboard View",
+            "status": "in_progress",
+            "priority": "P1",
+            "labels": ["category:ui", "priority:1"],
+            "description": "Create the main dashboard component",
+            "created_at": "2024-01-02T00:00:00Z",
+        },
+        {
+            "id": "feat-3",
+            "title": "API Integration",
+            "status": "closed",
+            "priority": "P2",
+            "labels": ["category:backend", "priority:2"],
+            "description": "Connect frontend to REST API",
+            "created_at": "2024-01-03T00:00:00Z",
+        },
+    ]
+
+
+@pytest.fixture
+def beads_api_project_with_issues(beads_api_project, sample_issues_for_api):
+    """Create a project with beads and populated issues.jsonl."""
+    issues_file = beads_api_project["issues_file"]
+
+    with open(issues_file, "w") as f:
+        for issue in sample_issues_for_api:
+            f.write(json.dumps(issue) + "\n")
+
+    return {
+        **beads_api_project,
+        "issues": sample_issues_for_api,
+    }
+
+
+@pytest.fixture
+def mock_beads_locks():
+    """Reset beads locks between tests to ensure isolation."""
+    import server.routers.beads_api as beads_api
+    original_locks = beads_api._beads_locks.copy()
+    beads_api._beads_locks.clear()
+    yield beads_api._beads_locks
+    beads_api._beads_locks.clear()
+    beads_api._beads_locks.update(original_locks)
+
+
+@pytest.fixture
+def issue_create_payload() -> dict:
+    """Valid payload for creating an issue via beads API."""
+    return {
+        "title": "Test Feature",
+        "description": "Test description with details",
+        "type": "task",
+        "priority": 2,
+        "labels": ["test", "feature"],
+    }
+
+
+@pytest.fixture
+def issue_update_payload() -> dict:
+    """Valid payload for updating an issue via beads API."""
+    return {
+        "title": "Updated Title",
+        "status": "in_progress",
+        "priority": 1,
+    }
+
+
+@pytest.fixture
+def mock_bd_command():
+    """Mock the bd CLI command for testing."""
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=json.dumps({"success": True}),
+            stderr="",
+        )
+        yield mock_run
+
+
+@pytest.fixture
+def mock_beads_api_get_project_path(beads_api_project):
+    """Mock _get_project_path to return the test project path."""
+    with patch("server.routers.beads_api._get_project_path") as mock_path:
+        mock_path.return_value = beads_api_project["project_dir"]
+        yield mock_path
