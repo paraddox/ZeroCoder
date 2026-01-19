@@ -24,7 +24,15 @@
 
 set -e
 
-HOST_API="${HOST_API_URL:-http://host.docker.internal:8000}"
+# Read port dynamically from mounted file (updated by host on each start)
+# This allows containers to work even when host restarts on different port
+HOST_PORT_FILE="/app/host-port.txt"
+if [ -f "$HOST_PORT_FILE" ]; then
+    HOST_PORT=$(cat "$HOST_PORT_FILE" | tr -d '[:space:]')
+    HOST_API="http://host.docker.internal:${HOST_PORT}"
+else
+    HOST_API="${HOST_API_URL:-http://host.docker.internal:8000}"
+fi
 PROJECT="${PROJECT_NAME:-}"
 
 if [ -z "$PROJECT" ]; then
