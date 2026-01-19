@@ -5,50 +5,59 @@ This is a FRESH context window - you have no memory of previous sessions.
 
 ---
 
-## ⚠️ MANDATORY BEADS WORKFLOW - NEVER IGNORE
+## BEADS WORKFLOW (MANDATORY)
 
-**The beads workflow in this document is NOT optional.** You MUST follow it exactly:
+**You MUST follow this workflow exactly - the monitoring system depends on it:**
 
-1. **ALWAYS run `beads_client ready`** to get the next feature
-2. **ALWAYS run `beads_client update <id> --status=in_progress`** BEFORE writing any code
-3. **ALWAYS run `beads_client close <id>`** only AFTER thorough verification
-4. **ALWAYS run `beads_client sync`** at the end of your session
+```bash
+beads_client ready                              # Get available features
+beads_client update <id> --status=in_progress   # Claim feature BEFORE coding
+beads_client close <id>                         # Mark complete AFTER validation
+beads_client sync                               # Sync at session end
+```
 
-**Failure to follow this workflow breaks the monitoring system.** The UI shows users what you're working on by reading beads status. If you skip these commands, users cannot monitor your progress.
+**Skipping these commands breaks the UI monitoring.** Users track your progress by reading beads status.
 
 ---
 
-### STEP 1: ORIENTATION + READ ARTIFACTS (3 MINUTES MAX)
+## SESSION FLOW OVERVIEW
+
+```
+Step 1: Read artifacts (3 min max)
+Step 2: Claim feature + create branch
+Step 3: Install dependencies + start servers
+Step 4: Gap analysis + task breakdown (1 min)
+Step 5: Implement feature (primary goal)
+Step 6: Verify 3 closed features (5 min max)
+Step 7: Archive, merge, push, exit
+```
+
+---
+
+### STEP 1: ORIENTATION + READ ARTIFACTS (3 MIN MAX)
 
 ```bash
-# Basic orientation
-pwd && ls -la
 beads_client stats
 beads_client ready
 
-# Read Ralph artifacts (CRITICAL - these persist knowledge across sessions)
+# Read persistent knowledge files
 cat AGENTS.md 2>/dev/null || echo "No AGENTS.md yet"
-cat IMPLEMENTATION_PLAN.md 2>/dev/null || echo "No plan yet - will create in Step 2.5"
-
-# Read recent history (last 3 features for context, not full history)
-echo "=== Recent Implementation History (last 50 lines) ==="
+cat IMPLEMENTATION_PLAN.md 2>/dev/null || echo "No plan yet"
 tail -50 IMPLEMENTATION_HISTORY.md 2>/dev/null || echo "No history yet"
 ```
 
-**AGENTS.md** contains operational knowledge: commands, patterns, gotchas.
-**IMPLEMENTATION_PLAN.md** contains your task breakdown for the current feature.
-**IMPLEMENTATION_HISTORY.md** contains archived plans - only read recent entries (last 50 lines) to avoid context bloat.
+**AGENTS.md** = operational knowledge (commands, patterns, gotchas)
+**IMPLEMENTATION_PLAN.md** = current feature task breakdown
+**IMPLEMENTATION_HISTORY.md** = archived plans (only read last 50 lines)
 
-If these files exist, READ THEM CAREFULLY - they save you from rediscovering things.
+If these files exist, READ THEM - they prevent rediscovering things.
 
-**DO NOT** spend more than 3 minutes on orientation. Get the basics and move on.
+---
 
-### STEP 1.5: CLAIM FEATURE
-
-Pick and claim an available feature:
+### STEP 2: CLAIM FEATURE + CREATE BRANCH
 
 ```bash
-# Get an available feature and claim it
+# Get first available feature
 FEATURE_ID=$(beads_client ready --json | jq -r '[.[] | select(.status == "open")][0].id')
 
 if [ -z "$FEATURE_ID" ] || [ "$FEATURE_ID" = "null" ]; then
@@ -56,7 +65,7 @@ if [ -z "$FEATURE_ID" ] || [ "$FEATURE_ID" = "null" ]; then
     exit 0
 fi
 
-# Claim the feature
+# Claim it (REQUIRED before writing any code)
 beads_client update "$FEATURE_ID" --status=in_progress
 
 # Create feature branch
@@ -64,183 +73,173 @@ FEATURE_TITLE=$(beads_client show "$FEATURE_ID" --json | jq -r '.[0].title' | tr
 BRANCH="feature/${FEATURE_ID}-${FEATURE_TITLE}"
 git checkout -b "$BRANCH"
 
-echo "Claimed $FEATURE_ID, working on branch $BRANCH"
+echo "Claimed $FEATURE_ID on branch $BRANCH"
 ```
 
-**NOTE:** The server handles race conditions. If another agent claims the same feature, the server will reject your update.
+**Note:** The server rejects duplicate claims - race conditions are handled.
 
-### STEP 2: INSTALL DEPENDENCIES + START SERVERS
+---
 
-**First, ensure dependencies are installed:**
+### STEP 3: INSTALL DEPENDENCIES + START SERVERS
 
 ```bash
-# Install dependencies if node_modules doesn't exist
+# Install if needed
 if [ ! -d "node_modules" ]; then
-    echo "Installing dependencies..."
-    # Detect package manager and install
-    if [ -f "pnpm-lock.yaml" ]; then
-        pnpm install
-    elif [ -f "yarn.lock" ]; then
-        yarn install
-    elif [ -f "package-lock.json" ] || [ -f "package.json" ]; then
-        npm install
+    if [ -f "pnpm-lock.yaml" ]; then pnpm install
+    elif [ -f "yarn.lock" ]; then yarn install
+    elif [ -f "package.json" ]; then npm install
     fi
 fi
 
-# Run init script if it exists
-chmod +x init.sh 2>/dev/null && ./init.sh || echo "No init.sh found"
+# Run init script
+chmod +x init.sh 2>/dev/null && ./init.sh || echo "No init.sh"
 ```
 
-**IMPORTANT:** Always ensure dependencies are installed before trying to run servers or tests.
+---
 
-### STEP 2.5: GAP ANALYSIS + TASK BREAKDOWN (1 MINUTE)
+### STEP 4: GAP ANALYSIS + TASK BREAKDOWN (1 MIN)
 
-**Before writing any code, understand what exists and what's needed.**
+**Before writing code, understand what exists vs what's needed.**
 
-**NOTE:** The feature was already claimed in Step 1.5. The `$FEATURE_ID` variable contains the claimed feature ID.
-
-1. **View your claimed feature details:**
-   ```bash
-   beads_client show "$FEATURE_ID"
-   ```
-
-2. **Run gap analysis for this feature:**
-   - What does the feature require? (Read the feature description)
-   - What already exists in the codebase? (Search for related code)
-   - What's the gap? (What needs to be built)
-
-3. **Create/Update IMPLEMENTATION_PLAN.md:**
-
-   ```bash
-   cat > IMPLEMENTATION_PLAN.md << 'EOF'
-   # Implementation Plan
-
-   ## Current Feature: [Feature Title from beads_client ready]
-   Feature ID: [beads-xxx]
-
-   ### Gap Analysis
-   - ✅ [What exists]
-   - ❌ [What's missing]
-
-   ### Task Breakdown
-   - [ ] Task 1: [Specific file/component to create or modify]
-   - [ ] Task 2: [Next task]
-   - [ ] Task 3: [etc.]
-
-   ### Approach
-   [Brief description of how you'll implement this]
-
-   ### Blockers
-   - None currently
-
-   ### Discoveries
-   [Will be updated as you work]
-   EOF
-   ```
-
-**This step is MANDATORY.** Having a written plan prevents ad-hoc decisions and helps the next session if you don't finish.
-
-### STEP 3: IMPLEMENT THE FEATURE (PRIMARY GOAL)
-
-**This is your main job. Do this FIRST before any verification.**
-
-The feature was claimed in Step 1.5 and stored in `$FEATURE_ID`. Verify it's set:
 ```bash
-echo "Working on feature: $FEATURE_ID"
-beads_client show "$FEATURE_ID" --json | jq -r '.[0].title'
+beads_client show "$FEATURE_ID"
 ```
 
-#### 3.1 Follow Your Plan
+Create IMPLEMENTATION_PLAN.md:
 
-Work through the tasks in your IMPLEMENTATION_PLAN.md:
+```bash
+cat > IMPLEMENTATION_PLAN.md << 'EOF'
+# Implementation Plan
 
-1. Read the task breakdown you created
-2. Implement each task in order
-3. Mark tasks as done in the plan as you complete them:
-   ```bash
-   # Update IMPLEMENTATION_PLAN.md to mark tasks complete
-   # Change [ ] to [x] for completed tasks
-   ```
-4. Test the feature works through the UI
+## Feature: [Title]
+ID: [beads-xxx]
+
+### Gap Analysis
+- ✅ [What exists]
+- ❌ [What's missing]
+
+### Tasks
+- [ ] Task 1: [Specific action]
+- [ ] Task 2: [Next action]
+- [ ] Task 3: [etc.]
+
+### Approach
+[Brief description]
+
+### Blockers
+None
+
+### Discoveries
+[Update as you work]
+EOF
+```
+
+---
+
+### STEP 5: IMPLEMENT THE FEATURE (PRIMARY GOAL)
+
+This is your main job. Work through the tasks in IMPLEMENTATION_PLAN.md:
+
+1. Implement each task in order
+2. Mark tasks `[x]` as you complete them
+3. **Write tests for the feature** (see below)
+4. Test the feature through the UI
 5. Fix any issues
 
-#### 3.2 Update Discoveries
+#### Testing Requirements (MANDATORY)
 
-As you work, add useful discoveries to IMPLEMENTATION_PLAN.md and AGENTS.md:
+**You MUST write tests for every feature before committing.** The pre-commit hook will block commits if tests fail.
+
+- Write unit tests for new functions/components
+- Write integration tests for API endpoints
+- Test edge cases and error conditions
+- Ensure tests pass locally before committing
+
+**Test file locations** (check AGENTS.md for project-specific patterns):
+- JavaScript/TypeScript: `__tests__/`, `*.test.ts`, `*.spec.ts`
+- Python: `tests/`, `test_*.py`
+- Rust: `#[cfg(test)]` modules or `tests/`
+- C++: `tests/` directory
+
+**If tests don't exist yet for the project:**
+1. Set up a minimal test framework (Jest, pytest, etc.)
+2. Document the test command in AGENTS.md
+3. Create the first test file as a template
+
+#### Debugging Strategies
+
+**If stuck for more than 15 minutes:**
+
+1. **Check logs** - Look for actual error messages, not symptoms
+2. **Simplify** - Remove complexity until it works, then add back
+3. **Isolate** - Test the component in isolation
+4. **Search codebase** - Similar patterns may already exist
+5. **Add logging** - Print intermediate values to trace the issue
+
+**If truly blocked:**
+- Document the blocker in IMPLEMENTATION_PLAN.md
+- Commit WIP, keep feature `in_progress`, exit (see Step 7 error path)
+
+#### Validation (MUST PASS BEFORE CLOSE)
+
+Check AGENTS.md for project-specific commands, or use these defaults:
 
 ```bash
-# Add to IMPLEMENTATION_PLAN.md
-echo "- Pattern: [something useful]" >> IMPLEMENTATION_PLAN.md
-
-# Add to AGENTS.md if it's generally useful
-echo "" >> AGENTS.md
-echo "## Discovery: [Topic]" >> AGENTS.md
-echo "- [What you learned]" >> AGENTS.md
-```
-
-#### 3.3 VALIDATE Before Closing (STRICT - MUST PASS)
-
-**You CANNOT close the feature until validation passes.**
-
-Run validation commands (check AGENTS.md for project-specific commands):
-
-```bash
-# Run lint (if available)
+# Lint
 npm run lint 2>/dev/null || echo "No lint configured"
 
-# Run type check (if available)
-npm run typecheck 2>/dev/null || npx tsc --noEmit 2>/dev/null || echo "No typecheck configured"
+# Type check
+npm run typecheck 2>/dev/null || npx tsc --noEmit 2>/dev/null || echo "No typecheck"
 
-# Run tests (if available)
-npm test -- --passWithNoTests 2>/dev/null || echo "No tests configured"
+# Tests
+npm test 2>/dev/null || echo "Tests not configured"
 ```
 
-**IF ANY VALIDATION FAILS:**
-1. Fix the issues
-2. Re-run validation
-3. Only proceed when ALL pass
+**IF VALIDATION FAILS:** Fix issues and re-run. Do NOT close with failing validation.
 
-**ONLY after validation passes:**
+**ONLY after all validation passes:**
+
 ```bash
 FEATURE_TITLE=$(beads_client show "$FEATURE_ID" --json | jq -r '.[0].title')
 beads_client close "$FEATURE_ID"
 git add . && git commit -m "Implement: $FEATURE_TITLE"
 ```
 
-### STEP 4: VERIFY 3 RANDOM CLOSED FEATURES
+---
 
-After implementing your feature, verify 3 randomly selected closed features.
+### STEP 6: VERIFY 3 CLOSED FEATURES (5 MIN MAX)
 
-**IMPORTANT**: Pick RANDOM features to avoid all parallel agents checking the same ones.
+After implementing your feature, verify 3 random closed features.
 
 ```bash
-# Get 3 random closed features (not the one you just implemented)
-CLOSED_FEATURES=$(beads_client list --status=closed --json | jq -r '.[].id' | grep -v "$FEATURE_ID" | shuf | head -3)
+# Get 3 random closed features (not yours)
+CLOSED=$(beads_client list --status=closed --json | jq -r '.[].id' | grep -v "$FEATURE_ID" | shuf | head -3)
 
-for feature_id in $CLOSED_FEATURES; do
-    echo "Verifying: $feature_id"
-    beads_client show "$feature_id"
-    # Quick functional check - does it still work?
-    # If broken, note it but do NOT change status
+for id in $CLOSED; do
+    echo "Verifying: $id"
+    beads_client show "$id"
+    # Quick check - does it still work?
 done
 ```
 
-**Rules**:
+**Verification criteria - a feature is "broken" if:**
+- Page/route doesn't load (404, 500, crash)
+- Core action fails (button does nothing, form doesn't submit)
+- Data doesn't persist (refresh loses changes)
+
+**Rules:**
 - Only verify CLOSED features
-- Pick randomly using `shuf` to distribute verification across agents
-- If a feature is broken, note it but do NOT reopen (that's Hound's job)
-- Spend MAX 5 minutes total on verification
+- If broken, note it but do NOT change status (Hound's job)
+- Max 5 minutes total
 
-### STEP 5: UPDATE ARTIFACTS + END SESSION
+---
 
-After completing ONE feature implementation + verification:
+### STEP 7: ARCHIVE + MERGE + EXIT
 
-#### 5.1 Archive the Current Feature Plan
-
-Move your completed plan to history (crash-safe):
+#### Success Path (feature complete)
 
 ```bash
-# Archive plan to history (only delete if archive succeeds)
+# Archive plan to history
 if [ -f IMPLEMENTATION_PLAN.md ]; then
     {
         echo ""
@@ -249,81 +248,66 @@ if [ -f IMPLEMENTATION_PLAN.md ]; then
         cat IMPLEMENTATION_PLAN.md
     } >> IMPLEMENTATION_HISTORY.md && rm IMPLEMENTATION_PLAN.md
 fi
-```
 
-**Note:** If the agent crashes mid-session, IMPLEMENTATION_PLAN.md may still exist. The next session will see it and can either continue from it or overwrite it with a new plan.
-
-#### 5.2 Update AGENTS.md (If You Learned Anything Useful)
-
-If you discovered new patterns, gotchas, or commands that would help future sessions, add them to AGENTS.md.
-
-**Size limit:** Keep AGENTS.md under 300 lines. If it's getting long, consolidate entries or remove outdated information instead of just appending.
-
-#### 5.3 Merge, Push, and Sync (Agent Handles Conflicts)
-
-You are responsible for merging your work to main. Handle any conflicts.
-
-```bash
-# Get feature title for commit messages (if not already set)
+# Get feature title
 FEATURE_TITLE=${FEATURE_TITLE:-$(beads_client show "$FEATURE_ID" --json | jq -r '.[0].title')}
 
-# 1. Commit your work on feature branch (if not already committed)
+# Commit if needed
 git add .
 git diff --cached --quiet || git commit -m "Implement: $FEATURE_TITLE"
 
-# 2. Fetch latest main and merge INTO your branch (resolve conflicts here)
+# Merge to main
 git fetch origin main
 if ! git merge origin/main --no-edit; then
-    echo "Merge conflicts detected. Resolve them:"
-    git diff --name-only --diff-filter=U
-    # After resolving: git add <files> && git commit -m "Resolve merge conflicts"
+    # Resolve conflicts (see troubleshooting.md)
+    git diff --name-only --diff-filter=U  # Shows conflicted files
+    # Edit files to resolve, then: git add <files> && git commit
 fi
 
-# 3. Push your feature branch
-FEATURE_BRANCH="$(git branch --show-current)"
-git push -u origin "$FEATURE_BRANCH"
-
-# 4. Merge to main (should be clean now - fast-forward or no conflicts)
-git checkout main
-git pull origin main
-git merge "$FEATURE_BRANCH" --no-ff -m "Merge: $FEATURE_TITLE"
+# Push and merge
+BRANCH="$(git branch --show-current)"
+git push -u origin "$BRANCH"
+git checkout main && git pull origin main
+git merge "$BRANCH" --no-ff -m "Merge: $FEATURE_TITLE"
 git push origin main
 
-# 5. Delete feature branch (local and remote)
-git branch -d "$FEATURE_BRANCH"
-git push origin --delete "$FEATURE_BRANCH" 2>/dev/null || true
-
-# 6. Sync beads state
+# Cleanup
+git branch -d "$BRANCH"
+git push origin --delete "$BRANCH" 2>/dev/null || true
 beads_client sync
-
-# 7. Exit
 ```
 
-**Why agent handles merge**:
-- You understand the code context
-- You can resolve conflicts intelligently
-- Container manager only handles cleanup after you exit
+#### Error Path (blocked, timeout, or incomplete)
 
-**IMPORTANT: Exit now. Do NOT start another feature.**
-The system will automatically start a fresh session for the next task.
+```bash
+# Commit partial work
+git add .
+git commit -m "WIP: $FEATURE_TITLE (partial)" || true
 
-The next session will:
-1. Read AGENTS.md for operational context
-2. Create a new IMPLEMENTATION_PLAN.md for the next feature
-3. Continue where you left off
+# Keep in_progress (do NOT close incomplete work)
+# Optionally document blocker
+echo "## Blocked: $(date)" >> AGENTS.md
+echo "- Feature: $FEATURE_ID" >> AGENTS.md
+echo "- Reason: [what's blocking]" >> AGENTS.md
+
+beads_client sync
+```
+
+**Exit now. Do NOT start another feature.** The system will start a fresh session.
 
 ---
 
 ## KEY RULES
 
-1. **READ ARTIFACTS FIRST** - Always read AGENTS.md and IMPLEMENTATION_PLAN.md before starting
-2. **PLAN BEFORE CODING** - Create IMPLEMENTATION_PLAN.md with gap analysis + task breakdown
-3. **MARK IN_PROGRESS** - Run `beads_client update <id> --status=in_progress` BEFORE writing any code
-4. **VALIDATE BEFORE CLOSE** - Lint/typecheck MUST pass before closing a feature
-5. **UPDATE ARTIFACTS** - Log discoveries to AGENTS.md, archive plans to IMPLEMENTATION_HISTORY.md
-6. **ONLY CLOSE WHAT YOU IMPLEMENT** - Never close a feature unless you implemented it
-7. **VERIFY ONLY CLOSED FEATURES** - During verification, only check features with status=closed
-8. **LIMIT VERIFICATION** - Max 3 features, max 5 minutes, only AFTER implementing
+| Rule | Why |
+|------|-----|
+| Read artifacts first | Prevents rediscovering things |
+| Plan before coding | Creates clear task breakdown |
+| Mark in_progress before coding | Enables progress monitoring |
+| **Write tests before committing** | Pre-commit hook enforces this |
+| Validate before close | Ensures quality |
+| Only close what you implement | Maintains integrity |
+| Archive plans after completion | Builds knowledge base |
 
 ## TEST-DRIVEN MINDSET
 
@@ -335,50 +319,15 @@ Features are test cases. If functionality doesn't exist, BUILD IT.
 | "API missing" | Skip | Implement the API |
 | "No data" | Skip | Create test data |
 
-## CLEAN EXIT BEHAVIOR
+---
 
-If you must exit before completing the feature (errors, timeouts, blocked):
+## TIME GUIDANCE
 
-1. **Commit any work** - Even partial progress:
-   ```bash
-   git add .
-   git commit -m "WIP: $FEATURE_TITLE (partial)" || true
-   ```
-
-2. **Keep feature in_progress** - Do NOT close incomplete work
-
-3. **Sync beads state**:
-   ```bash
-   beads_client sync
-   ```
-
-4. **Note in AGENTS.md** - Document why you stopped (optional but helpful)
-
-The system will automatically recover git state on next startup if needed.
+Aim to complete one feature within 2 hours. If blocked longer:
+- Document the blocker
+- Commit WIP
+- Exit and let the next session try with fresh eyes
 
 ---
 
-## BEADS COMMANDS
-
-```bash
-beads_client ready                              # Get available features
-beads_client update <id> --status=in_progress   # Claim feature (REQUIRED before coding)
-beads_client close <id>                         # Mark complete
-beads_client stats                              # Check progress
-beads_client sync                               # Sync at session end
-```
-
----
-
-## SESSION FLOW
-
-```
-Step 1: Read artifacts (AGENTS.md, IMPLEMENTATION_PLAN.md)
-Step 2: Start servers
-Step 2.5: Gap analysis + task breakdown → Create IMPLEMENTATION_PLAN.md
-Step 3: Implement (follow plan, validate, close)
-Step 4: Verify 3 other features (max 5 min)
-Step 5: Update artifacts + commit + exit
-```
-
-Begin with Step 1, then follow the steps in order.
+Begin with Step 1.

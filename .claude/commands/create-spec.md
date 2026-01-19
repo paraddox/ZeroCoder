@@ -205,13 +205,27 @@ Ask about user roles:
 
 After gathering all features, **you** (the agent) should tally up the testable features. Do NOT ask the user how many features they want - derive it from what was discussed.
 
-**Typical ranges for reference:**
+**First, determine the project type:**
 
-- **Simple apps** (todo list, calculator, notes): ~20-50 features
-- **Medium apps** (blog, task manager with auth): ~100 features
-- **Advanced apps** (e-commerce, CRM, full SaaS): ~150-300 features
+| Type | Description | Examples |
+|------|-------------|----------|
+| **Web App** | Frontend + backend, user-facing UI | Dashboard, SaaS, e-commerce |
+| **API** | HTTP/REST/GraphQL service, no UI | Backend service, microservice |
+| **CLI** | Command-line tool | Build tool, data processor |
+| **Library** | Reusable package | npm/pip package, SDK |
+| **Backend** | Processing/compute app | Data pipeline, service |
 
-These are just reference points - your actual count should come from the requirements discussed.
+**Typical feature ranges by complexity:**
+
+| Tier | Features | Examples |
+|------|----------|----------|
+| Simple | 50-100 | Todo list, notes app, calculator |
+| Medium | 100-200 | Blog with auth, task manager, basic SaaS |
+| Complex | 200+ | E-commerce, CRM, full-featured SaaS |
+
+These are reference points - your actual count should come from the requirements discussed.
+
+**Note:** Different project types have different feature distributions. A CLI tool may have fewer UI features but more input validation and error handling features. An API may skip navigation/accessibility but need more security and data validation features. See `feature_examples.md` for category guidance by project type.
 
 **How to count features:**
 For each feature area discussed, estimate the number of discrete, testable behaviors:
@@ -221,8 +235,7 @@ For each feature area discussed, estimate the number of discrete, testable behav
 - Each validation/error case = 1 feature
 - Each visual requirement = 1 feature (styling, animation, responsive behavior)
 
-**Important**
-Each feature should be small enough that an agent canimplement it in a single session.
+**Important:** Each feature should be small enough that an agent can implement it in a single session.
 
 **Present your estimate to the user:**
 
@@ -294,9 +307,10 @@ Prompt for:
 Present everything gathered:
 
 1. **Summary of the app** (in plain language)
-2. **Feature count**
-3. **Technology choices** (whether specified or derived)
-4. **Brief technical plan** (for their awareness)
+2. **Project type** (Web App, API, CLI, Library, or Backend)
+3. **Feature count** with breakdown by category
+4. **Technology choices** (whether specified or derived)
+5. **Brief technical plan** (for their awareness)
 
 First ask in conversation if they want to make changes.
 
@@ -332,6 +346,8 @@ Create a new file using this XML structure:
   <overview>
     [2-3 sentence description from Phase 1]
   </overview>
+
+  <project_type>[web_app | api | cli | library | backend]</project_type>
 
   <technology_stack>
     <frontend>
