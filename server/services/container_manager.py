@@ -1000,6 +1000,8 @@ class ContainerManager:
                     return False, f"Failed to create worktree for {worktree_name}"
 
                 # Create new container with worktree mounted
+                # Also mount bare repo at same path so gitdir references work
+                bare_repo_path = self.worktree_manager.bare_repo_path
                 cmd = [
                     "docker", "run", "-d",
                     "--name", self.container_name,
@@ -1007,6 +1009,8 @@ class ContainerManager:
                     "--add-host", "host.docker.internal:host-gateway",
                     # Mount worktree instead of cloning from git
                     "-v", f"{worktree_path}:/project:rw",
+                    # Mount bare repo at same absolute path so .git gitdir reference works
+                    "-v", f"{bare_repo_path}:{bare_repo_path}:rw",
                 ]
                 # Pass container type for setup_repo.sh (init vs coding)
                 container_type = "init" if self._is_init_container else "coding"
@@ -1835,6 +1839,8 @@ class ContainerManager:
                     return False, f"Failed to create worktree for {worktree_name}"
 
                 # Create new container with worktree mounted
+                # Also mount bare repo at same path so gitdir references work
+                bare_repo_path = self.worktree_manager.bare_repo_path
                 cmd = [
                     "docker", "run", "-d",
                     "--name", self.container_name,
@@ -1842,6 +1848,8 @@ class ContainerManager:
                     "--add-host", "host.docker.internal:host-gateway",
                     # Mount worktree instead of cloning from git
                     "-v", f"{worktree_path}:/project:rw",
+                    # Mount bare repo at same absolute path so .git gitdir reference works
+                    "-v", f"{bare_repo_path}:{bare_repo_path}:rw",
                 ]
                 # Pass container type for setup_repo.sh (init vs coding)
                 container_type = "init" if self._is_init_container else "coding"
