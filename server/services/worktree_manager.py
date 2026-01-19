@@ -150,13 +150,10 @@ class WorktreeManager:
         """
         worktree_path = self.get_worktree_path(name)
 
-        # If worktree already exists and is valid, just update it
+        # If worktree already exists and is valid, just return it
+        # Don't sync here to avoid race conditions with container operations
         if worktree_path.exists() and (worktree_path / ".git").exists():
             logger.info(f"Worktree {name} already exists at {worktree_path}")
-            # Pull latest for existing worktree
-            sync_ok, sync_msg = await self.sync_worktree(name)
-            if not sync_ok:
-                logger.warning(f"Failed to sync existing worktree: {sync_msg}")
             return True, worktree_path
 
         # Ensure bare repo exists
