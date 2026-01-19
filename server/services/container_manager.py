@@ -639,13 +639,13 @@ class ContainerManager:
             if result.returncode != 0:
                 logger.warning(f"git remote prune failed: {result.stderr}")
 
-            # 4. Fetch latest from origin
-            result = run_git(["git", "fetch", "origin"], timeout=60)
+            # 4. Fetch latest from origin (use explicit refspec for worktrees)
+            result = run_git(["git", "fetch", "origin", "+refs/heads/*:refs/remotes/origin/*"], timeout=60)
             if result.returncode != 0:
                 logger.warning(f"git fetch failed after recovery: {result.stderr}")
                 # Try one more gc + fetch in case of persistent ref issues
                 run_git(["git", "gc", "--prune=now"], timeout=60)
-                result = run_git(["git", "fetch", "origin"], timeout=60)
+                result = run_git(["git", "fetch", "origin", "+refs/heads/*:refs/remotes/origin/*"], timeout=60)
 
             # 5. Check current branch and status
             result = run_git(["git", "status", "--porcelain"])
@@ -658,11 +658,21 @@ class ContainerManager:
                 run_git(["git", "clean", "-fd"])  # Remove untracked files
 
             # 7. Checkout and reset default branch to match origin
-            run_git(["git", "checkout", default_branch])
-            result = run_git(["git", "reset", "--hard", f"origin/{default_branch}"])
+            result = run_git(["git", "checkout", default_branch])
             if result.returncode != 0:
-                logger.warning(f"Failed to reset {default_branch} to origin/{default_branch}: {result.stderr}")
-                return False, f"Failed to reset {default_branch}: {result.stderr}"
+                # May fail in worktrees if branch checked out elsewhere - that's OK
+                logger.warning(f"Checkout {default_branch} failed (may be worktree): {result.stderr}")
+
+            # Check if origin/default_branch exists before resetting
+            result = run_git(["git", "rev-parse", "--verify", f"origin/{default_branch}"])
+            if result.returncode == 0:
+                result = run_git(["git", "reset", "--hard", f"origin/{default_branch}"])
+                if result.returncode != 0:
+                    logger.warning(f"Failed to reset to origin/{default_branch}: {result.stderr}")
+            else:
+                # Just reset to HEAD if remote ref doesn't exist
+                run_git(["git", "reset", "--hard", "HEAD"])
+                logger.warning(f"Remote ref origin/{default_branch} not found, reset to HEAD")
 
             # 8. Clean up orphaned feature branches
             result = run_git(["git", "branch", "--list", "feature/*"])
@@ -705,6 +715,9 @@ class ContainerManager:
             "You are currently",  # rebasing/merging/cherry-picking message
             "needs merge",
             "not possible because you have unmerged files",
+            "unstaged changes",  # git pull --rebase requires clean state
+            "uncommitted changes",
+            "is already checked out",  # worktree branch conflict
         ]
 
         def needs_recovery(stderr: str) -> bool:
@@ -742,12 +755,17 @@ class ContainerManager:
         try:
             await self._broadcast_output("[System] Syncing with remote before starting agent...")
 
-            # Detect default branch and pull latest
+            # Detect default branch
             default_branch = get_default_branch()
+
+            # For worktrees, we can't checkout the main branch if it's checked out elsewhere.
+            # Instead: fetch, discard local changes, reset to origin/default_branch
+            # Note: Use explicit refspec to ensure all remote branches are fetched in worktrees
             commands = [
-                (["git", "fetch", "origin"], "Fetching from origin"),
-                (["git", "checkout", default_branch], f"Checking out {default_branch}"),
-                (["git", "pull", "origin", default_branch], f"Pulling latest from {default_branch}"),
+                (["git", "fetch", "origin", "+refs/heads/*:refs/remotes/origin/*"], "Fetching from origin"),
+                (["git", "reset", "--hard", "HEAD"], "Discarding local changes"),
+                (["git", "clean", "-fd"], "Removing untracked files"),
+                (["git", "reset", "--hard", f"origin/{default_branch}"], f"Resetting to origin/{default_branch}"),
             ]
 
             recovery_attempted = False
@@ -1110,6 +1128,19 @@ class ContainerManager:
                 if check.returncode != 0:
                     return False, "Project worktree not mounted correctly"
                 logger.info(f"Init container {self.container_name}: worktree mounted successfully")
+
+                # Wait for SSH setup to complete (entrypoint runs ssh-keyscan)
+                for attempt in range(10):
+                    check = subprocess.run(
+                        ["docker", "exec", "-u", "coder", self.container_name,
+                         "test", "-f", "/home/coder/.ssh/known_hosts"],
+                        capture_output=True,
+                        text=True,
+                    )
+                    if check.returncode == 0:
+                        break
+                    await asyncio.sleep(1)
+                    logger.info(f"Waiting for SSH setup (attempt {attempt + 1}/10)")
 
                 # Pre-agent sync: pull latest code and beads state
                 sync_ok, sync_msg = await self.pre_agent_sync()
