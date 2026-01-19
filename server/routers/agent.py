@@ -411,26 +411,23 @@ async def start_all_containers(project_name: str):
                 message=f"Phase 1 (init container start) failed: {message}",
             )
 
-        # Wait for container to clone the repo (entrypoint clones from GIT_REMOTE_URL)
-        for attempt in range(30):  # 60 seconds total
-            await asyncio.sleep(2)
-            check = subprocess.run(
-                ["docker", "exec", "-u", "coder", init_manager.container_name,
-                 "test", "-d", "/project/.git"],
-                capture_output=True,
-                text=True,
-            )
-            if check.returncode == 0:
-                print(f"[StartAll] Init container repo cloned successfully")
-                break
-            print(f"[StartAll] Waiting for repo clone (attempt {attempt + 1}/30)")
-        else:
+        # Wait for worktree to be accessible (mounted via -v)
+        # Note: Worktrees use a .git FILE (not directory), so use -e not -d
+        await asyncio.sleep(1)  # Brief wait for container startup
+        check = subprocess.run(
+            ["docker", "exec", "-u", "coder", init_manager.container_name,
+             "test", "-e", "/project/.git"],
+            capture_output=True,
+            text=True,
+        )
+        if check.returncode != 0:
             await init_manager.stop()
             return AgentActionResponse(
                 success=False,
                 status="error",
-                message="Init container failed to clone repo after 60 seconds",
+                message="Init container: worktree not mounted correctly",
             )
+        print(f"[StartAll] Init container worktree mounted successfully")
 
         # Run pre_agent_sync and recover_stuck_features
         sync_ok, sync_msg = await init_manager.pre_agent_sync()
