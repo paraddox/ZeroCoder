@@ -3,7 +3,7 @@ Features Router
 ===============
 
 API endpoints for feature/test case management using beads.
-Routes through container via docker exec. Auto-starts container for edits.
+All beads operations run on the host via BeadsManager with file-based locking.
 """
 
 import json
@@ -20,7 +20,6 @@ from ..schemas import (
     FeatureResponse,
     FeatureUpdate,
 )
-from ..services.container_beads import ContainerBeadsClient
 from ..services.beads_manager import get_cached_features, get_beads_manager
 
 logger = logging.getLogger(__name__)
@@ -81,51 +80,6 @@ def validate_project_name(name: str) -> str:
             detail="Invalid project name"
         )
     return name
-
-
-def _is_container_running(project_name: str) -> bool:
-    """Check if the container is running for this project."""
-    from ..services.container_manager import _managers, _managers_lock
-
-    with _managers_lock:
-        manager = _managers.get(project_name)
-        return manager is not None and manager.status == "running"
-
-
-async def _ensure_container_running(project_name: str, project_dir: Path, git_url: str) -> None:
-    """
-    Ensure the container is running for write operations.
-
-    Auto-starts the container if it's stopped (without starting the agent).
-    Raises HTTPException if container can't be started.
-    """
-    from ..services.container_manager import get_container_manager, check_docker_available, check_image_exists
-
-    if _is_container_running(project_name):
-        return  # Already running
-
-    # Check Docker availability
-    if not check_docker_available():
-        raise HTTPException(
-            status_code=503,
-            detail="Docker is not available. Please ensure Docker is installed and running."
-        )
-
-    if not check_image_exists():
-        raise HTTPException(
-            status_code=503,
-            detail="Container image 'zerocoder-project' not found. Run: docker build -f Dockerfile.project -t zerocoder-project ."
-        )
-
-    # Get manager and start container (container_number=1 for default)
-    manager = get_container_manager(project_name, git_url, 1, project_dir)
-    success, message = await manager.start_container_only()
-
-    if not success:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Failed to start container: {message}"
-        )
 
 
 def feature_to_response(feature: dict) -> FeatureResponse:
@@ -243,7 +197,7 @@ async def list_features(project_name: str):
 
 @router.post("", response_model=FeatureResponse)
 async def create_feature(project_name: str, feature: FeatureCreate):
-    """Create a new feature/test case manually. Auto-starts container if needed."""
+    """Create a new feature/test case manually."""
     project_name = validate_project_name(project_name)
     project_dir = _get_project_path(project_name)
 
@@ -253,18 +207,16 @@ async def create_feature(project_name: str, feature: FeatureCreate):
     if not project_dir.exists():
         raise HTTPException(status_code=404, detail="Project directory not found")
 
-    # Ensure container is running (auto-start if needed)
     git_url = _get_project_git_url(project_name)
     if not git_url:
         raise HTTPException(status_code=404, detail="Project has no git URL")
-    await _ensure_container_running(project_name, project_dir, git_url)
 
     # Determine priority
     priority = feature.priority if feature.priority is not None else 999
 
     try:
-        container_client = ContainerBeadsClient(project_name)
-        feature_id = await container_client.create(
+        manager = await get_beads_manager(project_name, git_url)
+        created = await manager.create_feature(
             name=feature.name,
             category=feature.category,
             description=feature.description,
@@ -272,26 +224,12 @@ async def create_feature(project_name: str, feature: FeatureCreate):
             priority=priority,
         )
 
-        if not feature_id:
+        if not created:
             raise HTTPException(status_code=500, detail="Failed to create feature")
 
-        # Trigger immediate beads refresh
-        try:
-            git_url = _get_project_git_url(project_name)
-            if git_url:
-                manager = await get_beads_manager(project_name, git_url)
-                await manager.pull_latest()
-        except Exception as e:
-            logger.warning(f"Failed to refresh beads: {e}")
-
-        # Get the created feature
-        created = await container_client.get_feature(feature_id)
-        if not created:
-            raise HTTPException(status_code=500, detail="Feature created but could not be retrieved")
-
         return feature_to_response(created)
-    except RuntimeError as e:
-        logger.error(f"Container command failed: {e}")
+    except Exception as e:
+        logger.error(f"Failed to create feature: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to create feature: {e}")
 
 
@@ -307,19 +245,16 @@ async def get_feature(project_name: str, feature_id: str):
     if not project_dir.exists():
         raise HTTPException(status_code=404, detail="Project directory not found")
 
-    # If container running, get from container for fresh data
-    if _is_container_running(project_name):
+    git_url = _get_project_git_url(project_name)
+    if git_url:
         try:
-            container_client = ContainerBeadsClient(project_name)
-            feature = await container_client.get_feature(feature_id)
+            manager = await get_beads_manager(project_name, git_url)
+            feature = manager.get_feature(feature_id)
 
-            if not feature:
-                raise HTTPException(status_code=404, detail=f"Feature {feature_id} not found")
-
-            return feature_to_response(feature)
-        except RuntimeError as e:
-            logger.error(f"Container command failed: {e}")
-            raise HTTPException(status_code=500, detail=f"Failed to get feature: {e}")
+            if feature:
+                return feature_to_response(feature)
+        except Exception as e:
+            logger.warning(f"Failed to get feature from beads: {e}")
 
     # Fallback to cache
     cached_features = get_cached_features(project_name)
@@ -332,7 +267,7 @@ async def get_feature(project_name: str, feature_id: str):
 
 @router.delete("/{feature_id}")
 async def delete_feature(project_name: str, feature_id: str):
-    """Delete a feature. Auto-starts container if needed."""
+    """Delete a feature."""
     project_name = validate_project_name(project_name)
     project_dir = _get_project_path(project_name)
 
@@ -342,48 +277,34 @@ async def delete_feature(project_name: str, feature_id: str):
     if not project_dir.exists():
         raise HTTPException(status_code=404, detail="Project directory not found")
 
-    # Ensure container is running (auto-start if needed)
     git_url = _get_project_git_url(project_name)
     if not git_url:
         raise HTTPException(status_code=404, detail="Project has no git URL")
-    await _ensure_container_running(project_name, project_dir, git_url)
 
     try:
-        container_client = ContainerBeadsClient(project_name)
+        manager = await get_beads_manager(project_name, git_url)
 
         # Check if feature exists first
-        feature = await container_client.get_feature(feature_id)
+        feature = manager.get_feature(feature_id)
         if not feature:
             raise HTTPException(status_code=404, detail=f"Feature {feature_id} not found")
 
-        success = await container_client.delete(feature_id)
+        success = await manager.delete_feature(feature_id)
 
         if not success:
             raise HTTPException(status_code=500, detail="Failed to delete feature")
 
-        # Trigger immediate beads refresh
-        try:
-            git_url = _get_project_git_url(project_name)
-            if git_url:
-                manager = await get_beads_manager(project_name, git_url)
-                await manager.pull_latest()
-        except Exception as e:
-            logger.warning(f"Failed to refresh beads: {e}")
-
         return {"success": True, "message": f"Feature {feature_id} deleted"}
-    except RuntimeError as e:
-        logger.error(f"Container command failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to delete feature: {e}")
     except HTTPException:
         raise
+    except Exception as e:
+        logger.error(f"Failed to delete feature: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete feature: {e}")
 
 
 @router.patch("/{feature_id}/skip")
 async def skip_feature(project_name: str, feature_id: str):
-    """
-    Mark a feature as skipped by moving it to the end of the priority queue.
-    Auto-starts container if needed.
-    """
+    """Mark a feature as skipped by moving it to the end of the priority queue."""
     project_name = validate_project_name(project_name)
     project_dir = _get_project_path(project_name)
 
@@ -393,15 +314,13 @@ async def skip_feature(project_name: str, feature_id: str):
     if not project_dir.exists():
         raise HTTPException(status_code=404, detail="Project directory not found")
 
-    # Ensure container is running (auto-start if needed)
     git_url = _get_project_git_url(project_name)
     if not git_url:
         raise HTTPException(status_code=404, detail="Project has no git URL")
-    await _ensure_container_running(project_name, project_dir, git_url)
 
     try:
-        container_client = ContainerBeadsClient(project_name)
-        result = await container_client.skip(feature_id)
+        manager = await get_beads_manager(project_name, git_url)
+        result = await manager.skip_feature(feature_id)
 
         if result is None:
             raise HTTPException(status_code=404, detail=f"Feature {feature_id} not found")
@@ -409,27 +328,18 @@ async def skip_feature(project_name: str, feature_id: str):
         if "error" in result:
             raise HTTPException(status_code=400, detail=result["error"])
 
-        # Trigger immediate beads refresh
-        try:
-            git_url = _get_project_git_url(project_name)
-            if git_url:
-                manager = await get_beads_manager(project_name, git_url)
-                await manager.pull_latest()
-        except Exception as e:
-            logger.warning(f"Failed to refresh beads: {e}")
-
         return {"success": True, "message": f"Feature {feature_id} moved to end of queue"}
-    except RuntimeError as e:
-        logger.error(f"Container command failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to skip feature: {e}")
     except HTTPException:
         raise
+    except Exception as e:
+        logger.error(f"Failed to skip feature: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to skip feature: {e}")
 
 
 @router.patch("/{feature_id}", response_model=FeatureResponse)
 async def update_feature(project_name: str, feature_id: str, update: FeatureUpdate):
     """
-    Update a feature's fields. Auto-starts container if needed.
+    Update a feature's fields.
 
     Only the provided fields will be updated; others remain unchanged.
     """
@@ -442,22 +352,20 @@ async def update_feature(project_name: str, feature_id: str, update: FeatureUpda
     if not project_dir.exists():
         raise HTTPException(status_code=404, detail="Project directory not found")
 
-    # Ensure container is running (auto-start if needed)
     git_url = _get_project_git_url(project_name)
     if not git_url:
         raise HTTPException(status_code=404, detail="Project has no git URL")
-    await _ensure_container_running(project_name, project_dir, git_url)
 
     try:
-        container_client = ContainerBeadsClient(project_name)
+        manager = await get_beads_manager(project_name, git_url)
 
         # Check if feature exists
-        feature = await container_client.get_feature(feature_id)
+        feature = manager.get_feature(feature_id)
         if not feature:
             raise HTTPException(status_code=404, detail=f"Feature {feature_id} not found")
 
         # Update the feature
-        updated = await container_client.update(
+        updated = await manager.update_feature(
             feature_id,
             name=update.name,
             description=update.description,
@@ -469,29 +377,17 @@ async def update_feature(project_name: str, feature_id: str, update: FeatureUpda
         if not updated:
             raise HTTPException(status_code=500, detail="Failed to update feature")
 
-        # Trigger immediate beads refresh
-        try:
-            git_url = _get_project_git_url(project_name)
-            if git_url:
-                manager = await get_beads_manager(project_name, git_url)
-                await manager.pull_latest()
-        except Exception as e:
-            logger.warning(f"Failed to refresh beads: {e}")
-
         return feature_to_response(updated)
-    except RuntimeError as e:
-        logger.error(f"Container command failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to update feature: {e}")
     except HTTPException:
         raise
+    except Exception as e:
+        logger.error(f"Failed to update feature: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update feature: {e}")
 
 
 @router.patch("/{feature_id}/reopen")
 async def reopen_feature(project_name: str, feature_id: str):
-    """
-    Reopen a completed feature (move it back to pending).
-    Auto-starts container if needed.
-    """
+    """Reopen a completed feature (move it back to pending)."""
     project_name = validate_project_name(project_name)
     project_dir = _get_project_path(project_name)
 
@@ -501,17 +397,15 @@ async def reopen_feature(project_name: str, feature_id: str):
     if not project_dir.exists():
         raise HTTPException(status_code=404, detail="Project directory not found")
 
-    # Ensure container is running (auto-start if needed)
     git_url = _get_project_git_url(project_name)
     if not git_url:
         raise HTTPException(status_code=404, detail="Project has no git URL")
-    await _ensure_container_running(project_name, project_dir, git_url)
 
     try:
-        container_client = ContainerBeadsClient(project_name)
+        manager = await get_beads_manager(project_name, git_url)
 
         # Check if feature exists and is closed
-        feature = await container_client.get_feature(feature_id)
+        feature = manager.get_feature(feature_id)
         if not feature:
             raise HTTPException(status_code=404, detail=f"Feature {feature_id} not found")
 
@@ -519,23 +413,14 @@ async def reopen_feature(project_name: str, feature_id: str):
             raise HTTPException(status_code=400, detail="Feature is not completed, cannot reopen")
 
         # Reopen the feature
-        reopened = await container_client.reopen(feature_id)
+        reopened = await manager.reopen_feature(feature_id)
 
         if not reopened:
             raise HTTPException(status_code=500, detail="Failed to reopen feature")
 
-        # Trigger immediate beads refresh
-        try:
-            git_url = _get_project_git_url(project_name)
-            if git_url:
-                manager = await get_beads_manager(project_name, git_url)
-                await manager.pull_latest()
-        except Exception as e:
-            logger.warning(f"Failed to refresh beads: {e}")
-
         return {"success": True, "message": f"Feature {feature_id} reopened"}
-    except RuntimeError as e:
-        logger.error(f"Container command failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to reopen feature: {e}")
     except HTTPException:
         raise
+    except Exception as e:
+        logger.error(f"Failed to reopen feature: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to reopen feature: {e}")

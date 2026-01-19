@@ -13,8 +13,10 @@ Key design decisions:
 """
 
 import asyncio
+import fcntl
 import json
 import logging
+import os
 import re
 import subprocess
 import sys
@@ -61,6 +63,44 @@ class BeadsManager:
         self.local_path = get_projects_dir() / project_name
         self._lock = asyncio.Lock()  # Single lock for all operations
         self._last_pull: datetime | None = None
+        self._file_lock_fd: int | None = None
+
+    # =========================================================================
+    # File-Based Locking for Cross-Process Coordination
+    # =========================================================================
+
+    def _get_lock_path(self) -> Path:
+        """Get the path to the file lock."""
+        return self.local_path / ".beads" / ".sync.lock"
+
+    def _acquire_file_lock(self) -> int:
+        """
+        Acquire file lock for cross-process coordination.
+
+        Uses fcntl.flock for POSIX-compliant file locking.
+        This prevents both host and container from running bd commands simultaneously.
+
+        Returns:
+            File descriptor for the lock file
+        """
+        lock_path = self._get_lock_path()
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        return fd
+
+    def _release_file_lock(self, fd: int) -> None:
+        """
+        Release file lock.
+
+        Args:
+            fd: File descriptor returned by _acquire_file_lock
+        """
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+        except Exception as e:
+            logger.warning(f"Error releasing file lock: {e}")
 
     # =========================================================================
     # Project Directory Operations
@@ -220,18 +260,24 @@ class BeadsManager:
     # Acquires lock and syncs after
     # =========================================================================
 
-    async def _run_bd(self, args: list[str], timeout: int = 60) -> dict[str, Any]:
+    async def _run_bd(self, args: list[str], timeout: int = 60, use_file_lock: bool = True) -> dict[str, Any]:
         """
-        Low-level bd command runner.
+        Low-level bd command runner with cross-process file locking.
 
         Args:
             args: Command arguments (e.g., ["list", "--json"])
             timeout: Command timeout in seconds
+            use_file_lock: Whether to acquire file lock (default True)
 
         Returns:
             Parsed JSON output or error dict
         """
+        fd = None
         try:
+            # Acquire file lock for cross-process coordination
+            if use_file_lock:
+                fd = await asyncio.to_thread(self._acquire_file_lock)
+
             result = await asyncio.to_thread(
                 subprocess.run,
                 ["bd", "--no-daemon", *args],
@@ -264,6 +310,10 @@ class BeadsManager:
         except Exception as e:
             logger.exception(f"Error running beads command: {e}")
             return {"error": str(e)}
+        finally:
+            # Always release the file lock
+            if fd is not None:
+                await asyncio.to_thread(self._release_file_lock, fd)
 
     async def _sync_with_remote(self) -> bool:
         """
@@ -481,6 +531,232 @@ class BeadsManager:
             Result dict with success or error
         """
         return await self.run_write_command(["comments", issue_id, "--add", comment])
+
+    async def delete_issue(self, issue_id: str) -> dict[str, Any]:
+        """
+        Delete an issue.
+
+        Args:
+            issue_id: Issue ID to delete
+
+        Returns:
+            Result dict with success or error
+        """
+        return await self.run_write_command(["delete", issue_id, "--force"])
+
+    # =========================================================================
+    # Feature-Level Operations (for UI compatibility)
+    # =========================================================================
+
+    def get_feature(self, feature_id: str) -> dict | None:
+        """
+        Get a single feature by ID.
+
+        Args:
+            feature_id: Feature/issue ID
+
+        Returns:
+            Feature dict in UI format, or None if not found
+        """
+        tasks = self.get_tasks()
+        for task in tasks:
+            if str(task.get("id")) == str(feature_id):
+                return _task_to_feature(task)
+        return None
+
+    async def create_feature(
+        self,
+        name: str,
+        category: str = "",
+        description: str = "",
+        steps: list[str] | None = None,
+        priority: int = 999,
+    ) -> dict | None:
+        """
+        Create a new feature.
+
+        Args:
+            name: Feature name/title
+            category: Category label
+            description: Feature description
+            steps: Implementation steps
+            priority: Priority (0-4)
+
+        Returns:
+            Created feature dict in UI format, or None on failure
+        """
+        # Build full description with steps if provided
+        full_description = description
+        if steps:
+            step_text = "\n".join(f"{i+1}. {step}" for i, step in enumerate(steps))
+            if description:
+                full_description = f"{description}\n\n{step_text}"
+            else:
+                full_description = step_text
+
+        labels = [category] if category else None
+
+        result = await self.create_issue(
+            title=name,
+            type="feature",
+            priority=priority,
+            description=full_description,
+            labels=labels,
+        )
+
+        if "error" in result:
+            logger.warning(f"Failed to create feature: {result['error']}")
+            return None
+
+        # Extract created issue ID from result
+        data = result.get("data", {})
+        if isinstance(data, dict):
+            issue_id = data.get("id")
+            if issue_id:
+                return self.get_feature(issue_id)
+
+        # Fallback: get the most recently created feature with this name
+        tasks = self.get_tasks()
+        for task in tasks:
+            if task.get("title") == name:
+                return _task_to_feature(task)
+
+        return None
+
+    async def update_feature(
+        self,
+        feature_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        priority: int | None = None,
+        category: str | None = None,
+        steps: list[str] | None = None,
+    ) -> dict | None:
+        """
+        Update a feature's fields.
+
+        Args:
+            feature_id: Feature/issue ID
+            name: New name/title
+            description: New description
+            priority: New priority (0-4)
+            category: New category label
+            steps: New implementation steps
+
+        Returns:
+            Updated feature dict in UI format, or None on failure
+        """
+        # Get current feature to merge with updates
+        current = self.get_feature(feature_id)
+        if not current:
+            return None
+
+        # Build full description with steps if provided
+        final_description = description
+        if steps is not None:
+            step_text = "\n".join(f"{i+1}. {step}" for i, step in enumerate(steps))
+            base_desc = description if description is not None else ""
+            if base_desc:
+                final_description = f"{base_desc}\n\n{step_text}"
+            else:
+                final_description = step_text
+
+        # Update via beads CLI
+        result = await self.update_issue(
+            issue_id=feature_id,
+            title=name,
+            description=final_description,
+            priority=priority,
+        )
+
+        if "error" in result:
+            logger.warning(f"Failed to update feature: {result['error']}")
+            return None
+
+        # Handle category/label update separately if needed
+        if category is not None:
+            # Use bd label command to update labels
+            await self.run_write_command(["label", feature_id, "--set", category])
+
+        return self.get_feature(feature_id)
+
+    async def delete_feature(self, feature_id: str) -> bool:
+        """
+        Delete a feature.
+
+        Args:
+            feature_id: Feature/issue ID
+
+        Returns:
+            True if deleted successfully
+        """
+        result = await self.delete_issue(feature_id)
+        return "error" not in result
+
+    async def skip_feature(self, feature_id: str) -> dict | None:
+        """
+        Skip a feature by setting its priority to P4 (backlog).
+
+        Args:
+            feature_id: Feature/issue ID
+
+        Returns:
+            Dict with success info, or None on failure
+        """
+        # Verify feature exists
+        feature = self.get_feature(feature_id)
+        if not feature:
+            return None
+
+        result = await self.update_issue(issue_id=feature_id, priority=4)
+        if "error" in result:
+            return {"error": result["error"]}
+
+        return {"success": True, "message": f"Feature {feature_id} moved to backlog"}
+
+    async def reopen_feature(self, feature_id: str) -> dict | None:
+        """
+        Reopen a closed feature.
+
+        Args:
+            feature_id: Feature/issue ID
+
+        Returns:
+            Reopened feature dict in UI format, or None on failure
+        """
+        result = await self.reopen_issue(feature_id)
+        if "error" in result:
+            return None
+
+        return self.get_feature(feature_id)
+
+
+def _task_to_feature(task: dict) -> dict:
+    """Convert a single beads task to feature format for UI compatibility."""
+    # Extract category from labels (first label)
+    labels = task.get("labels", [])
+    category = labels[0] if labels else ""
+
+    # Parse steps from description if available (beads uses 'description' not 'body')
+    description = task.get("description", "") or task.get("body", "")
+    steps = []
+    if description:
+        step_matches = re.findall(r'^\d+\.\s*(.+)$', description, re.MULTILINE)
+        if step_matches:
+            steps = step_matches
+
+    status = task.get("status", "open")
+
+    return {
+        "id": task.get("id", ""),
+        "priority": task.get("priority", 999),
+        "category": category,
+        "name": task.get("title", ""),
+        "description": description,
+        "steps": steps,
+        "passes": status == "closed",
+        "in_progress": status == "in_progress",
+    }
 
 
 # =============================================================================
