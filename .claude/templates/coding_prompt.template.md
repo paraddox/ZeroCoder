@@ -43,109 +43,31 @@ If these files exist, READ THEM CAREFULLY - they save you from rediscovering thi
 
 **DO NOT** spend more than 3 minutes on orientation. Get the basics and move on.
 
-### STEP 1.5: CLAIM FEATURE (Distributed Lock)
+### STEP 1.5: CLAIM FEATURE
 
-The container manager has already pulled latest code and synced beads.
-Now claim a feature using distributed lock:
+Pick and claim an available feature:
 
 ```bash
-# =============================================================================
-# SAFE BD HELPERS - Scripts created by initializer in scripts/ directory
-# =============================================================================
-# ./scripts/safe_bd_json.sh <cmd> [args...]  - Returns clean JSON from beads_client commands
-# ./scripts/safe_bd_sync.sh                   - Syncs beads without verbose output
+# Get an available feature and claim it
+FEATURE_ID=$(beads_client ready --json | jq -r '[.[] | select(.status == "open")][0].id')
 
-# Verify scripts exist (created by initializer)
-if [ ! -x "./scripts/safe_bd_json.sh" ] || [ ! -x "./scripts/safe_bd_sync.sh" ]; then
-    echo "ERROR: Safe BD scripts not found. Run initializer first."
-    exit 1
-fi
-
-# =============================================================================
-# FEATURE CLAIMING (with race condition prevention)
-# =============================================================================
-
-# Try to claim a random OPEN feature (not in_progress)
-# Returns: 0=success (feature ID on stdout), 1=no features, 2=claim failed (retry)
-claim_feature() {
-    # CRITICAL: Sync FIRST to get latest state before selecting
-    ./scripts/safe_bd_sync.sh
-
-    # Filter for status=open only! beads_client ready includes in_progress which causes race conditions
-    # Use shuf to randomize so parallel agents don't all claim the same feature
-    local feature_id=$(./scripts/safe_bd_json.sh ready --json | jq -r '[.[] | select(.status == "open")][].id' | shuf | head -1)
-
-    if [ -z "$feature_id" ]; then
-        echo "No open features ready to work on" >&2  # Errors to stderr, not stdout!
-        return 1
-    fi
-
-    # RACE CONDITION FIX: Verify feature is STILL open after sync
-    # Another agent may have claimed it between our sync and now
-    local current_status=$(./scripts/safe_bd_json.sh show "$feature_id" --json | jq -r '.[0].status')
-    if [ "$current_status" != "open" ]; then
-        echo "Feature $feature_id already $current_status, trying next..." >&2
-        return 2  # Retry with different feature
-    fi
-
-    # Try to claim it
-    beads_client update "$feature_id" --status=in_progress 2>/dev/null
-    local update_status=$?
-
-    if [ $update_status -eq 0 ]; then
-        # Push claim immediately to establish distributed lock
-        ./scripts/safe_bd_sync.sh
-
-        # DOUBLE-CHECK: Verify WE own the claim after push
-        # If another agent pushed first, sync will show their claim
-        local post_sync_status=$(./scripts/safe_bd_json.sh show "$feature_id" --json | jq -r '.[0].status')
-        if [ "$post_sync_status" != "in_progress" ]; then
-            echo "Feature $feature_id was claimed by another agent, trying next..." >&2
-            return 2
-        fi
-
-        echo "$feature_id"  # Only the ID goes to stdout
-        return 0
-    else
-        echo "Feature $feature_id claim failed, trying next..." >&2  # Errors to stderr!
-        return 2  # Retry with next
-    fi
-}
-
-# Retry loop with backoff
-MAX_RETRIES=5
-FEATURE_ID=""
-for i in $(seq 1 $MAX_RETRIES); do
-    FEATURE_ID=$(claim_feature)
-    claim_status=$?  # CRITICAL: Capture exit code IMMEDIATELY after command
-
-    if [ $claim_status -eq 0 ]; then
-        break
-    elif [ $claim_status -eq 1 ]; then
-        echo "No work available - exiting"
-        exit 0
-    fi
-    # claim_status=2 means retry
-    echo "Attempt $i failed, retrying after backoff..."
-    sleep $((i * 2))  # Backoff
-    ./scripts/safe_bd_sync.sh  # Refresh state
-    FEATURE_ID=""  # Reset for next attempt
-done
-
-if [ -z "$FEATURE_ID" ]; then
-    echo "Could not claim any feature after $MAX_RETRIES attempts"
+if [ -z "$FEATURE_ID" ] || [ "$FEATURE_ID" = "null" ]; then
+    echo "No open features available - exiting"
     exit 0
 fi
 
+# Claim the feature
+beads_client update "$FEATURE_ID" --status=in_progress
+
 # Create feature branch
-FEATURE_TITLE=$(./scripts/safe_bd_json.sh show "$FEATURE_ID" --json | jq -r '.[0].title' | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd '[:alnum:]-' | cut -c1-30)
+FEATURE_TITLE=$(beads_client show "$FEATURE_ID" --json | jq -r '.[0].title' | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd '[:alnum:]-' | cut -c1-30)
 BRANCH="feature/${FEATURE_ID}-${FEATURE_TITLE}"
 git checkout -b "$BRANCH"
 
 echo "Claimed $FEATURE_ID, working on branch $BRANCH"
 ```
 
-**NOTE**: The container manager handles git pull/push and beads_client sync. Focus on implementing the feature.
+**NOTE:** The server handles race conditions. If another agent claims the same feature, the server will reject your update.
 
 ### STEP 2: INSTALL DEPENDENCIES + START SERVERS
 
@@ -225,7 +147,7 @@ chmod +x init.sh 2>/dev/null && ./init.sh || echo "No init.sh found"
 The feature was claimed in Step 1.5 and stored in `$FEATURE_ID`. Verify it's set:
 ```bash
 echo "Working on feature: $FEATURE_ID"
-./scripts/safe_bd_json.sh show "$FEATURE_ID" --json | jq -r '.[0].title'
+beads_client show "$FEATURE_ID" --json | jq -r '.[0].title'
 ```
 
 #### 3.1 Follow Your Plan
@@ -280,7 +202,7 @@ npm test -- --passWithNoTests 2>/dev/null || echo "No tests configured"
 
 **ONLY after validation passes:**
 ```bash
-FEATURE_TITLE=$(./scripts/safe_bd_json.sh show "$FEATURE_ID" --json | jq -r '.[0].title')
+FEATURE_TITLE=$(beads_client show "$FEATURE_ID" --json | jq -r '.[0].title')
 beads_client close "$FEATURE_ID"
 git add . && git commit -m "Implement: $FEATURE_TITLE"
 ```
@@ -293,7 +215,7 @@ After implementing your feature, verify 3 randomly selected closed features.
 
 ```bash
 # Get 3 random closed features (not the one you just implemented)
-CLOSED_FEATURES=$(./scripts/safe_bd_json.sh list --status=closed --json | jq -r '.[].id' | grep -v "$FEATURE_ID" | shuf | head -3)
+CLOSED_FEATURES=$(beads_client list --status=closed --json | jq -r '.[].id' | grep -v "$FEATURE_ID" | shuf | head -3)
 
 for feature_id in $CLOSED_FEATURES; do
     echo "Verifying: $feature_id"
@@ -343,7 +265,7 @@ You are responsible for merging your work to main. Handle any conflicts.
 
 ```bash
 # Get feature title for commit messages (if not already set)
-FEATURE_TITLE=${FEATURE_TITLE:-$(./scripts/safe_bd_json.sh show "$FEATURE_ID" --json | jq -r '.[0].title')}
+FEATURE_TITLE=${FEATURE_TITLE:-$(beads_client show "$FEATURE_ID" --json | jq -r '.[0].title')}
 
 # 1. Commit your work on feature branch (if not already committed)
 git add .
@@ -372,7 +294,7 @@ git branch -d "$FEATURE_BRANCH"
 git push origin --delete "$FEATURE_BRANCH" 2>/dev/null || true
 
 # 6. Sync beads state
-./scripts/safe_bd_sync.sh
+beads_client sync
 
 # 7. Exit
 ```
@@ -402,7 +324,6 @@ The next session will:
 6. **ONLY CLOSE WHAT YOU IMPLEMENT** - Never close a feature unless you implemented it
 7. **VERIFY ONLY CLOSED FEATURES** - During verification, only check features with status=closed
 8. **LIMIT VERIFICATION** - Max 3 features, max 5 minutes, only AFTER implementing
-9. **USE HELPER SCRIPTS** - Use `./scripts/safe_bd_json.sh` and `./scripts/safe_bd_sync.sh` helpers for clean JSON output and syncing.
 
 ## TEST-DRIVEN MINDSET
 
@@ -428,7 +349,7 @@ If you must exit before completing the feature (errors, timeouts, blocked):
 
 3. **Sync beads state**:
    ```bash
-   ./scripts/safe_bd_sync.sh
+   beads_client sync
    ```
 
 4. **Note in AGENTS.md** - Document why you stopped (optional but helpful)
@@ -445,11 +366,6 @@ beads_client update <id> --status=in_progress   # Claim feature (REQUIRED before
 beads_client close <id>                         # Mark complete
 beads_client stats                              # Check progress
 beads_client sync                               # Sync at session end
-
-# IMPORTANT: When capturing JSON output, use the safe helpers:
-./scripts/safe_bd_json.sh ready             # Returns clean JSON (output suppressed)
-./scripts/safe_bd_json.sh show <id>         # Returns clean JSON (output suppressed)
-./scripts/safe_bd_sync.sh                   # Syncs (stdout suppressed)
 ```
 
 ---

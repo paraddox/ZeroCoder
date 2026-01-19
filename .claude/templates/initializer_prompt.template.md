@@ -476,52 +476,7 @@ Set up the basic project structure based on what's specified in `prompts/app_spe
 This typically includes directories for frontend, backend, and any other
 components mentioned in the spec.
 
-### FOURTH TASK: Create Beads Helper Scripts
-
-Create helper scripts that coding agents will use for safe beads operations. These wrap the `beads_client` command for cleaner output.
-
-```bash
-# Create scripts directory
-mkdir -p scripts
-
-# Create safe_bd_json.sh - safely captures JSON output from beads_client commands
-cat > scripts/safe_bd_json.sh << 'SCRIPT'
-#!/bin/bash
-# Safe wrapper for beads_client commands that return JSON
-# Usage: ./scripts/safe_bd_json.sh <command> [args...]
-# Example: ./scripts/safe_bd_json.sh ready
-
-output=$(beads_client "$@" 2>/dev/null)
-exit_code=$?
-
-if [ $exit_code -ne 0 ]; then
-    exit $exit_code
-fi
-
-# Validate it's actually JSON
-if echo "$output" | jq -e . >/dev/null 2>&1; then
-    echo "$output"
-    exit 0
-else
-    exit 1
-fi
-SCRIPT
-chmod +x scripts/safe_bd_json.sh
-
-# Create safe_bd_sync.sh - syncs beads via host API
-cat > scripts/safe_bd_sync.sh << 'SCRIPT'
-#!/bin/bash
-# Safe wrapper for beads sync
-# Usage: ./scripts/safe_bd_sync.sh
-
-beads_client sync >/dev/null 2>&1
-SCRIPT
-chmod +x scripts/safe_bd_sync.sh
-```
-
-These scripts wrap the `beads_client` command which calls the host API for beads operations.
-
-### FIFTH TASK: Create AGENTS.md (Operational Guide)
+### FOURTH TASK: Create AGENTS.md (Operational Guide)
 
 Create `AGENTS.md` at the project root. This file persists operational knowledge for all future coding sessions, preventing them from rediscovering commands and patterns.
 
@@ -545,7 +500,7 @@ Create `AGENTS.md` at the project root. This file persists operational knowledge
 
 ## Project Structure
 
-[Document the structure you created in FOURTH TASK]
+[Document the structure you created in THIRD TASK]
 
 - `src/` - Source code
 - `src/components/` - UI components
@@ -584,12 +539,11 @@ Create `AGENTS.md` at the project root. This file persists operational knowledge
 
 ### IMPORTANT: Do NOT Implement Features
 
-Your role as the Initializer Agent is **COMPLETE** after the five tasks above:
+Your role as the Initializer Agent is **COMPLETE** after the four tasks above:
 1. Create features (beads is already initialized by container)
 2. Create init.sh
 3. Create project structure
-4. Create beads helper scripts (scripts/safe_bd_json.sh, scripts/safe_bd_sync.sh)
-5. Create AGENTS.md
+4. Create AGENTS.md
 
 **DO NOT:**
 - Implement any features
