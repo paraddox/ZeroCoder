@@ -53,6 +53,12 @@ fi
 # Activate the virtual environment
 source venv/bin/activate
 
+# Configure git hooks (auto-setup on first run)
+if [ "$(git config core.hooksPath)" != ".githooks" ]; then
+    echo "Configuring git hooks..."
+    git config core.hooksPath .githooks
+fi
+
 # Install dependencies
 echo "Installing dependencies..."
 pip install -r requirements.txt --quiet

@@ -430,8 +430,12 @@ class TestRunBeadsCommand:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_syncs_before_read(self, tmp_path):
-        """Test that run_beads_command syncs before reading."""
+    async def test_does_not_sync_before_read(self, tmp_path):
+        """Test that run_beads_command does NOT sync before reading.
+
+        Syncing before every read caused "another sync in progress" warnings.
+        Background poller handles sync; reads just query local database.
+        """
         from server.services.beads_manager import BeadsManager, _managers
 
         # Create a mock manager
@@ -440,7 +444,6 @@ class TestRunBeadsCommand:
         _managers["test-project"] = manager
 
         sync_called = False
-        original_sync = manager._sync_with_remote
 
         async def mock_sync():
             nonlocal sync_called
@@ -454,7 +457,7 @@ class TestRunBeadsCommand:
 
             await self.run_beads_command("test-project", ["list", "--json"])
 
-        assert sync_called, "Sync should be called before read"
+        assert not sync_called, "Sync should NOT be called before read (background poller handles it)"
 
         # Cleanup
         del _managers["test-project"]
