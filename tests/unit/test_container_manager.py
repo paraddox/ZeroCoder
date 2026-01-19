@@ -604,7 +604,7 @@ class TestBeadsSyncManagerIntegration:
     @pytest.mark.unit
     def test_get_closed_count_uses_beads_sync_manager(self, container_manager, mock_beads_sync_manager):
         """Test _get_closed_count uses BeadsSyncManager instead of docker exec."""
-        with patch("server.services.beads_sync_manager.get_beads_sync_manager") as mock_get_manager:
+        with patch("server.services.beads_manager.get_beads_sync_manager") as mock_get_manager:
             mock_get_manager.return_value = mock_beads_sync_manager
 
             count = container_manager._get_closed_count()
@@ -619,7 +619,7 @@ class TestBeadsSyncManagerIntegration:
     @pytest.mark.unit
     def test_get_closed_count_returns_zero_on_error(self, container_manager):
         """Test _get_closed_count returns 0 on error."""
-        with patch("server.services.beads_sync_manager.get_beads_sync_manager") as mock_get_manager:
+        with patch("server.services.beads_manager.get_beads_sync_manager") as mock_get_manager:
             mock_get_manager.side_effect = Exception("Connection failed")
 
             count = container_manager._get_closed_count()
@@ -630,7 +630,7 @@ class TestBeadsSyncManagerIntegration:
     @pytest.mark.asyncio
     async def test_get_recent_closed_tasks_uses_beads_sync_manager(self, container_manager, mock_beads_sync_manager):
         """Test get_recent_closed_tasks uses BeadsSyncManager."""
-        with patch("server.services.beads_sync_manager.get_beads_sync_manager") as mock_get_manager:
+        with patch("server.services.beads_manager.get_beads_sync_manager") as mock_get_manager:
             mock_get_manager.return_value = mock_beads_sync_manager
 
             task_ids = await container_manager.get_recent_closed_tasks(limit=2)
@@ -643,7 +643,7 @@ class TestBeadsSyncManagerIntegration:
     @pytest.mark.asyncio
     async def test_get_recent_closed_tasks_returns_empty_on_error(self, container_manager):
         """Test get_recent_closed_tasks returns empty list on error."""
-        with patch("server.services.beads_sync_manager.get_beads_sync_manager") as mock_get_manager:
+        with patch("server.services.beads_manager.get_beads_sync_manager") as mock_get_manager:
             mock_get_manager.side_effect = Exception("Connection failed")
 
             task_ids = await container_manager.get_recent_closed_tasks()
@@ -681,7 +681,7 @@ class TestRecoverStuckFeatures:
         mock_manager = MagicMock()
         mock_manager.get_tasks_by_status.return_value = []
 
-        with patch("server.services.beads_sync_manager.get_beads_sync_manager") as mock_get_manager:
+        with patch("server.services.beads_manager.get_beads_sync_manager") as mock_get_manager:
             mock_get_manager.return_value = mock_manager
 
             success, message = await container_manager.recover_stuck_features()
@@ -701,7 +701,7 @@ class TestRecoverStuckFeatures:
 
         mock_write_cmd = AsyncMock(return_value={"success": True})
 
-        with patch("server.services.beads_sync_manager.get_beads_sync_manager") as mock_get_manager:
+        with patch("server.services.beads_manager.get_beads_sync_manager") as mock_get_manager:
             mock_get_manager.return_value = mock_manager
 
             with patch("server.routers.beads_api.run_beads_write_command", mock_write_cmd):
@@ -725,7 +725,7 @@ class TestRecoverStuckFeatures:
     @pytest.mark.asyncio
     async def test_recover_stuck_features_handles_error(self, container_manager):
         """Test recovery handles errors gracefully."""
-        with patch("server.services.beads_sync_manager.get_beads_sync_manager") as mock_get_manager:
+        with patch("server.services.beads_manager.get_beads_sync_manager") as mock_get_manager:
             mock_get_manager.side_effect = Exception("Database error")
 
             success, message = await container_manager.recover_stuck_features()
@@ -748,7 +748,7 @@ class TestGetTasksForHoundReview:
             {"id": f"beads-{i}", "status": "closed"} for i in range(20)
         ]
 
-        with patch("server.services.beads_sync_manager.get_beads_sync_manager") as mock_get_manager:
+        with patch("server.services.beads_manager.get_beads_sync_manager") as mock_get_manager:
             mock_get_manager.return_value = mock_manager
 
             task_ids = await get_tasks_for_hound_review(
@@ -771,7 +771,7 @@ class TestGetTasksForHoundReview:
             {"id": f"beads-{i}", "status": "closed"} for i in range(5)
         ]
 
-        with patch("server.services.beads_sync_manager.get_beads_sync_manager") as mock_get_manager:
+        with patch("server.services.beads_manager.get_beads_sync_manager") as mock_get_manager:
             mock_get_manager.return_value = mock_manager
 
             task_ids = await get_tasks_for_hound_review(
@@ -788,7 +788,7 @@ class TestGetTasksForHoundReview:
         """Test get_tasks_for_hound_review returns empty list on error."""
         from server.services.container_manager import get_tasks_for_hound_review
 
-        with patch("server.services.beads_sync_manager.get_beads_sync_manager") as mock_get_manager:
+        with patch("server.services.beads_manager.get_beads_sync_manager") as mock_get_manager:
             mock_get_manager.side_effect = Exception("Connection failed")
 
             task_ids = await get_tasks_for_hound_review(
@@ -807,7 +807,7 @@ class TestGetTasksForHoundReview:
         mock_manager = MagicMock()
         mock_manager.get_tasks_by_status.return_value = []
 
-        with patch("server.services.beads_sync_manager.get_beads_sync_manager") as mock_get_manager:
+        with patch("server.services.beads_manager.get_beads_sync_manager") as mock_get_manager:
             mock_get_manager.return_value = mock_manager
 
             task_ids = await get_tasks_for_hound_review(

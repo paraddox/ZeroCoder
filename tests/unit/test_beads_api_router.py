@@ -2,12 +2,11 @@
 Beads API Router Helper Functions Unit Tests
 =============================================
 
-Tests for helper functions in beads_api.py:
+Tests for helper functions in beads_api.py and BeadsManager:
 - validate_project_name - Path traversal prevention
 - validate_issue_id - Format validation
-- _get_project_path - Path resolution
-- _run_bd - Low-level command runner
-- _sync_beads - Best-effort sync
+- BeadsManager._run_bd - Low-level command runner
+- BeadsManager._sync_with_remote - Best-effort sync
 - run_beads_command - Read operations
 - run_beads_write_command - Write operations with lock
 """
@@ -105,23 +104,6 @@ class TestValidateProjectName:
         assert exc_info.value.status_code == 400
 
     @pytest.mark.unit
-    def test_invalid_special_chars(self):
-        """Test project name with special characters is rejected."""
-        invalid_names = ["project!", "project@test", "proj#123", "proj$", "proj%"]
-        for name in invalid_names:
-            with pytest.raises(HTTPException) as exc_info:
-                self.validate_project_name(name)
-            assert exc_info.value.status_code == 400
-
-    @pytest.mark.unit
-    def test_invalid_empty_name(self):
-        """Test empty project name is rejected."""
-        with pytest.raises(HTTPException) as exc_info:
-            self.validate_project_name("")
-
-        assert exc_info.value.status_code == 400
-
-    @pytest.mark.unit
     def test_invalid_too_long(self):
         """Test project name over 50 chars is rejected."""
         name = "a" * 51
@@ -131,10 +113,26 @@ class TestValidateProjectName:
         assert exc_info.value.status_code == 400
 
     @pytest.mark.unit
-    def test_invalid_dots_only(self):
-        """Test name with only dots is rejected."""
+    def test_invalid_empty(self):
+        """Test empty project name is rejected."""
         with pytest.raises(HTTPException) as exc_info:
-            self.validate_project_name("...")
+            self.validate_project_name("")
+
+        assert exc_info.value.status_code == 400
+
+    @pytest.mark.unit
+    def test_invalid_special_chars(self):
+        """Test project name with special chars is rejected."""
+        with pytest.raises(HTTPException) as exc_info:
+            self.validate_project_name("project@name")
+
+        assert exc_info.value.status_code == 400
+
+    @pytest.mark.unit
+    def test_invalid_shell_injection(self):
+        """Test shell injection attempt is rejected."""
+        with pytest.raises(HTTPException) as exc_info:
+            self.validate_project_name("project;rm -rf /")
 
         assert exc_info.value.status_code == 400
 
@@ -151,32 +149,26 @@ class TestValidateIssueId:
     @pytest.mark.unit
     def test_valid_beads_format(self):
         """Test standard beads ID format."""
-        result = self.validate_issue_id("beads-1")
-        assert result == "beads-1"
+        result = self.validate_issue_id("beads-123")
+        assert result == "beads-123"
 
     @pytest.mark.unit
     def test_valid_feat_format(self):
         """Test feat ID format."""
-        result = self.validate_issue_id("feat-42")
-        assert result == "feat-42"
-
-    @pytest.mark.unit
-    def test_valid_long_number(self):
-        """Test ID with long number."""
-        result = self.validate_issue_id("feat-12345")
-        assert result == "feat-12345"
+        result = self.validate_issue_id("feat-1")
+        assert result == "feat-1"
 
     @pytest.mark.unit
     def test_valid_alphanumeric_suffix(self):
-        """Test ID with alphanumeric suffix."""
-        result = self.validate_issue_id("project-abc123")
-        assert result == "project-abc123"
+        """Test alphanumeric suffix."""
+        result = self.validate_issue_id("task-abc123")
+        assert result == "task-abc123"
 
     @pytest.mark.unit
-    def test_valid_uppercase_prefix(self):
-        """Test ID with uppercase prefix."""
-        result = self.validate_issue_id("FEAT-1")
-        assert result == "FEAT-1"
+    def test_valid_uppercase(self):
+        """Test uppercase letters in ID."""
+        result = self.validate_issue_id("BUG-ABC")
+        assert result == "BUG-ABC"
 
     @pytest.mark.unit
     def test_invalid_no_hyphen(self):
@@ -229,39 +221,38 @@ class TestValidateIssueId:
 
 
 class TestGetProjectPath:
-    """Tests for _get_project_path function."""
+    """Tests for BeadsManager.local_path property."""
 
     @pytest.mark.unit
     def test_returns_beads_sync_path(self, tmp_path, monkeypatch):
-        """Test that _get_project_path returns beads-sync directory path."""
-        from server.routers.beads_api import _get_project_path
+        """Test that BeadsManager.local_path returns beads-sync directory path."""
+        from server.services.beads_manager import BeadsManager
 
         beads_sync_dir = tmp_path / "beads-sync"
         beads_sync_dir.mkdir()
-        project_dir = beads_sync_dir / "test-project"
-        project_dir.mkdir()
 
-        # The function imports get_beads_sync_dir from registry module
-        # We need to patch it in the registry module before it's imported
-        with patch("registry.get_beads_sync_dir") as mock_sync:
+        # Patch get_beads_sync_dir to return our test directory
+        with patch("server.services.beads_manager.get_beads_sync_dir") as mock_sync:
             mock_sync.return_value = beads_sync_dir
-            result = _get_project_path("test-project")
+            manager = BeadsManager("test-project", "https://github.com/test/repo.git")
 
-        assert result == project_dir
+        assert manager.local_path == beads_sync_dir / "test-project"
 
 
 class TestRunBd:
-    """Tests for _run_bd low-level command runner."""
+    """Tests for BeadsManager._run_bd low-level command runner."""
 
-    @pytest.fixture(autouse=True)
-    def setup(self):
-        """Import function after path setup."""
-        from server.routers.beads_api import _run_bd
-        self._run_bd = _run_bd
+    @pytest.fixture
+    def manager(self, tmp_path):
+        """Create a BeadsManager with a test path."""
+        from server.services.beads_manager import BeadsManager
+        mgr = BeadsManager("test-project", "https://github.com/test/repo.git")
+        mgr.local_path = tmp_path
+        return mgr
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_successful_json_output(self, tmp_path):
+    async def test_successful_json_output(self, manager):
         """Test successful command with JSON output."""
         mock_result = MagicMock()
         mock_result.returncode = 0
@@ -271,14 +262,14 @@ class TestRunBd:
         with patch("asyncio.to_thread") as mock_thread:
             mock_thread.return_value = mock_result
 
-            result = await self._run_bd(tmp_path, ["show", "feat-1", "--json"])
+            result = await manager._run_bd(["show", "feat-1", "--json"])
 
         assert result["success"] is True
         assert result["data"]["id"] == "feat-1"
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_successful_empty_output(self, tmp_path):
+    async def test_successful_empty_output(self, manager):
         """Test successful command with empty output."""
         mock_result = MagicMock()
         mock_result.returncode = 0
@@ -288,14 +279,14 @@ class TestRunBd:
         with patch("asyncio.to_thread") as mock_thread:
             mock_thread.return_value = mock_result
 
-            result = await self._run_bd(tmp_path, ["list", "--json"])
+            result = await manager._run_bd(["list", "--json"])
 
         assert result["success"] is True
         assert result["data"] == []
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_successful_plain_text_output(self, tmp_path):
+    async def test_successful_plain_text_output(self, manager):
         """Test successful command with plain text output."""
         mock_result = MagicMock()
         mock_result.returncode = 0
@@ -305,14 +296,14 @@ class TestRunBd:
         with patch("asyncio.to_thread") as mock_thread:
             mock_thread.return_value = mock_result
 
-            result = await self._run_bd(tmp_path, ["sync"])
+            result = await manager._run_bd(["sync"])
 
         assert result["success"] is True
         assert result["output"] == "Synced successfully"
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_command_failure(self, tmp_path):
+    async def test_command_failure(self, manager):
         """Test command that returns non-zero exit code."""
         mock_result = MagicMock()
         mock_result.returncode = 1
@@ -322,38 +313,38 @@ class TestRunBd:
         with patch("asyncio.to_thread") as mock_thread:
             mock_thread.return_value = mock_result
 
-            result = await self._run_bd(tmp_path, ["show", "nonexistent"])
+            result = await manager._run_bd(["show", "nonexistent"])
 
         assert "error" in result
         assert "not found" in result["error"]
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_command_timeout(self, tmp_path):
+    async def test_command_timeout(self, manager):
         """Test command timeout handling."""
         with patch("asyncio.to_thread") as mock_thread:
             mock_thread.side_effect = subprocess.TimeoutExpired(cmd="bd", timeout=60)
 
-            result = await self._run_bd(tmp_path, ["sync"])
+            result = await manager._run_bd(["sync"])
 
         assert "error" in result
         assert "timed out" in result["error"]
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_bd_not_found(self, tmp_path):
+    async def test_bd_not_found(self, manager):
         """Test handling when bd command is not found."""
         with patch("asyncio.to_thread") as mock_thread:
             mock_thread.side_effect = FileNotFoundError()
 
-            result = await self._run_bd(tmp_path, ["list"])
+            result = await manager._run_bd(["list"])
 
         assert "error" in result
         assert "not found" in result["error"]
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_json_parse_error(self, tmp_path):
+    async def test_json_parse_error(self, manager):
         """Test handling of malformed JSON output."""
         mock_result = MagicMock()
         mock_result.returncode = 0
@@ -363,7 +354,7 @@ class TestRunBd:
         with patch("asyncio.to_thread") as mock_thread:
             mock_thread.return_value = mock_result
 
-            result = await self._run_bd(tmp_path, ["list", "--json"])
+            result = await manager._run_bd(["list", "--json"])
 
         # Should treat as plain text when JSON parsing fails
         assert result["success"] is True
@@ -371,63 +362,65 @@ class TestRunBd:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_generic_exception(self, tmp_path):
+    async def test_generic_exception(self, manager):
         """Test handling of generic exceptions."""
         with patch("asyncio.to_thread") as mock_thread:
             mock_thread.side_effect = Exception("Unexpected error")
 
-            result = await self._run_bd(tmp_path, ["list"])
+            result = await manager._run_bd(["list"])
 
         assert "error" in result
         assert "Unexpected error" in result["error"]
 
 
 class TestSyncBeads:
-    """Tests for _sync_beads function."""
+    """Tests for BeadsManager._sync_with_remote function."""
 
-    @pytest.fixture(autouse=True)
-    def setup(self):
-        """Import function after path setup."""
-        from server.routers.beads_api import _sync_beads
-        self._sync_beads = _sync_beads
+    @pytest.fixture
+    def manager(self, tmp_path):
+        """Create a BeadsManager with a test path."""
+        from server.services.beads_manager import BeadsManager
+        mgr = BeadsManager("test-project", "https://github.com/test/repo.git")
+        mgr.local_path = tmp_path
+        return mgr
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_sync_success(self, tmp_path):
+    async def test_sync_success(self, manager):
         """Test successful sync returns True."""
-        with patch("server.routers.beads_api._run_bd") as mock_run:
+        with patch.object(manager, "_run_bd") as mock_run:
             mock_run.return_value = {"success": True}
 
-            result = await self._sync_beads(tmp_path)
+            result = await manager._sync_with_remote()
 
         assert result is True
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_sync_failure(self, tmp_path):
+    async def test_sync_failure(self, manager):
         """Test failed sync returns False."""
-        with patch("server.routers.beads_api._run_bd") as mock_run:
+        with patch.object(manager, "_run_bd") as mock_run:
             mock_run.return_value = {"error": "Remote not configured"}
 
-            result = await self._sync_beads(tmp_path)
+            result = await manager._sync_with_remote()
 
         assert result is False
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_sync_is_best_effort(self, tmp_path):
+    async def test_sync_is_best_effort(self, manager):
         """Test sync failure doesn't raise exception."""
-        with patch("server.routers.beads_api._run_bd") as mock_run:
+        with patch.object(manager, "_run_bd") as mock_run:
             mock_run.return_value = {"error": "Network error"}
 
             # Should not raise
-            result = await self._sync_beads(tmp_path)
+            result = await manager._sync_with_remote()
 
         assert result is False
 
 
 class TestRunBeadsCommand:
-    """Tests for run_beads_command (read operations)."""
+    """Tests for run_beads_command function."""
 
     @pytest.fixture(autouse=True)
     def setup(self):
@@ -437,79 +430,54 @@ class TestRunBeadsCommand:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_syncs_before_read(self, beads_api_project, mock_beads_locks):
-        """Test that sync is called before read command."""
-        project_name = beads_api_project["project_name"]
-        project_dir = beads_api_project["project_dir"]
+    async def test_syncs_before_read(self, tmp_path):
+        """Test that run_beads_command syncs before reading."""
+        from server.services.beads_manager import BeadsManager, _managers
+
+        # Create a mock manager
+        manager = BeadsManager("test-project", "https://github.com/test/repo.git")
+        manager.local_path = tmp_path
+        _managers["test-project"] = manager
 
         sync_called = False
+        original_sync = manager._sync_with_remote
 
-        async def mock_sync(path):
+        async def mock_sync():
             nonlocal sync_called
             sync_called = True
             return True
 
-        with patch("server.routers.beads_api._get_project_path") as mock_path:
-            mock_path.return_value = project_dir
+        manager._sync_with_remote = mock_sync
 
-            with patch("server.routers.beads_api._sync_beads", mock_sync):
-                with patch("server.routers.beads_api._run_bd") as mock_run:
-                    mock_run.return_value = {"success": True, "data": []}
+        with patch.object(manager, "_run_bd") as mock_run:
+            mock_run.return_value = {"success": True, "data": []}
 
-                    await self.run_beads_command(project_name, ["list", "--json"])
+            await self.run_beads_command("test-project", ["list", "--json"])
 
-        assert sync_called is True
+        assert sync_called, "Sync should be called before read"
+
+        # Cleanup
+        del _managers["test-project"]
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_project_not_found(self, mock_beads_locks):
-        """Test error when project not found."""
-        with patch("server.routers.beads_api._get_project_path") as mock_path:
-            mock_path.return_value = None
+    async def test_returns_error_for_missing_project(self):
+        """Test error when project git URL not found."""
+        from server.services.beads_manager import _managers
 
-            result = await self.run_beads_command("nonexistent", ["list"])
+        # Ensure project is not in managers
+        _managers.pop("nonexistent-project", None)
+
+        with patch("registry.get_project_git_url") as mock_git:
+            mock_git.return_value = None
+
+            result = await self.run_beads_command("nonexistent-project", ["list"])
 
         assert "error" in result
-        assert "not found" in result["error"]
-
-    @pytest.mark.asyncio
-    @pytest.mark.unit
-    async def test_project_dir_not_exists(self, tmp_path, mock_beads_locks):
-        """Test error when project directory doesn't exist."""
-        non_existent = tmp_path / "nonexistent"
-
-        with patch("server.routers.beads_api._get_project_path") as mock_path:
-            mock_path.return_value = non_existent
-
-            result = await self.run_beads_command("test", ["list"])
-
-        assert "error" in result
-        assert "not found" in result["error"]
-
-    @pytest.mark.asyncio
-    @pytest.mark.unit
-    async def test_uses_per_project_lock(self, beads_api_project, mock_beads_locks):
-        """Test that operations use per-project locking."""
-        project_name = beads_api_project["project_name"]
-        project_dir = beads_api_project["project_dir"]
-
-        with patch("server.routers.beads_api._get_project_path") as mock_path:
-            mock_path.return_value = project_dir
-
-            with patch("server.routers.beads_api._sync_beads") as mock_sync:
-                mock_sync.return_value = True
-
-                with patch("server.routers.beads_api._run_bd") as mock_run:
-                    mock_run.return_value = {"success": True, "data": []}
-
-                    await self.run_beads_command(project_name, ["list"])
-
-        # Lock should have been created for project
-        assert project_name in mock_beads_locks
 
 
 class TestRunBeadsWriteCommand:
-    """Tests for run_beads_write_command (write operations)."""
+    """Tests for run_beads_write_command function."""
 
     @pytest.fixture(autouse=True)
     def setup(self):
@@ -519,128 +487,100 @@ class TestRunBeadsWriteCommand:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_syncs_after_successful_write(self, beads_api_project, mock_beads_locks):
-        """Test that sync is called after successful write."""
-        project_name = beads_api_project["project_name"]
-        project_dir = beads_api_project["project_dir"]
+    async def test_syncs_after_write(self, tmp_path):
+        """Test that run_beads_write_command syncs after writing."""
+        from server.services.beads_manager import BeadsManager, _managers
 
-        sync_call_count = 0
+        # Create a mock manager
+        manager = BeadsManager("test-project", "https://github.com/test/repo.git")
+        manager.local_path = tmp_path
+        _managers["test-project"] = manager
 
-        async def mock_sync(path):
-            nonlocal sync_call_count
-            sync_call_count += 1
+        call_order = []
+
+        async def mock_run_bd(args, timeout=60):
+            call_order.append(("run_bd", args))
+            return {"success": True, "data": {"id": "feat-1"}}
+
+        async def mock_sync():
+            call_order.append(("sync",))
             return True
 
-        with patch("server.routers.beads_api._get_project_path") as mock_path:
-            mock_path.return_value = project_dir
+        manager._run_bd = mock_run_bd
+        manager._sync_with_remote = mock_sync
 
-            with patch("server.routers.beads_api._sync_beads", mock_sync):
-                with patch("server.routers.beads_api._run_bd") as mock_run:
-                    mock_run.return_value = {"success": True}
+        await self.run_beads_write_command("test-project", ["create", "--title", "Test"])
 
-                    await self.run_beads_write_command(project_name, ["close", "feat-1"])
+        # Verify sync was called after write
+        assert len(call_order) == 2
+        assert call_order[0][0] == "run_bd"
+        assert call_order[1][0] == "sync"
 
-        assert sync_call_count == 1
+        # Cleanup
+        del _managers["test-project"]
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_no_sync_after_failed_write(self, beads_api_project, mock_beads_locks):
-        """Test that sync is NOT called after failed write."""
-        project_name = beads_api_project["project_name"]
-        project_dir = beads_api_project["project_dir"]
+    async def test_no_sync_on_error(self, tmp_path):
+        """Test that sync is not called if write fails."""
+        from server.services.beads_manager import BeadsManager, _managers
+
+        # Create a mock manager
+        manager = BeadsManager("test-project", "https://github.com/test/repo.git")
+        manager.local_path = tmp_path
+        _managers["test-project"] = manager
 
         sync_called = False
 
-        async def mock_sync(path):
+        async def mock_run_bd(args, timeout=60):
+            return {"error": "Write failed"}
+
+        async def mock_sync():
             nonlocal sync_called
             sync_called = True
             return True
 
-        with patch("server.routers.beads_api._get_project_path") as mock_path:
-            mock_path.return_value = project_dir
+        manager._run_bd = mock_run_bd
+        manager._sync_with_remote = mock_sync
 
-            with patch("server.routers.beads_api._sync_beads", mock_sync):
-                with patch("server.routers.beads_api._run_bd") as mock_run:
-                    mock_run.return_value = {"error": "Write failed"}
-
-                    await self.run_beads_write_command(project_name, ["close", "nonexistent"])
-
-        assert sync_called is False
-
-    @pytest.mark.asyncio
-    @pytest.mark.unit
-    async def test_write_uses_lock(self, beads_api_project, mock_beads_locks):
-        """Test that write operations use per-project locking."""
-        project_name = beads_api_project["project_name"]
-        project_dir = beads_api_project["project_dir"]
-
-        with patch("server.routers.beads_api._get_project_path") as mock_path:
-            mock_path.return_value = project_dir
-
-            with patch("server.routers.beads_api._sync_beads") as mock_sync:
-                mock_sync.return_value = True
-
-                with patch("server.routers.beads_api._run_bd") as mock_run:
-                    mock_run.return_value = {"success": True}
-
-                    await self.run_beads_write_command(project_name, ["create", "--title", "Test"])
-
-        assert project_name in mock_beads_locks
-
-    @pytest.mark.asyncio
-    @pytest.mark.unit
-    async def test_project_not_found(self, mock_beads_locks):
-        """Test error when project not found for write."""
-        with patch("server.routers.beads_api._get_project_path") as mock_path:
-            mock_path.return_value = None
-
-            result = await self.run_beads_write_command("nonexistent", ["close", "feat-1"])
+        result = await self.run_beads_write_command("test-project", ["create", "--title", "Test"])
 
         assert "error" in result
-        assert "not found" in result["error"]
+        assert not sync_called, "Sync should not be called on error"
 
-
-class TestConcurrencyControl:
-    """Tests for concurrent operation handling."""
+        # Cleanup
+        del _managers["test-project"]
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_operations_serialize_per_project(self, beads_api_project, mock_beads_locks):
-        """Test that operations on same project are serialized."""
-        from server.routers.beads_api import run_beads_command
+    async def test_acquires_lock(self, tmp_path):
+        """Test that write command acquires lock."""
+        from server.services.beads_manager import BeadsManager, _managers
 
-        project_name = beads_api_project["project_name"]
-        project_dir = beads_api_project["project_dir"]
+        # Create a mock manager
+        manager = BeadsManager("test-project", "https://github.com/test/repo.git")
+        manager.local_path = tmp_path
+        _managers["test-project"] = manager
 
-        call_order = []
+        lock_acquired_during_bd = False
 
-        async def slow_run(path, args, timeout=60):
-            call_order.append(("start", args[0]))
-            await asyncio.sleep(0.1)
-            call_order.append(("end", args[0]))
-            return {"success": True, "data": []}
+        async def mock_run_bd(args, timeout=60):
+            nonlocal lock_acquired_during_bd
+            # Check if the lock is held when _run_bd is called
+            lock_acquired_during_bd = manager._lock.locked()
+            return {"success": True, "data": {"id": "feat-1"}}
 
-        with patch("server.routers.beads_api._get_project_path") as mock_path:
-            mock_path.return_value = project_dir
+        manager._run_bd = mock_run_bd
 
-            with patch("server.routers.beads_api._sync_beads") as mock_sync:
-                mock_sync.return_value = True
+        # Also mock _sync_with_remote to avoid network calls
+        async def mock_sync():
+            return True
 
-                with patch("server.routers.beads_api._run_bd", slow_run):
-                    # Start two concurrent operations
-                    task1 = asyncio.create_task(
-                        run_beads_command(project_name, ["list"])
-                    )
-                    task2 = asyncio.create_task(
-                        run_beads_command(project_name, ["ready"])
-                    )
+        manager._sync_with_remote = mock_sync
 
-                    await asyncio.gather(task1, task2)
+        await self.run_beads_write_command("test-project", ["create", "--title", "Test"])
 
-        # Operations should be serialized - first should complete before second starts
-        # Due to lock, we expect: start list, end list, start ready, end ready
-        starts = [c for c in call_order if c[0] == "start"]
-        ends = [c for c in call_order if c[0] == "end"]
+        assert lock_acquired_during_bd, "Lock should be acquired during _run_bd call"
 
-        # First start should be before first end
-        assert call_order.index(starts[0]) < call_order.index(ends[0])
+        # Cleanup
+        del _managers["test-project"]

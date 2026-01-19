@@ -30,7 +30,7 @@ class TestBeadsSyncManagerInit:
     def test_init_creates_manager(self, tmp_path, monkeypatch):
         """Test that BeadsSyncManager initializes correctly."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
@@ -50,7 +50,7 @@ class TestBeadsSyncManagerInit:
     def test_init_with_ssh_url(self, tmp_path, monkeypatch):
         """Test initialization with SSH git URL."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
@@ -72,7 +72,7 @@ class TestBeadsSyncManagerClone:
     async def test_ensure_cloned_already_exists(self, tmp_path, monkeypatch):
         """Test ensure_cloned when clone already exists."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
@@ -98,7 +98,7 @@ class TestBeadsSyncManagerClone:
     async def test_ensure_cloned_success(self, tmp_path, monkeypatch):
         """Test successful clone operation."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
@@ -122,7 +122,7 @@ class TestBeadsSyncManagerClone:
     async def test_ensure_cloned_branch_not_found(self, tmp_path, monkeypatch):
         """Test clone when beads-sync branch doesn't exist."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
@@ -150,7 +150,7 @@ class TestBeadsSyncManagerClone:
     async def test_ensure_cloned_timeout(self, tmp_path, monkeypatch):
         """Test clone timeout handling."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
@@ -176,7 +176,7 @@ class TestBeadsSyncManagerPull:
     async def test_pull_latest_not_cloned(self, tmp_path, monkeypatch):
         """Test pull when not yet cloned triggers clone."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
@@ -199,7 +199,7 @@ class TestBeadsSyncManagerPull:
     async def test_pull_latest_success(self, tmp_path, monkeypatch):
         """Test successful pull operation."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
@@ -228,7 +228,7 @@ class TestBeadsSyncManagerPull:
     async def test_pull_latest_with_fallback(self, tmp_path, monkeypatch):
         """Test pull with fetch+reset fallback."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
@@ -262,7 +262,7 @@ class TestBeadsSyncManagerPull:
     async def test_pull_latest_timeout(self, tmp_path, monkeypatch):
         """Test pull timeout handling."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
@@ -291,7 +291,7 @@ class TestBeadsSyncManagerTasks:
     def test_get_tasks_no_file(self, tmp_path, monkeypatch):
         """Test get_tasks when issues.jsonl doesn't exist."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
@@ -310,7 +310,7 @@ class TestBeadsSyncManagerTasks:
     def test_get_tasks_valid_file(self, tmp_path, monkeypatch):
         """Test get_tasks with valid issues.jsonl."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
@@ -344,7 +344,7 @@ class TestBeadsSyncManagerTasks:
     def test_get_tasks_corrupt_json(self, tmp_path, monkeypatch):
         """Test get_tasks handles corrupt JSON gracefully."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
@@ -375,7 +375,7 @@ invalid json line
     def test_get_tasks_empty_lines(self, tmp_path, monkeypatch):
         """Test get_tasks handles empty lines gracefully."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
@@ -410,7 +410,7 @@ class TestBeadsSyncManagerStats:
     def test_get_stats_empty(self, tmp_path, monkeypatch):
         """Test get_stats with no tasks."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
@@ -433,7 +433,7 @@ class TestBeadsSyncManagerStats:
     def test_get_stats_mixed(self, tmp_path, monkeypatch):
         """Test get_stats with mixed task statuses."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
@@ -473,7 +473,7 @@ class TestBeadsSyncManagerStats:
     def test_get_tasks_by_status(self, tmp_path, monkeypatch):
         """Test get_tasks_by_status filtering."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
@@ -514,19 +514,17 @@ class TestGlobalManagerRegistry:
     def test_get_beads_sync_manager_creates_new(self, tmp_path, monkeypatch):
         """Test get_beads_sync_manager creates new manager."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
         from server.services.beads_sync_manager import (
             get_beads_sync_manager,
             _sync_managers,
-            _sync_managers_lock
         )
 
         # Clear existing managers
-        with _sync_managers_lock:
-            _sync_managers.clear()
+        _sync_managers.clear()
 
         manager = get_beads_sync_manager(
             "new-project",
@@ -541,19 +539,17 @@ class TestGlobalManagerRegistry:
     def test_get_beads_sync_manager_reuses_existing(self, tmp_path, monkeypatch):
         """Test get_beads_sync_manager reuses existing manager."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
         from server.services.beads_sync_manager import (
             get_beads_sync_manager,
             _sync_managers,
-            _sync_managers_lock
         )
 
         # Clear existing managers
-        with _sync_managers_lock:
-            _sync_managers.clear()
+        _sync_managers.clear()
 
         manager1 = get_beads_sync_manager(
             "test-project",
@@ -571,7 +567,7 @@ class TestGlobalManagerRegistry:
     def test_clear_beads_sync_manager(self, tmp_path, monkeypatch):
         """Test clear_beads_sync_manager removes manager."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
@@ -579,12 +575,10 @@ class TestGlobalManagerRegistry:
             get_beads_sync_manager,
             clear_beads_sync_manager,
             _sync_managers,
-            _sync_managers_lock
         )
 
         # Clear existing managers
-        with _sync_managers_lock:
-            _sync_managers.clear()
+        _sync_managers.clear()
 
         manager = get_beads_sync_manager(
             "test-project",
@@ -601,19 +595,17 @@ class TestGlobalManagerRegistry:
     def test_clear_nonexistent_manager(self, tmp_path, monkeypatch):
         """Test clear_beads_sync_manager handles nonexistent manager."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
         from server.services.beads_sync_manager import (
             clear_beads_sync_manager,
             _sync_managers,
-            _sync_managers_lock
         )
 
         # Clear existing managers
-        with _sync_managers_lock:
-            _sync_managers.clear()
+        _sync_managers.clear()
 
         # Should not raise
         clear_beads_sync_manager("nonexistent")
@@ -626,7 +618,7 @@ class TestTasksToFeatures:
     def test_tasks_to_features_basic(self, tmp_path, monkeypatch):
         """Test basic task to feature transformation."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
@@ -657,7 +649,7 @@ class TestTasksToFeatures:
     def test_tasks_to_features_closed_status(self, tmp_path, monkeypatch):
         """Test closed task maps to passes=True."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
@@ -676,7 +668,7 @@ class TestTasksToFeatures:
     def test_tasks_to_features_in_progress_status(self, tmp_path, monkeypatch):
         """Test in_progress task maps to in_progress=True."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
@@ -695,7 +687,7 @@ class TestTasksToFeatures:
     def test_tasks_to_features_no_labels(self, tmp_path, monkeypatch):
         """Test task without labels gets empty category."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
@@ -713,7 +705,7 @@ class TestTasksToFeatures:
     def test_tasks_to_features_body_field(self, tmp_path, monkeypatch):
         """Test task with 'body' field instead of 'description'."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
@@ -742,19 +734,17 @@ class TestCachedStats:
     def test_get_cached_stats_no_manager(self, tmp_path, monkeypatch):
         """Test get_cached_stats when no manager exists."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
         from server.services.beads_sync_manager import (
             get_cached_stats,
             _sync_managers,
-            _sync_managers_lock
         )
 
         # Clear existing managers
-        with _sync_managers_lock:
-            _sync_managers.clear()
+        _sync_managers.clear()
 
         # Mock registry to return None (registry.get_project_git_url is imported inside the function)
         with patch("registry.get_project_git_url", return_value=None):
@@ -769,7 +759,7 @@ class TestCachedStats:
     def test_get_cached_stats_with_manager(self, tmp_path, monkeypatch):
         """Test get_cached_stats with existing manager."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
@@ -777,12 +767,10 @@ class TestCachedStats:
             get_beads_sync_manager,
             get_cached_stats,
             _sync_managers,
-            _sync_managers_lock
         )
 
         # Clear existing managers
-        with _sync_managers_lock:
-            _sync_managers.clear()
+        _sync_managers.clear()
 
         # Create manager and issues
         beads_dir = tmp_path / "beads-sync" / "test-project" / ".beads"
@@ -816,19 +804,17 @@ class TestCachedFeatures:
     def test_get_cached_features_no_manager(self, tmp_path, monkeypatch):
         """Test get_cached_features when no manager exists."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
         from server.services.beads_sync_manager import (
             get_cached_features,
             _sync_managers,
-            _sync_managers_lock
         )
 
         # Clear existing managers
-        with _sync_managers_lock:
-            _sync_managers.clear()
+        _sync_managers.clear()
 
         # Mock registry to return None (registry.get_project_git_url is imported inside the function)
         with patch("registry.get_project_git_url", return_value=None):
@@ -840,7 +826,7 @@ class TestCachedFeatures:
     def test_get_cached_features_with_manager(self, tmp_path, monkeypatch):
         """Test get_cached_features with existing manager."""
         monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
+            "server.services.beads_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
         )
 
@@ -848,12 +834,10 @@ class TestCachedFeatures:
             get_beads_sync_manager,
             get_cached_features,
             _sync_managers,
-            _sync_managers_lock
         )
 
         # Clear existing managers
-        with _sync_managers_lock:
-            _sync_managers.clear()
+        _sync_managers.clear()
 
         # Create manager and issues
         beads_dir = tmp_path / "beads-sync" / "test-project" / ".beads"

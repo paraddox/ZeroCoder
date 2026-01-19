@@ -243,9 +243,8 @@ class TestContainerStatePersistence:
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="running\n")
             with patch("registry.get_container", return_value=None):
-                with patch("server.services.container_manager.create_container"):
-                    container_manager._status = "not_created"
-                    container_manager._sync_status()
+                container_manager._status = "not_created"
+                container_manager._sync_status()
 
         assert container_manager._status == "running"
 

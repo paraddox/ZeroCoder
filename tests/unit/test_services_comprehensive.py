@@ -167,9 +167,8 @@ class TestContainerManagerStatusSync:
                 stdout="running\n"
             )
             with patch("registry.get_container", return_value=None):
-                with patch("server.services.container_manager.create_container"):
-                    container_manager._status = "not_created"
-                    container_manager._sync_status()
+                container_manager._status = "not_created"
+                container_manager._sync_status()
 
         assert container_manager._status == "running"
 
@@ -182,9 +181,8 @@ class TestContainerManagerStatusSync:
                 stdout="exited\n"
             )
             with patch("registry.get_container", return_value=None):
-                with patch("server.services.container_manager.create_container"):
-                    container_manager._status = "running"
-                    container_manager._sync_status()
+                container_manager._status = "running"
+                container_manager._sync_status()
 
         assert container_manager._status == "stopped"
 
@@ -689,7 +687,7 @@ class TestBeadsSyncManager:
         """Test cloning when repo doesn't exist."""
         from server.services.beads_sync_manager import BeadsSyncManager
 
-        with patch("server.services.beads_sync_manager.get_beads_sync_dir") as mock_dir:
+        with patch("server.services.beads_manager.get_beads_sync_dir") as mock_dir:
             mock_dir.return_value = tmp_path
             with patch("asyncio.to_thread") as mock_thread:
                 mock_thread.return_value = MagicMock(returncode=0)
@@ -709,7 +707,7 @@ class TestBeadsSyncManager:
         # Create .git directory to simulate existing clone
         (mock_sync_dir / ".git").mkdir()
 
-        with patch("server.services.beads_sync_manager.get_beads_sync_dir") as mock_dir:
+        with patch("server.services.beads_manager.get_beads_sync_dir") as mock_dir:
             mock_dir.return_value = tmp_path / "beads-sync"
             with patch("asyncio.to_thread") as mock_thread:
                 mock_thread.return_value = MagicMock(returncode=0)
@@ -734,7 +732,7 @@ class TestBeadsSyncManager:
             '{"id": "feat-2", "title": "Test 2", "status": "closed", "priority": 2}\n'
         )
 
-        with patch("server.services.beads_sync_manager.get_beads_sync_dir") as mock_dir:
+        with patch("server.services.beads_manager.get_beads_sync_dir") as mock_dir:
             mock_dir.return_value = tmp_path / "beads-sync"
 
             manager = BeadsSyncManager("test-project", "https://github.com/user/repo.git")

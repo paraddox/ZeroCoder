@@ -334,10 +334,14 @@ class TestAPIRouterErrorRecovery:
     """Tests for API router error handling."""
 
     @pytest.fixture
-    def test_client(self):
+    def test_client(self, monkeypatch):
         """Create test client."""
         from fastapi.testclient import TestClient
+        import server.main
         from server.main import app
+
+        # Patch the module-level variable (env var is evaluated at import time)
+        monkeypatch.setattr(server.main, "ALLOW_EXTERNAL_ACCESS", True)
 
         with patch("signal.signal", return_value=None):
             with TestClient(app, raise_server_exceptions=False) as client:
@@ -353,7 +357,9 @@ class TestAPIRouterErrorRecovery:
     def test_invalid_project_name_in_url(self, test_client):
         """Test handling of invalid project name in URL."""
         # Project names with special chars should be rejected
-        response = test_client.get("/api/projects/../../etc/passwd")
+        # Note: URL path traversal like ../../ is normalized by HTTP clients
+        # So we test with actual invalid characters in the project name
+        response = test_client.get("/api/projects/invalid@name!with#special")
         assert response.status_code in [400, 404, 422]
 
 
@@ -555,7 +561,11 @@ class TestGracefulDegradation:
         from server.routers.features import read_local_beads_features
         result = read_local_beads_features(project_dir)
 
-        assert len(result["pending"]) == 1
+        # read_local_beads_features returns features converted by beads_task_to_feature
+        # which has passes/in_progress booleans instead of status string
+        assert len(result) == 1
+        assert result[0]["passes"] is False  # status=open means not passed
+        assert result[0]["in_progress"] is False
 
     @pytest.mark.unit
     def test_progress_without_beads(self, tmp_path):

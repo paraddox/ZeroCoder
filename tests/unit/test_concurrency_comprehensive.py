@@ -47,6 +47,9 @@ class TestRegistryConcurrency:
         monkeypatch.setattr(registry, "get_projects_dir", lambda: temp_config / "projects")
         monkeypatch.setattr(registry, "get_beads_sync_dir", lambda: temp_config / "beads-sync")
 
+        # Pre-initialize the database to avoid race conditions in table creation
+        registry._get_engine()
+
         return registry
 
     @pytest.mark.unit
@@ -318,11 +321,12 @@ class TestContainerManagerConcurrency:
         callback = AsyncMock()
         container_manager.add_status_callback(callback)
 
-        # Notify concurrently
-        await asyncio.gather(*[
+        # _notify_status_change is sync - it schedules tasks, so call them all
+        for i in range(50):
             container_manager._notify_status_change(f"status-{i}")
-            for i in range(50)
-        ])
+
+        # Allow scheduled tasks to complete
+        await asyncio.sleep(0.1)
 
         assert callback.call_count == 50
 
@@ -602,11 +606,14 @@ class TestDeadlockPrevention:
         failing = AsyncMock(side_effect=Exception("Callback error"))
         manager.add_status_callback(failing)
 
-        # Should not deadlock
-        await asyncio.wait_for(
-            manager._notify_status_change("test"),
-            timeout=5.0
-        )
+        # Should not deadlock - _notify_status_change is sync, schedules tasks
+        manager._notify_status_change("test")
+
+        # Wait for scheduled tasks to complete (with timeout via asyncio.sleep)
+        await asyncio.sleep(0.1)
+
+        # Callback should have been called (and error handled gracefully)
+        assert failing.call_count == 1
 
 
 # =============================================================================

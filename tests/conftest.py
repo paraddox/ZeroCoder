@@ -690,13 +690,13 @@ def beads_api_project_with_issues(beads_api_project, sample_issues_for_api):
 
 @pytest.fixture
 def mock_beads_locks():
-    """Reset beads locks between tests to ensure isolation."""
-    import server.routers.beads_api as beads_api
-    original_locks = beads_api._beads_locks.copy()
-    beads_api._beads_locks.clear()
-    yield beads_api._beads_locks
-    beads_api._beads_locks.clear()
-    beads_api._beads_locks.update(original_locks)
+    """Reset beads manager registry between tests to ensure isolation."""
+    from server.services.beads_manager import _managers
+    original_managers = _managers.copy()
+    _managers.clear()
+    yield _managers
+    _managers.clear()
+    _managers.update(original_managers)
 
 
 @pytest.fixture
@@ -735,7 +735,24 @@ def mock_bd_command():
 
 @pytest.fixture
 def mock_beads_api_get_project_path(beads_api_project):
-    """Mock _get_project_path to return the test project path."""
-    with patch("server.routers.beads_api._get_project_path") as mock_path:
-        mock_path.return_value = beads_api_project["project_dir"]
-        yield mock_path
+    """Mock get_beads_manager to return a manager for the test project path."""
+    from server.services.beads_manager import BeadsManager, _managers
+
+    # Create a mock manager with the test project path
+    manager = BeadsManager("test-api-project", "https://github.com/test/repo.git")
+    manager.local_path = beads_api_project["project_dir"]
+
+    # Register it in the global managers dict
+    _managers["test-api-project"] = manager
+
+    async def mock_get_manager(project_name, git_url=None):
+        if project_name in _managers:
+            return _managers[project_name]
+        # Create new manager with correct path
+        new_manager = BeadsManager(project_name, git_url or "https://github.com/test/repo.git")
+        new_manager.local_path = beads_api_project["project_dir"]
+        _managers[project_name] = new_manager
+        return new_manager
+
+    with patch("server.routers.beads_api.get_beads_manager", side_effect=mock_get_manager):
+        yield manager

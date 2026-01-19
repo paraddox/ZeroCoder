@@ -73,7 +73,7 @@ class TestHasFeatures:
     @pytest.mark.unit
     def test_has_features_with_project_name_cache(self, temp_project_dir):
         """Test has_features with project_name triggers cache lookup."""
-        with patch("server.services.beads_sync_manager.get_cached_stats") as mock_cache:
+        with patch("server.services.beads_manager.get_cached_stats") as mock_cache:
             mock_cache.return_value = {"total": 5}
 
             result = has_features(temp_project_dir, project_name="test-project")
@@ -361,7 +361,7 @@ class TestCacheLookup:
     @pytest.mark.unit
     def test_count_passing_uses_cache(self, temp_project_dir):
         """Test that count_passing_tests uses cache when available."""
-        with patch("server.services.beads_sync_manager.get_cached_stats") as mock_cache:
+        with patch("server.services.beads_manager.get_cached_stats") as mock_cache:
             mock_cache.return_value = {
                 "done": 5,
                 "in_progress": 2,
@@ -389,7 +389,7 @@ class TestCacheLookup:
             for issue in sample_beads_issues:
                 f.write(json.dumps(issue) + "\n")
 
-        with patch("server.services.beads_sync_manager.get_cached_stats") as mock_cache:
+        with patch("server.services.beads_manager.get_cached_stats") as mock_cache:
             mock_cache.return_value = {"total": 0}  # Empty cache
 
             passing, in_progress, total = count_passing_tests(
