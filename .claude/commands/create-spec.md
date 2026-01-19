@@ -455,29 +455,6 @@ Create a new file using this XML structure:
 </project_specification>
 ```
 
-## 2. Update `initializer_prompt.md`
-
-**Output path:** `$ARGUMENTS/prompts/initializer_prompt.md`
-
-If the output directory has an existing `initializer_prompt.md`, read it and update the feature count.
-If not, copy from `.claude/templates/initializer_prompt.template.md` first, then update.
-
-**CRITICAL: You MUST update the feature count placeholder:**
-
-1. Find the line containing `**[FEATURE_COUNT]**` in the "REQUIRED FEATURE COUNT" section
-2. Replace `[FEATURE_COUNT]` with the exact number agreed upon in Phase 4L (e.g., `25`)
-3. The result should read like: `You must create exactly **25** features using the...`
-
-**Example edit:**
-```
-Before: **CRITICAL:** You must create exactly **[FEATURE_COUNT]** features using the `beads_client create` command.
-After:  **CRITICAL:** You must create exactly **25** features using the `beads_client create` command.
-```
-
-**Verify the update:** After editing, read the file again to confirm the feature count appears correctly. If `[FEATURE_COUNT]` still appears in the file, the update failed and you must try again.
-
-**Note:** You may also update `coding_prompt.md` if the user requests changes to how the coding agent should work. Include it in the status file if modified.
-
 ## 3. Write Status File (REQUIRED - Do This Last)
 
 **Output path:** `$ARGUMENTS/prompts/.spec_status.json`
