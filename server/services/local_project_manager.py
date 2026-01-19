@@ -41,6 +41,32 @@ class LocalProjectManager:
         self.git_url = git_url
         self.local_path = get_projects_dir() / project_name
 
+    def _get_default_branch(self) -> str:
+        """Get the default branch name (main or master)."""
+        try:
+            # Try to get from remote HEAD
+            result = subprocess.run(
+                ["git", "-C", str(self.local_path), "symbolic-ref", "refs/remotes/origin/HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                ref = result.stdout.strip()
+                return ref.split("/")[-1]
+            # Fallback: check if main exists
+            result = subprocess.run(
+                ["git", "-C", str(self.local_path), "rev-parse", "--verify", "origin/main"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                return "main"
+            return "master"
+        except Exception:
+            return "main"  # Default fallback
+
     async def ensure_cloned(self) -> tuple[bool, str]:
         """
         Clone repo if not already cloned.
@@ -76,7 +102,7 @@ class LocalProjectManager:
 
     async def pull_latest(self) -> tuple[bool, str]:
         """
-        Pull latest from main.
+        Pull latest from default branch.
 
         Returns:
             Tuple of (success, message)
@@ -86,11 +112,12 @@ class LocalProjectManager:
 
         try:
             stashed = False
+            default_branch = self._get_default_branch()
 
-            # Checkout main first
+            # Checkout default branch first
             checkout_result = await asyncio.to_thread(
                 subprocess.run,
-                ["git", "-C", str(self.local_path), "checkout", "main"],
+                ["git", "-C", str(self.local_path), "checkout", default_branch],
                 capture_output=True,
                 text=True,
                 timeout=10,
@@ -112,7 +139,7 @@ class LocalProjectManager:
                 # Retry checkout after stash
                 checkout_result = await asyncio.to_thread(
                     subprocess.run,
-                    ["git", "-C", str(self.local_path), "checkout", "main"],
+                    ["git", "-C", str(self.local_path), "checkout", default_branch],
                     capture_output=True,
                     text=True,
                     timeout=10,
@@ -131,7 +158,7 @@ class LocalProjectManager:
             # Pull from origin
             result = await asyncio.to_thread(
                 subprocess.run,
-                ["git", "-C", str(self.local_path), "pull", "origin", "main"],
+                ["git", "-C", str(self.local_path), "pull", "origin", default_branch],
                 capture_output=True,
                 text=True,
                 timeout=60,

@@ -591,6 +591,22 @@ class ContainerManager:
                     timeout=timeout,
                 )
 
+            def get_default_branch() -> str:
+                """Get the default branch name (main or master)."""
+                # Try to get from remote HEAD
+                result = run_git(["git", "symbolic-ref", "refs/remotes/origin/HEAD"])
+                if result.returncode == 0:
+                    # Returns something like "refs/remotes/origin/main"
+                    ref = result.stdout.strip()
+                    return ref.split("/")[-1]
+                # Fallback: check if main exists, otherwise master
+                result = run_git(["git", "rev-parse", "--verify", "origin/main"])
+                if result.returncode == 0:
+                    return "main"
+                return "master"
+
+            default_branch = get_default_branch()
+
             # 1. Abort any stuck operations (rebase, merge, cherry-pick)
             for abort_cmd in [
                 ["git", "rebase", "--abort"],
@@ -627,12 +643,12 @@ class ContainerManager:
                 run_git(["git", "reset", "--hard", "HEAD"])
                 run_git(["git", "clean", "-fd"])  # Remove untracked files
 
-            # 7. Checkout and reset main to match origin/main
-            run_git(["git", "checkout", "main"])
-            result = run_git(["git", "reset", "--hard", "origin/main"])
+            # 7. Checkout and reset default branch to match origin
+            run_git(["git", "checkout", default_branch])
+            result = run_git(["git", "reset", "--hard", f"origin/{default_branch}"])
             if result.returncode != 0:
-                logger.warning(f"Failed to reset main to origin/main: {result.stderr}")
-                return False, f"Failed to reset main: {result.stderr}"
+                logger.warning(f"Failed to reset {default_branch} to origin/{default_branch}: {result.stderr}")
+                return False, f"Failed to reset {default_branch}: {result.stderr}"
 
             # 8. Clean up orphaned feature branches
             result = run_git(["git", "branch", "--list", "feature/*"])
@@ -680,14 +696,34 @@ class ContainerManager:
         def needs_recovery(stderr: str) -> bool:
             return any(pattern in stderr for pattern in recoverable_errors)
 
+        def run_git(cmd: list[str], timeout: int = 30) -> subprocess.CompletedProcess:
+            return subprocess.run(
+                ["docker", "exec", "-u", "coder", self.container_name] + cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+
+        def get_default_branch() -> str:
+            """Get the default branch name (main or master)."""
+            result = run_git(["git", "symbolic-ref", "refs/remotes/origin/HEAD"])
+            if result.returncode == 0:
+                ref = result.stdout.strip()
+                return ref.split("/")[-1]
+            result = run_git(["git", "rev-parse", "--verify", "origin/main"])
+            if result.returncode == 0:
+                return "main"
+            return "master"
+
         try:
             await self._broadcast_output("[System] Syncing with remote before starting agent...")
 
-            # Fetch and pull latest from main
+            # Detect default branch and pull latest
+            default_branch = get_default_branch()
             commands = [
                 (["git", "fetch", "origin"], "Fetching from origin"),
-                (["git", "checkout", "main"], "Checking out main"),
-                (["git", "pull", "origin", "main"], "Pulling latest from main"),
+                (["git", "checkout", default_branch], f"Checking out {default_branch}"),
+                (["git", "pull", "origin", default_branch], f"Pulling latest from {default_branch}"),
             ]
 
             recovery_attempted = False
