@@ -199,7 +199,8 @@ if [ -f /tmp/ssh_key ]; then
 fi
 
 # Verify project is mounted (worktree from host)
-if [ ! -d "/project/.git" ]; then
+# Note: Worktrees use a .git FILE (not directory) pointing to the bare repo
+if [ ! -e "/project/.git" ]; then
     echo "[$(date -Iseconds)] ERROR: /project not mounted or not a git repository" >> /var/log/agent.log
     echo "[$(date -Iseconds)] ERROR: Project worktree must be mounted via -v flag" >> /var/log/agent.log
     exit 1

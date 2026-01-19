@@ -1095,10 +1095,11 @@ class ContainerManager:
             # Handle init container specially
             if self._is_init_container:
                 # Worktree is mounted - just verify it's accessible
+                # Note: Worktrees use a .git FILE (not directory), so use -e not -d
                 await asyncio.sleep(1)  # Brief wait for container startup
                 check = subprocess.run(
                     ["docker", "exec", "-u", "coder", self.container_name,
-                     "test", "-d", "/project/.git"],
+                     "test", "-e", "/project/.git"],
                     capture_output=True,
                     text=True,
                 )
@@ -1133,10 +1134,11 @@ class ContainerManager:
             # Send instruction if provided (for coding containers)
             if instruction:
                 # Worktree is mounted - just verify it's accessible
+                # Note: Worktrees use a .git FILE (not directory), so use -e not -d
                 await asyncio.sleep(1)  # Brief wait for container startup
                 check = subprocess.run(
                     ["docker", "exec", "-u", "coder", self.container_name,
-                     "test", "-d", "/project/.git"],
+                     "test", "-e", "/project/.git"],
                     capture_output=True,
                     text=True,
                 )
