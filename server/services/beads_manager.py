@@ -323,11 +323,16 @@ class BeadsManager:
         Called internally after write operations.
 
         Returns:
-            True if sync succeeded, False otherwise
+            True if sync succeeded or already in progress, False on real errors
         """
         result = await self._run_bd(["sync"], timeout=30)
         if "error" in result:
-            logger.warning(f"bd sync failed (best-effort): {result['error']}")
+            error_msg = result["error"]
+            # "another sync is in progress" is not an error - just means we're already syncing
+            if "another sync is in progress" in error_msg.lower():
+                logger.debug(f"bd sync skipped for {self.project_name}: already in progress")
+                return True  # Consider this success - sync is happening
+            logger.warning(f"bd sync failed (best-effort): {error_msg}")
             return False
         logger.debug(f"bd sync completed for {self.project_name}")
         return True
@@ -349,9 +354,9 @@ class BeadsManager:
 
     async def run_read_command(self, args: list[str]) -> dict[str, Any]:
         """
-        Run a read command with sync before.
+        Run a read command (no sync).
 
-        Syncs with remote BEFORE running the command to get latest state.
+        Reads from local beads database. Background poller handles remote sync.
 
         Args:
             args: Command arguments (e.g., ["list", "--json"])
@@ -363,9 +368,7 @@ class BeadsManager:
             return {"error": f"Project directory not found: {self.local_path}"}
 
         async with self._lock:
-            # Sync before read to get latest state from remote
-            await self._sync_with_remote()
-            # Run the actual command
+            # Read from local database (background poller handles sync)
             return await self._run_bd(args)
 
     async def run_write_command(self, args: list[str]) -> dict[str, Any]:

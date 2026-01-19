@@ -141,7 +141,7 @@ async def list_features(project_name: str):
     - in_progress: features currently being worked on
     - done: passes=True
 
-    Syncs with remote before reading to get latest state.
+    Reads from local beads database. Background poller handles remote sync.
     """
     project_name = validate_project_name(project_name)
     project_dir = _get_project_path(project_name)
@@ -152,15 +152,13 @@ async def list_features(project_name: str):
     if not project_dir.exists():
         raise HTTPException(status_code=404, detail="Project directory not found")
 
-    # Try to get features from beads manager first
+    # Read from local beads database (no sync needed - background poller handles it)
     features = []
     git_url = _get_project_git_url(project_name)
     if git_url:
         try:
             from ..services.beads_manager import get_beads_manager
             manager = await get_beads_manager(project_name, git_url)
-            # Sync before reading to get latest state from remote
-            await manager.sync()
             tasks = manager.get_tasks()
             if tasks:
                 features = [beads_task_to_feature(t) for t in tasks]
