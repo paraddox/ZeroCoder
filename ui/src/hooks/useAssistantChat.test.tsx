@@ -149,8 +149,6 @@ describe('useAssistantChat Hook', () => {
         wrapper: createWrapper(),
       })
 
-      let loadingDuringCall = false
-
       act(() => {
         result.current.sendMessage('Test').then(() => {
           // Check loading was true during call

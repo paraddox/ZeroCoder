@@ -9,6 +9,9 @@ import '@testing-library/jest-dom'
 import { afterEach, vi } from 'vitest'
 import { cleanup } from '@testing-library/react'
 
+// Note: With @types/node installed, global types like fetch, WebSocket,
+// requestAnimationFrame, cancelAnimationFrame are already available.
+
 // Cleanup after each test case
 afterEach(() => {
   cleanup()
@@ -52,18 +55,18 @@ class MockWebSocket {
   onclose: (() => void) | null = null
   onmessage: ((event: MessageEvent) => void) | null = null
   onerror: ((event: Event) => void) | null = null
-  readyState = WebSocket.CONNECTING
+  readyState: number = 0 // CONNECTING
 
   constructor(public url: string) {
     setTimeout(() => {
-      this.readyState = WebSocket.OPEN
+      this.readyState = 1 // OPEN
       this.onopen?.()
     }, 0)
   }
 
   send = vi.fn()
   close = vi.fn(() => {
-    this.readyState = WebSocket.CLOSED
+    this.readyState = 3 // CLOSED
     this.onclose?.()
   })
 }

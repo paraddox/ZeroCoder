@@ -10,8 +10,8 @@
  * - Error handling
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '../test/test-utils'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, waitFor } from '../test/test-utils'
 import userEvent from '@testing-library/user-event'
 import { NewProjectModal } from './NewProjectModal'
 

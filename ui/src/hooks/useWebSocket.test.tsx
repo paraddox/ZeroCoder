@@ -26,7 +26,6 @@ describe('useWebSocket', () => {
     mockWebSocketInstances = []
 
     // Track WebSocket instances
-    const OriginalWebSocket = global.WebSocket
     global.WebSocket = vi.fn().mockImplementation((url: string) => {
       const instance = {
         url,
@@ -59,7 +58,7 @@ describe('useWebSocket', () => {
 
   describe('Connection', () => {
     it('should create WebSocket connection', async () => {
-      const { result } = renderHook(() => useWebSocket('test-project'))
+      renderHook(() => useWebSocket('test-project'))
 
       await waitFor(() => {
         expect(global.WebSocket).toHaveBeenCalled()
@@ -78,7 +77,7 @@ describe('useWebSocket', () => {
     })
 
     it('should handle successful connection', async () => {
-      const { result } = renderHook(() => useWebSocket('test-project'))
+      renderHook(() => useWebSocket('test-project'))
 
       await waitFor(() => {
         expect(mockWebSocketInstances.length).toBeGreaterThan(0)
@@ -97,7 +96,7 @@ describe('useWebSocket', () => {
 
   describe('Message Handling', () => {
     it('should handle incoming messages', async () => {
-      const { result } = renderHook(() => useWebSocket('test-project'))
+      renderHook(() => useWebSocket('test-project'))
 
       await waitFor(() => {
         expect(mockWebSocketInstances.length).toBeGreaterThan(0)
@@ -115,7 +114,7 @@ describe('useWebSocket', () => {
     })
 
     it('should handle different message types', async () => {
-      const { result } = renderHook(() => useWebSocket('test-project'))
+      renderHook(() => useWebSocket('test-project'))
 
       await waitFor(() => {
         expect(mockWebSocketInstances.length).toBeGreaterThan(0)
@@ -134,7 +133,7 @@ describe('useWebSocket', () => {
     })
 
     it('should handle malformed JSON', async () => {
-      const { result } = renderHook(() => useWebSocket('test-project'))
+      renderHook(() => useWebSocket('test-project'))
 
       await waitFor(() => {
         expect(mockWebSocketInstances.length).toBeGreaterThan(0)
@@ -166,7 +165,7 @@ describe('useWebSocket', () => {
     })
 
     it('should handle unexpected disconnection', async () => {
-      const { result } = renderHook(() => useWebSocket('test-project'))
+      renderHook(() => useWebSocket('test-project'))
 
       await waitFor(() => {
         expect(mockWebSocketInstances.length).toBeGreaterThan(0)
@@ -185,7 +184,7 @@ describe('useWebSocket', () => {
 
   describe('Error Handling', () => {
     it('should handle connection error', async () => {
-      const { result } = renderHook(() => useWebSocket('test-project'))
+      renderHook(() => useWebSocket('test-project'))
 
       await waitFor(() => {
         expect(mockWebSocketInstances.length).toBeGreaterThan(0)
@@ -220,7 +219,7 @@ describe('useWebSocket', () => {
       })
 
       // Old connection should be closed, new one opened
-      const [oldWs, newWs] = mockWebSocketInstances
+      const [oldWs] = mockWebSocketInstances
       expect(oldWs.close).toHaveBeenCalled()
     })
 
@@ -245,7 +244,7 @@ describe('useWebSocket', () => {
   describe('Enabled State', () => {
     it('should not connect when disabled', async () => {
       // If hook supports enabled parameter
-      const { result } = renderHook(() => useWebSocket(null as any))
+      renderHook(() => useWebSocket(null as unknown as string))
 
       await new Promise((r) => setTimeout(r, 50))
 
@@ -255,7 +254,7 @@ describe('useWebSocket', () => {
 
   describe('Message Types', () => {
     it('should handle progress message', async () => {
-      const { result } = renderHook(() => useWebSocket('test-project'))
+      renderHook(() => useWebSocket('test-project'))
 
       await waitFor(() => {
         expect(mockWebSocketInstances.length).toBeGreaterThan(0)
@@ -273,7 +272,7 @@ describe('useWebSocket', () => {
     })
 
     it('should handle agent_status message', async () => {
-      const { result } = renderHook(() => useWebSocket('test-project'))
+      renderHook(() => useWebSocket('test-project'))
 
       await waitFor(() => {
         expect(mockWebSocketInstances.length).toBeGreaterThan(0)
@@ -291,7 +290,7 @@ describe('useWebSocket', () => {
     })
 
     it('should handle log message', async () => {
-      const { result } = renderHook(() => useWebSocket('test-project'))
+      renderHook(() => useWebSocket('test-project'))
 
       await waitFor(() => {
         expect(mockWebSocketInstances.length).toBeGreaterThan(0)
@@ -309,7 +308,7 @@ describe('useWebSocket', () => {
     })
 
     it('should handle feature_update message', async () => {
-      const { result } = renderHook(() => useWebSocket('test-project'))
+      renderHook(() => useWebSocket('test-project'))
 
       await waitFor(() => {
         expect(mockWebSocketInstances.length).toBeGreaterThan(0)

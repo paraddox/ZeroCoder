@@ -11,7 +11,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { screen, fireEvent } from '@testing-library/react'
-import { render, createMockProject } from '../test/test-utils'
+import { render } from '../test/test-utils'
 
 // Mock handlers
 const mockOnConfirm = vi.fn()

@@ -84,7 +84,12 @@ describe('useSpecChat Hook', () => {
       // Import after mocking
       const { useSpecChat } = await import('./useSpecChat')
 
-      const { result } = renderHook(() => useSpecChat('test-project'))
+      const { result } = renderHook(() => useSpecChat({ projectName: 'test-project' }))
+
+      // Start the connection
+      act(() => {
+        result.current.start()
+      })
 
       await waitFor(() => {
         expect(mockWebSocketInstance).toBeTruthy()
@@ -94,31 +99,43 @@ describe('useSpecChat Hook', () => {
     it('should connect to correct URL', async () => {
       const { useSpecChat } = await import('./useSpecChat')
 
-      renderHook(() => useSpecChat('my-project'))
+      const { result } = renderHook(() => useSpecChat({ projectName: 'my-project' }))
+
+      act(() => {
+        result.current.start()
+      })
 
       await waitFor(() => {
         expect(mockWebSocketInstance?.url).toContain('my-project')
-        expect(mockWebSocketInstance?.url).toContain('spec-chat')
+        expect(mockWebSocketInstance?.url).toContain('spec')
       })
     })
 
     it('should track connection status', async () => {
       const { useSpecChat } = await import('./useSpecChat')
 
-      const { result } = renderHook(() => useSpecChat('test-project'))
+      const { result } = renderHook(() => useSpecChat({ projectName: 'test-project' }))
 
-      // Initially connecting
-      expect(result.current.isConnected).toBe(false)
+      // Initially disconnected
+      expect(result.current.connectionStatus).toBe('disconnected')
+
+      act(() => {
+        result.current.start()
+      })
 
       await waitFor(() => {
-        expect(result.current.isConnected).toBe(true)
+        expect(result.current.connectionStatus).toBe('connected')
       })
     })
 
     it('should close connection on unmount', async () => {
       const { useSpecChat } = await import('./useSpecChat')
 
-      const { unmount } = renderHook(() => useSpecChat('test-project'))
+      const { result, unmount } = renderHook(() => useSpecChat({ projectName: 'test-project' }))
+
+      act(() => {
+        result.current.start()
+      })
 
       await waitFor(() => {
         expect(mockWebSocketInstance).toBeTruthy()
@@ -134,10 +151,14 @@ describe('useSpecChat Hook', () => {
     it('should send text messages', async () => {
       const { useSpecChat } = await import('./useSpecChat')
 
-      const { result } = renderHook(() => useSpecChat('test-project'))
+      const { result } = renderHook(() => useSpecChat({ projectName: 'test-project' }))
+
+      act(() => {
+        result.current.start()
+      })
 
       await waitFor(() => {
-        expect(result.current.isConnected).toBe(true)
+        expect(result.current.connectionStatus).toBe('connected')
       })
 
       act(() => {
@@ -153,16 +174,19 @@ describe('useSpecChat Hook', () => {
     it('should receive and store messages', async () => {
       const { useSpecChat } = await import('./useSpecChat')
 
-      const { result } = renderHook(() => useSpecChat('test-project'))
+      const { result } = renderHook(() => useSpecChat({ projectName: 'test-project' }))
+
+      act(() => {
+        result.current.start()
+      })
 
       await waitFor(() => {
-        expect(result.current.isConnected).toBe(true)
+        expect(result.current.connectionStatus).toBe('connected')
       })
 
       act(() => {
         mockWebSocketInstance?.simulateMessage({
-          type: 'message',
-          role: 'assistant',
+          type: 'text',
           content: 'Hello! How can I help?',
         })
       })
@@ -173,16 +197,20 @@ describe('useSpecChat Hook', () => {
     it('should handle progress updates', async () => {
       const { useSpecChat } = await import('./useSpecChat')
 
-      const { result } = renderHook(() => useSpecChat('test-project'))
+      const { result } = renderHook(() => useSpecChat({ projectName: 'test-project' }))
+
+      act(() => {
+        result.current.start()
+      })
 
       await waitFor(() => {
-        expect(result.current.isConnected).toBe(true)
+        expect(result.current.connectionStatus).toBe('connected')
       })
 
       act(() => {
         mockWebSocketInstance?.simulateMessage({
-          type: 'progress',
-          message: 'Analyzing your requirements...',
+          type: 'text',
+          content: 'Analyzing your requirements...',
         })
       })
 
@@ -194,20 +222,26 @@ describe('useSpecChat Hook', () => {
       const onComplete = vi.fn()
       const { useSpecChat } = await import('./useSpecChat')
 
-      const { result } = renderHook(() => useSpecChat('test-project', { onComplete }))
+      const { result } = renderHook(() => useSpecChat({ projectName: 'test-project', onComplete }))
+
+      act(() => {
+        result.current.start()
+      })
 
       await waitFor(() => {
-        expect(result.current.isConnected).toBe(true)
+        expect(result.current.connectionStatus).toBe('connected')
       })
 
       act(() => {
         mockWebSocketInstance?.simulateMessage({
-          type: 'complete',
-          spec_path: '/path/to/spec.txt',
+          type: 'spec_complete',
+          path: '/path/to/spec.txt',
         })
       })
 
-      expect(onComplete).toHaveBeenCalledWith('/path/to/spec.txt')
+      // onComplete is NOT called automatically - user clicks "Continue to Project" button
+      // Just verify completion state
+      expect(result.current.isComplete).toBe(true)
     })
   })
 
@@ -215,16 +249,23 @@ describe('useSpecChat Hook', () => {
     it('should send message with image attachment', async () => {
       const { useSpecChat } = await import('./useSpecChat')
 
-      const { result } = renderHook(() => useSpecChat('test-project'))
+      const { result } = renderHook(() => useSpecChat({ projectName: 'test-project' }))
+
+      act(() => {
+        result.current.start()
+      })
 
       await waitFor(() => {
-        expect(result.current.isConnected).toBe(true)
+        expect(result.current.connectionStatus).toBe('connected')
       })
 
       const imageAttachment = {
-        type: 'image' as const,
-        media_type: 'image/png',
-        data: 'base64encodeddata',
+        id: 'img-1',
+        filename: 'test.png',
+        mimeType: 'image/png' as const,
+        base64Data: 'base64encodeddata',
+        previewUrl: 'data:image/png;base64,base64encodeddata',
+        size: 1000,
       }
 
       act(() => {
@@ -240,16 +281,23 @@ describe('useSpecChat Hook', () => {
     it('should send message with text file attachment', async () => {
       const { useSpecChat } = await import('./useSpecChat')
 
-      const { result } = renderHook(() => useSpecChat('test-project'))
+      const { result } = renderHook(() => useSpecChat({ projectName: 'test-project' }))
+
+      act(() => {
+        result.current.start()
+      })
 
       await waitFor(() => {
-        expect(result.current.isConnected).toBe(true)
+        expect(result.current.connectionStatus).toBe('connected')
       })
 
       const textAttachment = {
-        type: 'text' as const,
+        id: 'txt-1',
         filename: 'requirements.txt',
-        content: 'React\nTypeScript\nTailwind',
+        mimeType: 'text/plain' as const,
+        textContent: 'React\nTypeScript\nTailwind',
+        size: 100,
+        isText: true as const,
       }
 
       act(() => {
@@ -264,57 +312,75 @@ describe('useSpecChat Hook', () => {
     it('should handle question message with options', async () => {
       const { useSpecChat } = await import('./useSpecChat')
 
-      const { result } = renderHook(() => useSpecChat('test-project'))
+      const { result } = renderHook(() => useSpecChat({ projectName: 'test-project' }))
+
+      act(() => {
+        result.current.start()
+      })
 
       await waitFor(() => {
-        expect(result.current.isConnected).toBe(true)
+        expect(result.current.connectionStatus).toBe('connected')
       })
 
       act(() => {
         mockWebSocketInstance?.simulateMessage({
           type: 'question',
-          question_id: 'q1',
-          text: 'What framework do you prefer?',
-          options: [
-            { id: 'react', label: 'React' },
-            { id: 'vue', label: 'Vue' },
-            { id: 'angular', label: 'Angular' },
+          questions: [
+            {
+              question: 'What framework do you prefer?',
+              header: 'Framework',
+              options: [
+                { label: 'React', description: 'Popular UI library' },
+                { label: 'Vue', description: 'Progressive framework' },
+                { label: 'Angular', description: 'Full-featured framework' },
+              ],
+              multiSelect: false,
+            },
           ],
-          multi_select: false,
+          tool_id: 'tool-1',
         })
       })
 
-      expect(result.current.currentQuestion).toBeDefined()
-      expect(result.current.currentQuestion?.options?.length).toBe(3)
+      expect(result.current.currentQuestions).toBeDefined()
+      expect(result.current.currentQuestions?.length).toBe(1)
+      expect(result.current.currentQuestions?.[0].options?.length).toBe(3)
     })
 
     it('should send answer to question', async () => {
       const { useSpecChat } = await import('./useSpecChat')
 
-      const { result } = renderHook(() => useSpecChat('test-project'))
+      const { result } = renderHook(() => useSpecChat({ projectName: 'test-project' }))
+
+      act(() => {
+        result.current.start()
+      })
 
       await waitFor(() => {
-        expect(result.current.isConnected).toBe(true)
+        expect(result.current.connectionStatus).toBe('connected')
       })
 
       act(() => {
         mockWebSocketInstance?.simulateMessage({
           type: 'question',
-          question_id: 'q1',
-          text: 'What framework?',
-          options: [{ id: 'react', label: 'React' }],
-          multi_select: false,
+          questions: [
+            {
+              question: 'What framework?',
+              header: 'Framework',
+              options: [{ label: 'React', description: 'Popular UI library' }],
+              multiSelect: false,
+            },
+          ],
+          tool_id: 'tool-1',
         })
       })
 
       act(() => {
-        result.current.answerQuestion('q1', ['react'])
+        result.current.sendAnswer({ framework: ['React'] })
       })
 
       expect(mockWebSocketInstance?.send).toHaveBeenCalled()
       const sentData = JSON.parse(mockWebSocketInstance?.send.mock.calls[0][0])
       expect(sentData.type).toBe('answer')
-      expect(sentData.question_id).toBe('q1')
     })
   })
 
@@ -322,7 +388,11 @@ describe('useSpecChat Hook', () => {
     it('should handle WebSocket errors', async () => {
       const { useSpecChat } = await import('./useSpecChat')
 
-      const { result } = renderHook(() => useSpecChat('test-project'))
+      const { result } = renderHook(() => useSpecChat({ projectName: 'test-project' }))
+
+      act(() => {
+        result.current.start()
+      })
 
       await waitFor(() => {
         expect(mockWebSocketInstance).toBeTruthy()
@@ -332,33 +402,44 @@ describe('useSpecChat Hook', () => {
         mockWebSocketInstance?.simulateError()
       })
 
-      // Should have error state or reconnect
-      expect(result.current.error || !result.current.isConnected).toBeTruthy()
+      // Should have error state or disconnected
+      expect(
+        result.current.connectionStatus === 'error' ||
+        result.current.connectionStatus === 'disconnected'
+      ).toBeTruthy()
     })
 
     it('should handle connection close', async () => {
       const { useSpecChat } = await import('./useSpecChat')
 
-      const { result } = renderHook(() => useSpecChat('test-project'))
+      const { result } = renderHook(() => useSpecChat({ projectName: 'test-project' }))
+
+      act(() => {
+        result.current.start()
+      })
 
       await waitFor(() => {
-        expect(result.current.isConnected).toBe(true)
+        expect(result.current.connectionStatus).toBe('connected')
       })
 
       act(() => {
         mockWebSocketInstance?.close()
       })
 
-      expect(result.current.isConnected).toBe(false)
+      expect(result.current.connectionStatus).toBe('disconnected')
     })
 
     it('should handle malformed messages', async () => {
       const { useSpecChat } = await import('./useSpecChat')
 
-      const { result } = renderHook(() => useSpecChat('test-project'))
+      const { result } = renderHook(() => useSpecChat({ projectName: 'test-project' }))
+
+      act(() => {
+        result.current.start()
+      })
 
       await waitFor(() => {
-        expect(result.current.isConnected).toBe(true)
+        expect(result.current.connectionStatus).toBe('connected')
       })
 
       // Should not crash on invalid JSON
@@ -376,10 +457,14 @@ describe('useSpecChat Hook', () => {
     it('should track loading state when sending message', async () => {
       const { useSpecChat } = await import('./useSpecChat')
 
-      const { result } = renderHook(() => useSpecChat('test-project'))
+      const { result } = renderHook(() => useSpecChat({ projectName: 'test-project' }))
+
+      act(() => {
+        result.current.start()
+      })
 
       await waitFor(() => {
-        expect(result.current.isConnected).toBe(true)
+        expect(result.current.connectionStatus).toBe('connected')
       })
 
       act(() => {
@@ -392,10 +477,14 @@ describe('useSpecChat Hook', () => {
     it('should clear loading state when response received', async () => {
       const { useSpecChat } = await import('./useSpecChat')
 
-      const { result } = renderHook(() => useSpecChat('test-project'))
+      const { result } = renderHook(() => useSpecChat({ projectName: 'test-project' }))
+
+      act(() => {
+        result.current.start()
+      })
 
       await waitFor(() => {
-        expect(result.current.isConnected).toBe(true)
+        expect(result.current.connectionStatus).toBe('connected')
       })
 
       act(() => {
@@ -406,9 +495,7 @@ describe('useSpecChat Hook', () => {
 
       act(() => {
         mockWebSocketInstance?.simulateMessage({
-          type: 'message',
-          role: 'assistant',
-          content: 'Response',
+          type: 'response_done',
         })
       })
 

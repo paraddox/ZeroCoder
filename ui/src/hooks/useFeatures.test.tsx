@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { renderHook, waitFor } from '@testing-library/react'
+import { renderHook } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 import type { Feature, FeatureListResponse } from '../lib/types'
@@ -29,9 +29,7 @@ vi.mock('../lib/api', () => ({
 }))
 
 // Mock useFeatures hook implementation
-const useFeatures = (projectName: string) => {
-  const queryClient = new QueryClient()
-
+const useFeatures = (_projectName: string) => {
   return {
     features: {
       pending: [] as Feature[],
