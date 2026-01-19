@@ -150,7 +150,7 @@ class BeadsManager:
 
         try:
             result = subprocess.run(
-                ["bd", "--no-daemon", "list", "--json"],
+                ["bd", "--no-daemon", "list", "--json", "--all", "--limit", "0"],
                 cwd=self.local_path,
                 capture_output=True,
                 text=True,
