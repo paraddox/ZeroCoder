@@ -592,18 +592,26 @@ class ContainerManager:
                 )
 
             def get_default_branch() -> str:
-                """Get the default branch name (main or master)."""
+                """Get the default branch name from remote."""
                 # Try to get from remote HEAD
                 result = run_git(["git", "symbolic-ref", "refs/remotes/origin/HEAD"])
                 if result.returncode == 0:
-                    # Returns something like "refs/remotes/origin/main"
                     ref = result.stdout.strip()
                     return ref.split("/")[-1]
-                # Fallback: check if main exists, otherwise master
-                result = run_git(["git", "rev-parse", "--verify", "origin/main"])
-                if result.returncode == 0:
-                    return "main"
-                return "master"
+                # Try common default branch names
+                for branch in ["main", "master", "develop"]:
+                    result = run_git(["git", "rev-parse", "--verify", f"origin/{branch}"])
+                    if result.returncode == 0:
+                        return branch
+                # Last resort: get first remote branch
+                result = run_git(["git", "branch", "-r", "--list", "origin/*"])
+                if result.returncode == 0 and result.stdout.strip():
+                    first_branch = result.stdout.strip().split("\n")[0].strip()
+                    # Remove "origin/" prefix and any "-> origin/X" pointer
+                    if " -> " in first_branch:
+                        first_branch = first_branch.split(" -> ")[1]
+                    return first_branch.replace("origin/", "")
+                return "main"  # Ultimate fallback
 
             default_branch = get_default_branch()
 
@@ -705,15 +713,25 @@ class ContainerManager:
             )
 
         def get_default_branch() -> str:
-            """Get the default branch name (main or master)."""
+            """Get the default branch name from remote."""
+            # Try to get from remote HEAD
             result = run_git(["git", "symbolic-ref", "refs/remotes/origin/HEAD"])
             if result.returncode == 0:
                 ref = result.stdout.strip()
                 return ref.split("/")[-1]
-            result = run_git(["git", "rev-parse", "--verify", "origin/main"])
-            if result.returncode == 0:
-                return "main"
-            return "master"
+            # Try common default branch names
+            for branch in ["main", "master", "develop"]:
+                result = run_git(["git", "rev-parse", "--verify", f"origin/{branch}"])
+                if result.returncode == 0:
+                    return branch
+            # Last resort: get first remote branch
+            result = run_git(["git", "branch", "-r", "--list", "origin/*"])
+            if result.returncode == 0 and result.stdout.strip():
+                first_branch = result.stdout.strip().split("\n")[0].strip()
+                if " -> " in first_branch:
+                    first_branch = first_branch.split(" -> ")[1]
+                return first_branch.replace("origin/", "")
+            return "main"  # Ultimate fallback
 
         try:
             await self._broadcast_output("[System] Syncing with remote before starting agent...")

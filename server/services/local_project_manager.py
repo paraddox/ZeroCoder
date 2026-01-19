@@ -42,7 +42,7 @@ class LocalProjectManager:
         self.local_path = get_projects_dir() / project_name
 
     def _get_default_branch(self) -> str:
-        """Get the default branch name (main or master)."""
+        """Get the default branch name from remote."""
         try:
             # Try to get from remote HEAD
             result = subprocess.run(
@@ -54,16 +54,29 @@ class LocalProjectManager:
             if result.returncode == 0:
                 ref = result.stdout.strip()
                 return ref.split("/")[-1]
-            # Fallback: check if main exists
+            # Try common default branch names
+            for branch in ["main", "master", "develop"]:
+                result = subprocess.run(
+                    ["git", "-C", str(self.local_path), "rev-parse", "--verify", f"origin/{branch}"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if result.returncode == 0:
+                    return branch
+            # Last resort: get first remote branch
             result = subprocess.run(
-                ["git", "-C", str(self.local_path), "rev-parse", "--verify", "origin/main"],
+                ["git", "-C", str(self.local_path), "branch", "-r", "--list", "origin/*"],
                 capture_output=True,
                 text=True,
                 timeout=10,
             )
-            if result.returncode == 0:
-                return "main"
-            return "master"
+            if result.returncode == 0 and result.stdout.strip():
+                first_branch = result.stdout.strip().split("\n")[0].strip()
+                if " -> " in first_branch:
+                    first_branch = first_branch.split(" -> ")[1]
+                return first_branch.replace("origin/", "")
+            return "main"  # Ultimate fallback
         except Exception:
             return "main"  # Default fallback
 
