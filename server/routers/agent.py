@@ -360,32 +360,25 @@ async def start_all_containers(project_name: str):
             print(f"[StartAll] Git pull error (continuing anyway): {e}")
 
     # ==========================================================================
-    # PHASE 1: Run init container (container_number=0)
+    # PHASE 1: Init container (only for NEW projects without features)
     # ==========================================================================
-    init_manager = get_container_manager(project_name, git_url, container_number=0, project_dir=project_dir)
+    project_has_features = has_features(project_dir, project_name)
 
-    # Determine init instruction based on project state
-    try:
-        if is_new or not has_features(project_dir, project_name):
-            # New project - run full initializer with Opus 4.5
+    if is_new or not project_has_features:
+        # New project - run full initializer with Opus 4.5
+        init_manager = get_container_manager(project_name, git_url, container_number=0, project_dir=project_dir)
+        try:
             instruction = get_initializer_prompt(project_dir)
-            init_manager._force_claude_sdk = True
-            init_manager._forced_model = "claude-opus-4-5-20251101"
-            print(f"[StartAll] Phase 1: Running full initializer for new project {project_name}")
-        else:
-            # Existing project - just run recovery (pre_agent_sync + recover_stuck_features)
-            # The init container will sync and recover any stuck features
-            instruction = None  # Will trigger sync and recovery without full agent run
-            print(f"[StartAll] Phase 1: Running recovery for existing project {project_name}")
-    except FileNotFoundError as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Could not load initializer prompt: {e}"
-        )
+        except FileNotFoundError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Could not load initializer prompt: {e}"
+            )
 
-    # Start init container and wait for it to complete
-    if instruction:
-        # Full initializer run
+        init_manager._force_claude_sdk = True
+        init_manager._forced_model = "claude-opus-4-5-20251101"
+        print(f"[StartAll] Phase 1: Running full initializer for new project {project_name}")
+
         success, message = await init_manager.start(instruction=instruction)
         if not success:
             return AgentActionResponse(
@@ -395,68 +388,21 @@ async def start_all_containers(project_name: str):
             )
 
         # Wait for init container to finish
-        # The init container runs the initializer which creates features, then exits
         print(f"[StartAll] Waiting for init container to complete...")
         while init_manager.is_agent_running():
             await asyncio.sleep(2)
 
         print(f"[StartAll] Phase 1 complete. Init container finished.")
     else:
-        # Recovery only - start container, run sync and recovery, then stop
-        success, message = await init_manager.start_container_only()
-        if not success:
-            return AgentActionResponse(
-                success=False,
-                status=init_manager.status,
-                message=f"Phase 1 (init container start) failed: {message}",
-            )
+        # Existing project with features - skip init container, do host-side recovery
+        print(f"[StartAll] Phase 1: Host-side recovery for existing project {project_name}")
 
-        # Wait for worktree to be accessible (mounted via -v)
-        # Note: Worktrees use a .git FILE (not directory), so use -e not -d
-        await asyncio.sleep(1)  # Brief wait for container startup
-        check = subprocess.run(
-            ["docker", "exec", "-u", "coder", init_manager.container_name,
-             "test", "-e", "/project/.git"],
-            capture_output=True,
-            text=True,
-        )
-        if check.returncode != 0:
-            await init_manager.stop()
-            return AgentActionResponse(
-                success=False,
-                status="error",
-                message="Init container: worktree not mounted correctly",
-            )
-        print(f"[StartAll] Init container worktree mounted successfully")
+        # Revert any in_progress tasks to open on the host side
+        from server.services.task_cleanup import revert_in_progress_tasks_for_project
+        reverted = await revert_in_progress_tasks_for_project(project_name, project_dir)
+        if reverted > 0:
+            print(f"[StartAll] Reverted {reverted} in_progress task(s) to open")
 
-        # Wait for SSH setup to complete (entrypoint copies key and runs ssh-keyscan)
-        for attempt in range(10):
-            check = subprocess.run(
-                ["docker", "exec", "-u", "coder", init_manager.container_name,
-                 "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
-                 "-T", "git@github.com"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            # SSH to GitHub returns exit code 1 with "successfully authenticated" message
-            if "successfully authenticated" in check.stderr:
-                print(f"[StartAll] Init container SSH setup verified")
-                break
-            await asyncio.sleep(1)
-            print(f"[StartAll] Waiting for SSH setup (attempt {attempt + 1}/10)")
-
-        # Run pre_agent_sync and recover_stuck_features
-        sync_ok, sync_msg = await init_manager.pre_agent_sync()
-        if not sync_ok:
-            print(f"[StartAll] Pre-agent sync warning: {sync_msg}")
-
-        recovery_ok, recovery_msg = await init_manager.recover_stuck_features()
-        if not recovery_ok:
-            print(f"[StartAll] Recovery warning: {recovery_msg}")
-
-        # Stop init container after recovery
-        await init_manager.stop()
         print(f"[StartAll] Phase 1 complete. Recovery finished.")
 
     # ==========================================================================
