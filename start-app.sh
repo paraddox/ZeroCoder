@@ -27,16 +27,21 @@ echo "  ZeroCoder UI"
 echo "===================================="
 echo ""
 
-# Check if Python is available
-if ! command -v python3 &> /dev/null; then
-    if ! command -v python &> /dev/null; then
-        echo "ERROR: Python not found"
-        echo "Please install Python from https://python.org"
-        exit 1
-    fi
+# Check if Python is available (prefer Homebrew Python on macOS)
+if [ -x "/opt/homebrew/bin/python3" ]; then
+    # macOS ARM Homebrew
+    PYTHON_CMD="/opt/homebrew/bin/python3"
+elif [ -x "/usr/local/bin/python3" ]; then
+    # macOS Intel Homebrew or Linux /usr/local
+    PYTHON_CMD="/usr/local/bin/python3"
+elif command -v python3 &> /dev/null; then
+    PYTHON_CMD="python3"
+elif command -v python &> /dev/null; then
     PYTHON_CMD="python"
 else
-    PYTHON_CMD="python3"
+    echo "ERROR: Python not found"
+    echo "Please install Python from https://python.org"
+    exit 1
 fi
 
 # Check if venv exists, create if not
