@@ -532,7 +532,7 @@ class ContainerManager:
 
     def has_open_features(self) -> bool:
         """Check if project has open features remaining using BeadsSyncManager."""
-        from .beads_sync_manager import get_beads_sync_manager
+        from .beads_manager import get_beads_sync_manager
 
         try:
             manager = get_beads_sync_manager(self.project_name, self.git_url)
@@ -862,7 +862,7 @@ class ContainerManager:
         Returns:
             Tuple of (success, message)
         """
-        from .beads_sync_manager import get_beads_sync_manager
+        from .beads_manager import get_beads_sync_manager
         from server.routers.beads_api import run_beads_write_command
 
         try:
@@ -1854,7 +1854,7 @@ class ContainerManager:
 
     def _get_closed_count(self) -> int:
         """Get current closed task count from BeadsSyncManager (instant, no network)."""
-        from .beads_sync_manager import get_beads_sync_manager
+        from .beads_manager import get_beads_sync_manager
 
         try:
             manager = get_beads_sync_manager(self.project_name, self.git_url)
@@ -1884,7 +1884,7 @@ class ContainerManager:
 
     async def get_recent_closed_tasks(self, limit: int = 15) -> list[str]:
         """Get the last N closed task IDs from BeadsSyncManager."""
-        from .beads_sync_manager import get_beads_sync_manager
+        from .beads_manager import get_beads_sync_manager
 
         try:
             manager = get_beads_sync_manager(self.project_name, self.git_url)
@@ -2641,7 +2641,7 @@ async def get_tasks_for_hound_review(project_name: str, git_url: str) -> list[st
     Returns:
         List of task IDs to review (up to 15)
     """
-    from .beads_sync_manager import get_beads_sync_manager
+    from .beads_manager import get_beads_sync_manager
 
     try:
         manager = get_beads_sync_manager(project_name, git_url)

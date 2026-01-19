@@ -56,14 +56,14 @@ async def _trigger_feature_refresh(project_name: str) -> None:
     Trigger an immediate beads-sync pull to refresh local cache.
     Called after creating an issue so UI updates immediately.
     """
-    from server.services.beads_sync_manager import get_beads_sync_manager
+    from server.services.beads_manager import get_beads_sync_manager
     from registry import get_project_git_url
 
     try:
         git_url = get_project_git_url(project_name)
         if git_url:
-            sync_manager = get_beads_sync_manager(project_name, git_url)
-            success, _ = await sync_manager.pull_latest()
+            manager = get_beads_sync_manager(project_name, git_url)
+            success, _ = await manager.pull_latest()
             if success:
                 logger.info(f"Beads-sync refreshed for {project_name}")
             else:

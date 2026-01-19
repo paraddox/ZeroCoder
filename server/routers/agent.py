@@ -289,8 +289,8 @@ async def start_all_containers(project_name: str):
 
     # Register with BeadsSyncManager to ensure we can pull beads-sync data
     try:
-        from ..services.beads_sync_manager import get_beads_sync_manager
-        beads_manager = get_beads_sync_manager(project_name, git_url)
+        from ..services.beads_manager import get_beads_manager
+        beads_manager = await get_beads_manager(project_name, git_url)
         await beads_manager.ensure_cloned()
     except Exception as e:
         # Non-fatal - beads sync might not be set up yet for new projects

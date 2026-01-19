@@ -7,41 +7,20 @@ of running `bd` directly. The host runs `bd` commands on the project directory.
 
 This provides:
 - Centralized beads access (no direct bd in containers)
-- Concurrency control via per-project locks
+- Concurrency control via unified BeadsManager
 - Consistent JSON responses
 """
 
-import asyncio
-import json
 import logging
 import re
-import subprocess
-import sys
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from ..services.beads_manager import get_beads_manager
+
 logger = logging.getLogger(__name__)
-
-# Per-project locks for write operations
-_beads_locks: dict[str, asyncio.Lock] = {}
-
-
-def _get_project_path(project_name: str) -> Path:
-    """Get beads-sync clone path for project.
-
-    The beads API must operate on the beads-sync clone (not the main project clone)
-    because the UI reads features from beads-sync via BeadsSyncManager. Write
-    operations must go to the same clone so data stays consistent.
-    """
-    _root = Path(__file__).parent.parent.parent
-    if str(_root) not in sys.path:
-        sys.path.insert(0, str(_root))
-
-    from registry import get_beads_sync_dir
-    return get_beads_sync_dir() / project_name
 
 
 def validate_project_name(name: str) -> str:
@@ -59,70 +38,6 @@ def validate_issue_id(issue_id: str) -> str:
     return issue_id
 
 
-async def _run_bd(project_path: Path, args: list[str], timeout: int = 60) -> dict[str, Any]:
-    """
-    Low-level bd command runner.
-
-    Args:
-        project_path: Path to project directory
-        args: Command arguments (e.g., ["list", "--json"])
-        timeout: Command timeout in seconds
-
-    Returns:
-        Parsed JSON output or error dict
-    """
-    try:
-        result = await asyncio.to_thread(
-            subprocess.run,
-            ["bd", "--no-daemon", *args],
-            cwd=project_path,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-
-        if result.returncode != 0:
-            error_msg = result.stderr.strip() if result.stderr else f"Command failed with exit code {result.returncode}"
-            logger.warning(f"bd command failed: bd {' '.join(args)} - {error_msg}")
-            return {"error": error_msg}
-
-        # Try to parse JSON output
-        stdout = result.stdout.strip()
-        if not stdout:
-            return {"success": True, "data": []}
-
-        try:
-            return {"success": True, "data": json.loads(stdout)}
-        except json.JSONDecodeError:
-            # Some commands return plain text
-            return {"success": True, "output": stdout}
-
-    except subprocess.TimeoutExpired:
-        return {"error": "Command timed out"}
-    except FileNotFoundError:
-        return {"error": "bd command not found. Is beads installed?"}
-    except Exception as e:
-        logger.exception(f"Error running beads command: {e}")
-        return {"error": str(e)}
-
-
-async def _sync_beads(project_path: Path) -> bool:
-    """
-    Run bd sync to synchronize with git remote.
-
-    This is best-effort - failures are logged but don't cause errors.
-
-    Returns:
-        True if sync succeeded, False otherwise
-    """
-    result = await _run_bd(project_path, ["sync"], timeout=30)
-    if "error" in result:
-        logger.warning(f"bd sync failed (best-effort): {result['error']}")
-        return False
-    logger.debug(f"bd sync completed for {project_path}")
-    return True
-
-
 async def run_beads_command(project_name: str, args: list[str]) -> dict[str, Any]:
     """
     Run bd command in project directory on host (for read operations).
@@ -136,21 +51,11 @@ async def run_beads_command(project_name: str, args: list[str]) -> dict[str, Any
     Returns:
         Parsed JSON output or error dict
     """
-    project_path = _get_project_path(project_name)
-
-    if not project_path:
-        return {"error": f"Project '{project_name}' not found in registry"}
-
-    if not project_path.exists():
-        return {"error": f"Project directory not found: {project_path}"}
-
-    # All beads operations serialized per-project to avoid conflicts
-    lock = _beads_locks.setdefault(project_name, asyncio.Lock())
-    async with lock:
-        # Sync before read to get latest state from remote
-        await _sync_beads(project_path)
-        # Run the actual command
-        return await _run_bd(project_path, args)
+    try:
+        manager = await get_beads_manager(project_name)
+        return await manager.run_read_command(args)
+    except ValueError as e:
+        return {"error": str(e)}
 
 
 async def run_beads_write_command(project_name: str, args: list[str]) -> dict[str, Any]:
@@ -160,25 +65,11 @@ async def run_beads_write_command(project_name: str, args: list[str]) -> dict[st
     Write operations (create, update, close, reopen) are serialized
     per-project to avoid race conditions. Syncs AFTER the write to push changes.
     """
-    project_path = _get_project_path(project_name)
-
-    if not project_path:
-        return {"error": f"Project '{project_name}' not found in registry"}
-
-    if not project_path.exists():
-        return {"error": f"Project directory not found: {project_path}"}
-
-    lock = _beads_locks.setdefault(project_name, asyncio.Lock())
-
-    async with lock:
-        # Run the write command
-        result = await _run_bd(project_path, args)
-
-        # Sync after write to push changes to remote
-        if "error" not in result:
-            await _sync_beads(project_path)
-
-        return result
+    try:
+        manager = await get_beads_manager(project_name)
+        return await manager.run_write_command(args)
+    except ValueError as e:
+        return {"error": str(e)}
 
 
 # =============================================================================

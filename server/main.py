@@ -49,7 +49,7 @@ from .services.container_manager import (
     start_agent_health_monitor,
     start_hound_trigger_monitor,
 )
-from .services.beads_sync_manager import initialize_all_projects, start_beads_sync_poller
+from .services.beads_manager import initialize_all_projects, start_beads_sync_poller
 from .services.branch_cleanup import cleanup_all_remote_branches
 from .services.task_cleanup import revert_all_in_progress_tasks
 from .websocket import project_websocket
