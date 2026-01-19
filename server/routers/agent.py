@@ -287,7 +287,7 @@ async def start_all_containers(project_name: str):
     target_count = project_info.get("target_container_count", 1)
     is_new = project_info.get("is_new", False)
 
-    # Register with BeadsSyncManager to ensure we can pull beads-sync data
+    # Initialize BeadsManager for this project
     try:
         from ..services.beads_manager import get_beads_manager
         beads_manager = await get_beads_manager(project_name, git_url)
@@ -477,7 +477,7 @@ async def start_all_containers(project_name: str):
     results = []
     for i, manager in enumerate(coding_managers):
         if i > 0:
-            # Wait between container starts to allow beads-sync coordination
+            # Wait between container starts to allow beads coordination
             logger.info(f"[StartAll] Waiting {STAGGER_DELAY_SECONDS}s before starting container {i+1}...")
             await asyncio.sleep(STAGGER_DELAY_SECONDS)
         try:

@@ -11,22 +11,17 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-PROTECTED_BRANCHES = {"main", "master", "beads-sync", "HEAD"}
+PROTECTED_BRANCHES = {"main", "master", "HEAD"}
 
 
 async def cleanup_remote_branches_for_project(project_name: str, git_url: str, local_path: Path) -> int:
     """
     Delete all remote feature branches for a project.
-    Uses the local clone at ~/.zerocoder/beads-sync/{project} or project path.
+    Uses the local project path.
 
     Returns number of branches deleted.
     """
-    from registry import get_beads_sync_dir
-
-    # Use beads-sync clone path if available, otherwise project path
-    work_dir = get_beads_sync_dir() / project_name
-    if not work_dir.exists():
-        work_dir = local_path
+    work_dir = local_path
     if not work_dir.exists():
         logger.warning(f"No local clone found for {project_name}")
         return 0

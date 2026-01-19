@@ -31,7 +31,7 @@ class TestProtectedBranches:
         """Test protected branches are correctly defined."""
         from server.services.branch_cleanup import PROTECTED_BRANCHES
 
-        expected = {"main", "master", "beads-sync", "HEAD"}
+        expected = {"main", "master", "HEAD"}
 
         assert PROTECTED_BRANCHES == expected
 
@@ -49,14 +49,6 @@ class TestProtectedBranches:
 
         assert "master" in PROTECTED_BRANCHES
 
-    @pytest.mark.unit
-    def test_beads_sync_is_protected(self):
-        """Test beads-sync branch is protected."""
-        from server.services.branch_cleanup import PROTECTED_BRANCHES
-
-        assert "beads-sync" in PROTECTED_BRANCHES
-
-
 # =============================================================================
 # Single Project Cleanup Tests
 # =============================================================================
@@ -70,14 +62,11 @@ class TestCleanupRemoteBranchesForProject:
         """Test returns 0 when no local clone exists."""
         from server.services.branch_cleanup import cleanup_remote_branches_for_project
 
-        with patch("registry.get_beads_sync_dir") as mock_sync_dir:
-            mock_sync_dir.return_value = tmp_path / "nonexistent"
-
-            result = await cleanup_remote_branches_for_project(
-                "test-project",
-                "https://github.com/user/repo.git",
-                tmp_path / "also-nonexistent"
-            )
+        result = await cleanup_remote_branches_for_project(
+            "test-project",
+            "https://github.com/user/repo.git",
+            tmp_path / "nonexistent"
+        )
 
         assert result == 0
 
@@ -90,24 +79,21 @@ class TestCleanupRemoteBranchesForProject:
         project_dir = tmp_path / "test-project"
         project_dir.mkdir()
 
-        with patch("registry.get_beads_sync_dir") as mock_sync_dir:
-            mock_sync_dir.return_value = tmp_path / "nonexistent"
+        with patch("subprocess.run") as mock_run:
+            # First call: fetch
+            mock_fetch = MagicMock(returncode=0)
+            # Second call: list branches - return only protected branches
+            mock_list = MagicMock(
+                returncode=0,
+                stdout="origin/main\norigin/master\n"
+            )
+            mock_run.side_effect = [mock_fetch, mock_list]
 
-            with patch("subprocess.run") as mock_run:
-                # First call: fetch
-                mock_fetch = MagicMock(returncode=0)
-                # Second call: list branches - return only protected branches
-                mock_list = MagicMock(
-                    returncode=0,
-                    stdout="origin/main\norigin/master\n"
-                )
-                mock_run.side_effect = [mock_fetch, mock_list]
-
-                result = await cleanup_remote_branches_for_project(
-                    "test-project",
-                    "https://github.com/user/repo.git",
-                    project_dir
-                )
+            result = await cleanup_remote_branches_for_project(
+                "test-project",
+                "https://github.com/user/repo.git",
+                project_dir
+            )
 
         assert result == 0
 
@@ -120,23 +106,20 @@ class TestCleanupRemoteBranchesForProject:
         project_dir = tmp_path / "test-project"
         project_dir.mkdir()
 
-        with patch("registry.get_beads_sync_dir") as mock_sync_dir:
-            mock_sync_dir.return_value = tmp_path / "nonexistent"
+        with patch("subprocess.run") as mock_run:
+            # Calls: fetch, list branches, delete branch1, delete branch2
+            mock_run.side_effect = [
+                MagicMock(returncode=0),  # fetch
+                MagicMock(returncode=0, stdout="origin/main\norigin/feature-1\norigin/feature-2\n"),  # list
+                MagicMock(returncode=0),  # delete feature-1
+                MagicMock(returncode=0),  # delete feature-2
+            ]
 
-            with patch("subprocess.run") as mock_run:
-                # Calls: fetch, list branches, delete branch1, delete branch2
-                mock_run.side_effect = [
-                    MagicMock(returncode=0),  # fetch
-                    MagicMock(returncode=0, stdout="origin/main\norigin/feature-1\norigin/feature-2\n"),  # list
-                    MagicMock(returncode=0),  # delete feature-1
-                    MagicMock(returncode=0),  # delete feature-2
-                ]
-
-                result = await cleanup_remote_branches_for_project(
-                    "test-project",
-                    "https://github.com/user/repo.git",
-                    project_dir
-                )
+            result = await cleanup_remote_branches_for_project(
+                "test-project",
+                "https://github.com/user/repo.git",
+                project_dir
+            )
 
         assert result == 2
 
@@ -149,52 +132,20 @@ class TestCleanupRemoteBranchesForProject:
         project_dir = tmp_path / "test-project"
         project_dir.mkdir()
 
-        with patch("registry.get_beads_sync_dir") as mock_sync_dir:
-            mock_sync_dir.return_value = tmp_path / "nonexistent"
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = [
+                MagicMock(returncode=0),  # fetch
+                MagicMock(returncode=0, stdout="origin/main\norigin/feature-1\n"),  # list
+                MagicMock(returncode=1),  # delete fails
+            ]
 
-            with patch("subprocess.run") as mock_run:
-                mock_run.side_effect = [
-                    MagicMock(returncode=0),  # fetch
-                    MagicMock(returncode=0, stdout="origin/main\norigin/feature-1\n"),  # list
-                    MagicMock(returncode=1),  # delete fails
-                ]
-
-                result = await cleanup_remote_branches_for_project(
-                    "test-project",
-                    "https://github.com/user/repo.git",
-                    project_dir
-                )
+            result = await cleanup_remote_branches_for_project(
+                "test-project",
+                "https://github.com/user/repo.git",
+                project_dir
+            )
 
         assert result == 0
-
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_uses_beads_sync_dir_if_available(self, tmp_path):
-        """Test uses beads-sync directory when available."""
-        from server.services.branch_cleanup import cleanup_remote_branches_for_project
-
-        beads_sync_dir = tmp_path / "beads-sync" / "test-project"
-        beads_sync_dir.mkdir(parents=True)
-
-        with patch("registry.get_beads_sync_dir") as mock_sync_dir:
-            mock_sync_dir.return_value = tmp_path / "beads-sync"
-
-            with patch("subprocess.run") as mock_run:
-                mock_run.side_effect = [
-                    MagicMock(returncode=0),  # fetch
-                    MagicMock(returncode=0, stdout="origin/main\n"),  # list
-                ]
-
-                await cleanup_remote_branches_for_project(
-                    "test-project",
-                    "https://github.com/user/repo.git",
-                    tmp_path / "project-dir"  # This should not be used
-                )
-
-        # Verify fetch was called with beads-sync dir
-        assert mock_run.called
-        call_args = mock_run.call_args_list[0][0][0]
-        assert str(beads_sync_dir) in str(call_args)
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -205,17 +156,14 @@ class TestCleanupRemoteBranchesForProject:
         project_dir = tmp_path / "test-project"
         project_dir.mkdir()
 
-        with patch("registry.get_beads_sync_dir") as mock_sync_dir:
-            mock_sync_dir.return_value = tmp_path / "nonexistent"
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = Exception("Network error")
 
-            with patch("subprocess.run") as mock_run:
-                mock_run.side_effect = Exception("Network error")
-
-                result = await cleanup_remote_branches_for_project(
-                    "test-project",
-                    "https://github.com/user/repo.git",
-                    project_dir
-                )
+            result = await cleanup_remote_branches_for_project(
+                "test-project",
+                "https://github.com/user/repo.git",
+                project_dir
+            )
 
         assert result == 0
 
@@ -347,25 +295,22 @@ class TestBranchFiltering:
         project_dir = tmp_path / "test-project"
         project_dir.mkdir()
 
-        with patch("registry.get_beads_sync_dir") as mock_sync_dir:
-            mock_sync_dir.return_value = tmp_path / "nonexistent"
+        with patch("subprocess.run") as mock_run:
+            # Return both protected and unprotected branches
+            mock_run.side_effect = [
+                MagicMock(returncode=0),  # fetch
+                MagicMock(
+                    returncode=0,
+                    stdout="origin/main\norigin/master\norigin/HEAD\norigin/feature-1\n"
+                ),  # list
+                MagicMock(returncode=0),  # delete feature-1 only
+            ]
 
-            with patch("subprocess.run") as mock_run:
-                # Return both protected and unprotected branches
-                mock_run.side_effect = [
-                    MagicMock(returncode=0),  # fetch
-                    MagicMock(
-                        returncode=0,
-                        stdout="origin/main\norigin/master\norigin/beads-sync\norigin/HEAD\norigin/feature-1\n"
-                    ),  # list
-                    MagicMock(returncode=0),  # delete feature-1 only
-                ]
-
-                result = await cleanup_remote_branches_for_project(
-                    "test-project",
-                    "https://github.com/user/repo.git",
-                    project_dir
-                )
+            result = await cleanup_remote_branches_for_project(
+                "test-project",
+                "https://github.com/user/repo.git",
+                project_dir
+            )
 
         # Only feature-1 should be deleted
         assert result == 1
@@ -379,20 +324,17 @@ class TestBranchFiltering:
         project_dir = tmp_path / "test-project"
         project_dir.mkdir()
 
-        with patch("registry.get_beads_sync_dir") as mock_sync_dir:
-            mock_sync_dir.return_value = tmp_path / "nonexistent"
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = [
+                MagicMock(returncode=0),  # fetch
+                MagicMock(returncode=0, stdout=""),  # empty list
+            ]
 
-            with patch("subprocess.run") as mock_run:
-                mock_run.side_effect = [
-                    MagicMock(returncode=0),  # fetch
-                    MagicMock(returncode=0, stdout=""),  # empty list
-                ]
-
-                result = await cleanup_remote_branches_for_project(
-                    "test-project",
-                    "https://github.com/user/repo.git",
-                    project_dir
-                )
+            result = await cleanup_remote_branches_for_project(
+                "test-project",
+                "https://github.com/user/repo.git",
+                project_dir
+            )
 
         assert result == 0
 
@@ -405,19 +347,16 @@ class TestBranchFiltering:
         project_dir = tmp_path / "test-project"
         project_dir.mkdir()
 
-        with patch("registry.get_beads_sync_dir") as mock_sync_dir:
-            mock_sync_dir.return_value = tmp_path / "nonexistent"
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = [
+                MagicMock(returncode=0),  # fetch
+                MagicMock(returncode=1, stdout=""),  # list fails
+            ]
 
-            with patch("subprocess.run") as mock_run:
-                mock_run.side_effect = [
-                    MagicMock(returncode=0),  # fetch
-                    MagicMock(returncode=1, stdout=""),  # list fails
-                ]
-
-                result = await cleanup_remote_branches_for_project(
-                    "test-project",
-                    "https://github.com/user/repo.git",
-                    project_dir
-                )
+            result = await cleanup_remote_branches_for_project(
+                "test-project",
+                "https://github.com/user/repo.git",
+                project_dir
+            )
 
         assert result == 0

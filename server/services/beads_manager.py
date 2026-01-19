@@ -9,10 +9,7 @@ Key design decisions:
 - Single asyncio.Lock per project for all operations (read/write/sync)
 - Reads use `bd list --json` for authoritative SQLite database access
 - Writes go through bd CLI, acquire lock, and sync after
-- No separate beads-sync clone needed - uses project directory directly
-
-This provides a single source of truth by reading from ~/.zerocoder/projects/{name}/
-instead of maintaining a separate beads-sync branch clone.
+- Uses project directory directly (~/.zerocoder/projects/{name}/)
 """
 
 import asyncio
@@ -47,8 +44,7 @@ class BeadsManager:
     - Write operations (bd CLI commands with locking)
     - Sync operations (push changes to remote)
 
-    Uses the project directory directly (~/.zerocoder/projects/{name}/)
-    instead of a separate beads-sync clone.
+    Uses the project directory directly (~/.zerocoder/projects/{name}/).
     """
 
     def __init__(self, project_name: str, git_remote_url: str):
@@ -61,7 +57,7 @@ class BeadsManager:
         """
         self.project_name = project_name
         self.git_remote_url = git_remote_url
-        # Use project directory directly instead of beads-sync clone
+        # Use project directory directly
         self.local_path = get_projects_dir() / project_name
         self._lock = asyncio.Lock()  # Single lock for all operations
         self._last_pull: datetime | None = None
@@ -92,9 +88,6 @@ class BeadsManager:
     async def pull_latest(self) -> tuple[bool, str]:
         """
         Pull latest from remote main branch.
-
-        Note: This is a simplified pull from main, not beads-sync.
-        The project directory is the single source of truth.
 
         Returns:
             Tuple of (success, message)

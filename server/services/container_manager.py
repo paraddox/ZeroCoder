@@ -566,77 +566,8 @@ class ContainerManager:
             return True
 
     # =========================================================================
-    # Beads-Sync Branch Management (for parallel container coordination)
+    # Git State Recovery
     # =========================================================================
-
-    async def ensure_beads_sync_branch(self) -> tuple[bool, str]:
-        """
-        Ensure beads-sync branch exists on remote (migration for existing projects).
-
-        This is called before agent starts to ensure the beads coordination
-        branch exists. If it doesn't exist, creates it from main.
-
-        Returns:
-            Tuple of (success, message)
-        """
-        if self._status != "running":
-            return False, "Container must be running to check beads-sync branch"
-
-        try:
-            # Check if beads-sync branch exists on remote
-            check_result = subprocess.run(
-                ["docker", "exec", "-u", "coder", self.container_name,
-                 "git", "ls-remote", "--heads", "origin", "beads-sync"],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-
-            if check_result.stdout.strip():
-                # Branch exists - just configure beads to use it
-                logger.info(f"beads-sync branch already exists for {self.project_name}")
-                subprocess.run(
-                    ["docker", "exec", "-u", "coder", self.container_name,
-                     "bd", "config", "set", "sync.branch", "beads-sync"],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                )
-                return True, "beads-sync branch already exists"
-
-            # Branch doesn't exist - create it
-            logger.info(f"Creating beads-sync branch for {self.project_name}")
-            await self._broadcast_output("[System] Creating beads-sync branch for parallel coordination...")
-
-            commands = [
-                ["git", "checkout", "main"],
-                ["git", "pull", "origin", "main"],
-                ["bd", "config", "set", "sync.branch", "beads-sync"],
-                ["git", "checkout", "-b", "beads-sync"],
-                ["git", "push", "-u", "origin", "beads-sync"],
-                ["git", "checkout", "main"],
-                ["bd", "sync"],
-            ]
-
-            for cmd in commands:
-                result = subprocess.run(
-                    ["docker", "exec", "-u", "coder", self.container_name] + cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=60,
-                )
-                if result.returncode != 0:
-                    logger.error(f"Failed to run {' '.join(cmd)}: {result.stderr}")
-                    return False, f"Failed to create beads-sync branch: {result.stderr}"
-
-            logger.info(f"Created beads-sync branch for {self.project_name}")
-            return True, "beads-sync branch created"
-
-        except subprocess.TimeoutExpired:
-            return False, "Timeout checking/creating beads-sync branch"
-        except Exception as e:
-            logger.exception(f"Error ensuring beads-sync branch for {self.project_name}")
-            return False, f"Error: {e}"
 
     async def recover_git_state(self) -> tuple[bool, str]:
         """
@@ -729,7 +660,7 @@ class ContainerManager:
 
     async def pre_agent_sync(self) -> tuple[bool, str]:
         """
-        Run before agent starts: ensure beads-sync exists, pull latest code, sync beads.
+        Run before agent starts: pull latest code and sync beads.
 
         This ensures the container has the latest code and beads state before
         the agent starts working. If git commands fail with recoverable errors,
@@ -758,14 +689,7 @@ class ContainerManager:
         try:
             await self._broadcast_output("[System] Syncing with remote before starting agent...")
 
-            # 1. Ensure beads-sync branch exists (migration for existing projects)
-            success, msg = await self.ensure_beads_sync_branch()
-            if not success:
-                logger.warning(f"ensure_beads_sync_branch failed: {msg}")
-                # Continue anyway - beads-sync may be optional for some setups
-
-            # 2. Fetch and pull latest from main
-            # Note: bd sync removed - beads operations now use host API
+            # Fetch and pull latest from main
             commands = [
                 (["git", "fetch", "origin"], "Fetching from origin"),
                 (["git", "checkout", "main"], "Checking out main"),

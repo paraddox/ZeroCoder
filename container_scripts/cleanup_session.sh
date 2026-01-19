@@ -8,7 +8,7 @@
 #   1. Abort stuck git operations (rebase, merge, cherry-pick)
 #   2. Switch to main branch
 #   3. Discard uncommitted changes (reset + clean)
-#   4. Delete local feature branches (keep main and beads-sync)
+#   4. Delete local feature branches (keep main)
 #   5. Pull latest from main
 #   6. Sync beads state
 
@@ -34,9 +34,9 @@ git checkout main 2>&1 || git reset --hard HEAD
 git reset --hard HEAD 2>&1 || true
 git clean -fd 2>&1 || true
 
-# 3. Delete feature branches (keep main and beads-sync)
+# 3. Delete feature branches (keep main)
 log "Cleaning up local branches..."
-for branch in $(git branch --list | grep -v '^\*' | grep -v 'main' | grep -v 'beads-sync'); do
+for branch in $(git branch --list | grep -v '^\*' | grep -v 'main'); do
     branch=$(echo "$branch" | tr -d ' ')
     if [ -n "$branch" ]; then
         git branch -D "$branch" 2>&1 || true
