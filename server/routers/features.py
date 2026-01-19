@@ -204,7 +204,7 @@ async def list_features(project_name: str):
     if git_url:
         try:
             from ..services.beads_manager import get_beads_manager
-            manager = get_beads_manager(project_name, git_url)
+            manager = await get_beads_manager(project_name, git_url)
             tasks = manager.get_tasks()
             if tasks:
                 features = [beads_task_to_feature(t) for t in tasks]
@@ -277,7 +277,7 @@ async def create_feature(project_name: str, feature: FeatureCreate):
         try:
             git_url = _get_project_git_url(project_name)
             if git_url:
-                manager = get_beads_manager(project_name, git_url)
+                manager = await get_beads_manager(project_name, git_url)
                 await manager.pull_latest()
         except Exception as e:
             logger.warning(f"Failed to refresh beads-sync: {e}")
@@ -363,7 +363,7 @@ async def delete_feature(project_name: str, feature_id: str):
         try:
             git_url = _get_project_git_url(project_name)
             if git_url:
-                manager = get_beads_manager(project_name, git_url)
+                manager = await get_beads_manager(project_name, git_url)
                 await manager.pull_latest()
         except Exception as e:
             logger.warning(f"Failed to refresh beads-sync: {e}")
@@ -411,7 +411,7 @@ async def skip_feature(project_name: str, feature_id: str):
         try:
             git_url = _get_project_git_url(project_name)
             if git_url:
-                manager = get_beads_manager(project_name, git_url)
+                manager = await get_beads_manager(project_name, git_url)
                 await manager.pull_latest()
         except Exception as e:
             logger.warning(f"Failed to refresh beads-sync: {e}")
@@ -471,7 +471,7 @@ async def update_feature(project_name: str, feature_id: str, update: FeatureUpda
         try:
             git_url = _get_project_git_url(project_name)
             if git_url:
-                manager = get_beads_manager(project_name, git_url)
+                manager = await get_beads_manager(project_name, git_url)
                 await manager.pull_latest()
         except Exception as e:
             logger.warning(f"Failed to refresh beads-sync: {e}")
@@ -526,7 +526,7 @@ async def reopen_feature(project_name: str, feature_id: str):
         try:
             git_url = _get_project_git_url(project_name)
             if git_url:
-                manager = get_beads_manager(project_name, git_url)
+                manager = await get_beads_manager(project_name, git_url)
                 await manager.pull_latest()
         except Exception as e:
             logger.warning(f"Failed to refresh beads-sync: {e}")
