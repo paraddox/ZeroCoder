@@ -1276,6 +1276,10 @@ class ContainerManager:
             self._user_started = False
             self._remove_user_started_marker()
 
+            # Clear verification state if this container was running verification
+            if self._last_agent_was_hound or self._last_agent_was_overseer:
+                clear_verification_state(self.project_name)
+
             logger.info(f"[STOP] Executing docker stop for {self.container_name}")
             result = subprocess.run(
                 ["docker", "stop", self.container_name],
@@ -1594,24 +1598,57 @@ class ContainerManager:
             elif self._user_started and not self.has_open_features():
                 # All features closed - determine verification flow
                 if self._last_agent_was_overseer:
-                    # Overseer found nothing - project is truly complete
-                    logger.info(f"Verification complete in {self.container_name}! All features verified.")
-                    await self._broadcast_output("[System] Verification complete! All features verified.")
-                    await self.stop()
-                    self.status = "completed"
-                    self._remove_user_started_marker()
-                    return True, "All features verified complete"
+                    # Overseer completed - check if it created new issues
+                    clear_verification_state(self.project_name)  # Release lock first
+
+                    if self.has_open_features():
+                        # Overseer created new issues - restart all containers to work on them
+                        logger.info(f"Overseer created new issues in {self.project_name}, restarting containers...")
+                        await self._broadcast_output("[System] Verification found issues. Restarting to fix them...")
+                        await self._restart_other_containers()
+                        self._last_agent_was_overseer = False
+                        self._last_agent_was_hound = False
+                        return await self.restart_agent()
+                    else:
+                        # Project is truly complete
+                        logger.info(f"Verification complete in {self.container_name}! All features verified.")
+                        await self._broadcast_output("[System] Verification complete! All features verified.")
+                        await self.stop()
+                        self.status = "completed"
+                        self._remove_user_started_marker()
+                        await self._stop_other_containers()
+                        return True, "All features verified complete"
+
                 elif self._last_agent_was_hound:
-                    # Hound just ran - now run overseer
-                    logger.info(f"Hound review complete in {self.container_name}, running overseer verification...")
-                    await self._broadcast_output("[System] Code review complete. Running final verification...")
-                    return await self.restart_with_overseer()
+                    # Hound completed - check if it reopened issues
+                    if self.has_open_features():
+                        # Hound reopened issues - release lock and restart all containers
+                        clear_verification_state(self.project_name)
+                        logger.info(f"Hound reopened issues in {self.project_name}, restarting containers...")
+                        await self._broadcast_output("[System] Code review found issues. Restarting to fix them...")
+                        await self._restart_other_containers()
+                        self._last_agent_was_overseer = False
+                        self._last_agent_was_hound = False
+                        return await self.restart_agent()
+                    else:
+                        # No issues reopened - proceed to overseer
+                        logger.info(f"Hound review complete in {self.container_name}, running overseer verification...")
+                        await self._broadcast_output("[System] Code review complete. Running final verification...")
+                        return await self.restart_with_overseer()
                 else:
-                    # Run hound first before overseer
-                    logger.info(f"All features closed in {self.container_name}, running hound review before overseer...")
-                    await self._broadcast_output("[System] All features complete. Running code review before verification...")
-                    task_ids = await self.get_recent_closed_tasks(30)
-                    return await self.restart_with_hound(task_ids)
+                    # Try to acquire verification lock - only one container runs hound/overseer
+                    if set_verification_running(self.project_name, True):
+                        # We got the lock - run hound
+                        logger.info(f"All features closed in {self.container_name}, running hound review before overseer...")
+                        await self._broadcast_output("[System] All features complete. Running code review before verification...")
+                        task_ids = await self.get_recent_closed_tasks(30)
+                        return await self.restart_with_hound(task_ids)
+                    else:
+                        # Another container is already running verification - wait (stop gracefully)
+                        logger.info(f"Verification already running for {self.project_name}, stopping {self.container_name}")
+                        await self._broadcast_output("[System] Verification running in another container. Waiting...")
+                        await self.stop()
+                        return True, "Stopped - verification running elsewhere"
             else:
                 logger.info(f"[EXIT] Not restarting: _user_started={self._user_started}, has_open_features={self.has_open_features()}")
             return True, "Instruction completed"
@@ -1756,11 +1793,13 @@ class ContainerManager:
                 try:
                     instruction = get_overseer_prompt(self.project_dir)
                 except FileNotFoundError:
+                    clear_verification_state(self.project_name)
                     return False, "No overseer_prompt.md found in project or templates"
             else:
                 try:
                     instruction = overseer_prompt_path.read_text()
                 except Exception as e:
+                    clear_verification_state(self.project_name)
                     return False, f"Failed to read overseer prompt: {e}"
 
             # Mark that we're running overseer
@@ -1771,9 +1810,36 @@ class ContainerManager:
             self._force_claude_sdk = False
 
             # Start container with instruction
-            return await self.start(instruction)
+            success, message = await self.start(instruction)
+            if not success:
+                clear_verification_state(self.project_name)
+            return success, message
+        except Exception as e:
+            clear_verification_state(self.project_name)
+            raise
         finally:
             self._restarting = False
+
+    async def _stop_other_containers(self) -> None:
+        """Stop all other containers for this project (called when project complete)."""
+        all_managers = get_all_container_managers(self.project_name)
+        for manager in all_managers:
+            if manager.container_number != self.container_number:
+                if manager.status == "running":
+                    logger.info(f"Stopping {manager.container_name} (project complete)")
+                    await manager.stop()
+                    manager.status = "completed"
+
+    async def _restart_other_containers(self) -> None:
+        """Restart stopped containers for this project (called when new issues found)."""
+        all_managers = get_all_container_managers(self.project_name)
+        for manager in all_managers:
+            if manager.container_number != self.container_number:
+                if manager.status == "stopped" and manager._user_started:
+                    logger.info(f"Restarting {manager.container_name} (new issues to work on)")
+                    manager._last_agent_was_overseer = False
+                    manager._last_agent_was_hound = False
+                    await manager.restart_agent()
 
     # =========================================================================
     # Hound Agent Support
@@ -1844,7 +1910,7 @@ class ContainerManager:
         current_closed = self._get_closed_count()
         return (current_closed // 10) * 10
 
-    async def get_recent_closed_tasks(self, limit: int = 30) -> list[str]:
+    async def get_recent_closed_tasks(self, limit: int = 15) -> list[str]:
         """Get the last N closed task IDs from container."""
         try:
             result = subprocess.run(
@@ -1890,11 +1956,13 @@ class ContainerManager:
                 try:
                     instruction = get_hound_prompt(self.project_dir)
                 except FileNotFoundError:
+                    clear_verification_state(self.project_name)
                     return False, "No hound_prompt.md found in project or templates"
             else:
                 try:
                     instruction = hound_prompt_path.read_text()
                 except Exception as e:
+                    clear_verification_state(self.project_name)
                     return False, f"Failed to read hound prompt: {e}"
 
             # Inject task IDs into prompt
@@ -1914,7 +1982,13 @@ class ContainerManager:
             self._save_hound_state(current_milestone)
 
             # Start container with instruction
-            return await self.start(instruction)
+            success, message = await self.start(instruction)
+            if not success:
+                clear_verification_state(self.project_name)
+            return success, message
+        except Exception as e:
+            clear_verification_state(self.project_name)
+            raise
         finally:
             self._restarting = False
 
@@ -2043,6 +2117,36 @@ _managers_lock = threading.Lock()
 
 # Alias for backward compatibility with tests
 _container_managers = _managers
+
+# Project-level verification state tracking
+# When all features are closed, only ONE container should run hound → overseer
+_verification_running: dict[str, bool] = {}  # project_name -> is_running
+_verification_lock = threading.Lock()
+
+
+def is_verification_running(project_name: str) -> bool:
+    """Check if hound/overseer verification is already running for project."""
+    with _verification_lock:
+        return _verification_running.get(project_name, False)
+
+
+def set_verification_running(project_name: str, running: bool) -> bool:
+    """
+    Set verification running state.
+
+    Returns False if already running (couldn't acquire).
+    """
+    with _verification_lock:
+        if running and _verification_running.get(project_name, False):
+            return False  # Already running, can't acquire
+        _verification_running[project_name] = running
+        return True
+
+
+def clear_verification_state(project_name: str) -> None:
+    """Clear verification state for project."""
+    with _verification_lock:
+        _verification_running.pop(project_name, None)
 
 
 def get_projects_dir() -> Path:
@@ -2562,14 +2666,14 @@ _hound_lock = threading.Lock()
 
 async def get_tasks_for_hound_review(project_name: str, container_name: str) -> list[str]:
     """
-    Get tasks for hound review: 10 most recently closed + 10 random from older closed.
+    Get tasks for hound review: last 15 closed tasks.
 
     Args:
         project_name: Name of the project
         container_name: Name of an existing coder container to query
 
     Returns:
-        List of task IDs to review (up to 20)
+        List of task IDs to review (up to 15)
     """
     try:
         # Get all closed tasks as JSON (beads_client returns all, we limit in Python)
@@ -2600,16 +2704,9 @@ async def get_tasks_for_hound_review(project_name: str, container_name: str) -> 
         if not all_closed:
             return []
 
-        # Split into new (last 10) and older tasks
-        new_tasks = all_closed[-10:]  # Most recent 10
-        older_tasks = all_closed[:-10] if len(all_closed) > 10 else []
-
-        # Random 10 from older closed tasks
-        random_count = min(10, len(older_tasks))
-        random_tasks = random.sample(older_tasks, random_count) if older_tasks else []
-
-        result_tasks = new_tasks + random_tasks
-        logger.info(f"Selected {len(new_tasks)} new + {len(random_tasks)} random = {len(result_tasks)} tasks for hound")
+        # Return last 15 closed tasks (most recent)
+        result_tasks = all_closed[-15:] if len(all_closed) >= 15 else all_closed
+        logger.info(f"Selected {len(result_tasks)} tasks for hound review")
         return result_tasks
 
     except Exception as e:
