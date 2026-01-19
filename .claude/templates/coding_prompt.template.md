@@ -23,14 +23,18 @@ Your context is precious (176K tokens). Fill it with implementation, not explora
 
 ## BEADS WORKFLOW (MANDATORY)
 
-**You MUST follow this workflow exactly - the monitoring system depends on it:**
+**You only need TWO commands:**
 
 ```bash
-beads_client ready                              # Get available features
-beads_client update <id> --status=in_progress   # Claim feature BEFORE coding
+beads_client claim                              # Get next available issue (atomic, returns issue JSON)
 beads_client close <id>                         # Mark complete AFTER validation passes
-beads_client sync                               # Sync at session end
 ```
+
+**That's it.** The `claim` command:
+- Finds the next open issue with no blockers
+- Marks it `in_progress`
+- Returns the full issue details as JSON
+- Uses server-side locking so different agents get different issues
 
 **Skipping these commands breaks the UI monitoring.** Users track your progress by reading beads status.
 
@@ -63,9 +67,8 @@ cat IMPLEMENTATION_PLAN.md 2>/dev/null || echo "No plan"
 # 3. Recent history (last 30 lines only)
 tail -30 IMPLEMENTATION_HISTORY.md 2>/dev/null || echo "No history"
 
-# 4. Get current feature
-beads_client stats
-beads_client ready
+# 4. Check project stats (optional context)
+beads_client stats 2>/dev/null || echo "Stats unavailable"
 ```
 
 **AGENTS.md** = operational knowledge (commands, patterns, gotchas)
@@ -89,26 +92,26 @@ Plans are cheap. Don't salvage stale plans.
 **Note:** You're on a worktree branch (e.g., `worktree-projectname-1`). Create feature branches from here.
 
 ```bash
-# Get first available feature
-FEATURE_ID=$(beads_client ready --json | jq -r '[.[] | select(.status == "open")][0].id')
+# Claim next available feature (atomic - server handles locking)
+CLAIM_RESULT=$(beads_client claim)
 
-if [ -z "$FEATURE_ID" ] || [ "$FEATURE_ID" = "null" ]; then
-    echo "No open features available - exiting"
+if [ $? -ne 0 ]; then
+    echo "No features available - exiting"
     exit 0
 fi
 
-# Claim it (REQUIRED before writing any code)
-beads_client update "$FEATURE_ID" --status=in_progress
+# Parse the claimed issue
+FEATURE_ID=$(echo "$CLAIM_RESULT" | jq -r '.id')
+FEATURE_TITLE=$(echo "$CLAIM_RESULT" | jq -r '.title' | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd '[:alnum:]-' | cut -c1-30)
 
-# Create feature branch from current worktree branch
-FEATURE_TITLE=$(beads_client show "$FEATURE_ID" --json | jq -r '.[0].title' | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd '[:alnum:]-' | cut -c1-30)
+# Create feature branch
 BRANCH="feature/${FEATURE_ID}-${FEATURE_TITLE}"
 git checkout -b "$BRANCH"
 
 echo "Claimed $FEATURE_ID on branch $BRANCH"
 ```
 
-**Note:** The server rejects duplicate claims - race conditions are handled.
+**The claim command is atomic** - the server uses locking so different agents get different issues.
 
 ---
 
@@ -133,9 +136,7 @@ chmod +x init.sh 2>/dev/null && ./init.sh || echo "No init.sh"
 
 **Before writing code, understand what exists vs what's needed.**
 
-```bash
-beads_client show "$FEATURE_ID"
-```
+Review the feature you claimed (stored in `$CLAIM_RESULT` from Step 2):
 
 Create IMPLEMENTATION_PLAN.md:
 
@@ -259,7 +260,7 @@ Before closing your feature, verify your own work:
 **ONLY after validation passes AND self-review is clean:**
 
 ```bash
-FEATURE_TITLE=$(beads_client show "$FEATURE_ID" --json | jq -r '.[0].title')
+# Close the feature (FEATURE_ID and FEATURE_TITLE from Step 2)
 beads_client close "$FEATURE_ID"
 git add . && git commit -m "Implement: $FEATURE_TITLE"
 ```
@@ -281,8 +282,7 @@ if [ -f IMPLEMENTATION_PLAN.md ]; then
     } >> IMPLEMENTATION_HISTORY.md && rm IMPLEMENTATION_PLAN.md
 fi
 
-# Get feature title
-FEATURE_TITLE=${FEATURE_TITLE:-$(beads_client show "$FEATURE_ID" --json | jq -r '.[0].title')}
+# FEATURE_TITLE was set in Step 2 from claim result
 
 # Commit if needed
 git add .
@@ -314,8 +314,6 @@ if [ -n "$WORKTREE_BRANCH" ]; then
     git checkout "$WORKTREE_BRANCH"
     git reset --hard main
 fi
-
-beads_client sync
 ```
 
 #### Error Path (blocked, timeout, or incomplete)
@@ -330,8 +328,6 @@ git commit -m "WIP: $FEATURE_TITLE (partial)" || true
 echo "## Blocked: $(date)" >> AGENTS.md
 echo "- Feature: $FEATURE_ID" >> AGENTS.md
 echo "- Reason: [what's blocking]" >> AGENTS.md
-
-beads_client sync
 ```
 
 **Exit now. Do NOT start another feature.** The system will start a fresh session.

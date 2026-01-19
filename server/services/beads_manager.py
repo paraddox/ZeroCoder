@@ -373,7 +373,7 @@ class BeadsManager:
             # Read from local database (background poller handles sync)
             return await self._run_bd(args)
 
-    async def run_write_command(self, args: list[str]) -> dict[str, Any]:
+    async def run_write_command(self, args: list[str], skip_lock: bool = False) -> dict[str, Any]:
         """
         Run a write command with project-level locking.
 
@@ -382,6 +382,7 @@ class BeadsManager:
 
         Args:
             args: Command arguments (e.g., ["create", "--title", "...", "--json"])
+            skip_lock: If True, skip acquiring the lock (caller already holds it)
 
         Returns:
             Parsed JSON output or error dict
@@ -389,7 +390,7 @@ class BeadsManager:
         if not self.local_path.exists():
             return {"error": f"Project directory not found: {self.local_path}"}
 
-        async with self._lock:
+        async def _do_write():
             # Run the write command
             result = await self._run_bd(args)
 
@@ -398,6 +399,12 @@ class BeadsManager:
                 await self._sync_with_remote()
 
             return result
+
+        if skip_lock:
+            return await _do_write()
+        else:
+            async with self._lock:
+                return await _do_write()
 
     # =========================================================================
     # High-level Write Operations

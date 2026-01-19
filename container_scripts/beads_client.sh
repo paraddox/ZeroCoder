@@ -77,6 +77,24 @@ case "$CMD" in
         curl -s "$BASE_URL/ready"
         ;;
 
+    claim)
+        # Atomically claim the next available issue
+        # Returns the claimed issue or exits with error if none available
+        RESPONSE=$(curl -s -X POST "$BASE_URL/claim")
+
+        # Check if claim was successful
+        SUCCESS=$(echo "$RESPONSE" | jq -r '.success // false')
+        if [ "$SUCCESS" = "true" ]; then
+            # Return the full issue JSON
+            echo "$RESPONSE" | jq '.issue'
+        else
+            # No issues available or error
+            MESSAGE=$(echo "$RESPONSE" | jq -r '.message // "No issues available"')
+            echo "Error: $MESSAGE" >&2
+            exit 1
+        fi
+        ;;
+
     show)
         ISSUE_ID="${1:-}"
         if [ -z "$ISSUE_ID" ]; then
@@ -342,14 +360,22 @@ case "$CMD" in
         cat << 'EOF'
 Beads API Client - Wrapper for host beads API
 
-Usage:
+=== CODER AGENT: You only need these 2 commands ===
+
+  beads_client.sh claim                 # Get next available issue (returns JSON)
+  beads_client.sh close <issue_id>      # Mark issue complete when done
+
+The claim command is ATOMIC - the server locks and assigns different
+issues to different agents. No need for ready/update/sync.
+
+=== OVERSEER/ADVANCED USAGE ===
+
   beads_client.sh list [--status=open|in_progress|closed]
   beads_client.sh ready
   beads_client.sh show <issue_id>
   beads_client.sh stats
   beads_client.sh create --title "..." [--type task] [--priority 2] [--description "..."]
   beads_client.sh update <issue_id> [--status in_progress] [--title "..."]
-  beads_client.sh close <issue_id> [--reason "..."]
   beads_client.sh reopen <issue_id>
   beads_client.sh sync
   beads_client.sh comments <issue_id> --add "comment text"

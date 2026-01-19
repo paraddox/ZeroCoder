@@ -211,6 +211,67 @@ async def create_issue(project_name: str, issue: IssueCreate):
     return result.get("data", {"success": True})
 
 
+@router.post("/claim")
+async def claim_next_issue(project_name: str):
+    """
+    Atomically claim the next available issue for work.
+
+    This endpoint finds the next open issue (no blockers), marks it as
+    in_progress, and returns it. Uses locking to ensure different callers
+    get different issues.
+
+    Returns:
+        200: Issue successfully claimed (includes full issue details)
+        204: No issues available to claim
+        500: Error occurred
+    """
+    project_name = validate_project_name(project_name)
+
+    try:
+        manager = await get_beads_manager(project_name)
+
+        # Use the manager's lock to make this atomic
+        async with manager._lock:
+            # Get list of ready issues (open, no blockers)
+            ready_result = await manager.run_read_command(["ready", "--json"])
+            if "error" in ready_result:
+                raise HTTPException(status_code=500, detail=ready_result["error"])
+
+            issues = ready_result.get("data", [])
+            if not issues:
+                # No issues available
+                return {"success": False, "message": "No issues available to claim", "issue": None}
+
+            # Get the first available issue
+            issue = issues[0]
+            issue_id = issue.get("id")
+
+            if not issue_id:
+                raise HTTPException(status_code=500, detail="Issue missing ID")
+
+            # Claim it - update to in_progress
+            update_result = await manager.run_write_command(
+                ["update", issue_id, "--status", "in_progress"],
+                skip_lock=True  # Already holding lock
+            )
+
+            if "error" in update_result:
+                raise HTTPException(status_code=500, detail=update_result["error"])
+
+            # Return the full issue details
+            return {
+                "success": True,
+                "message": f"Claimed issue {issue_id}",
+                "issue": issue
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error claiming next issue: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.patch("/update/{issue_id}")
 async def update_issue(project_name: str, issue_id: str, update: IssueUpdate):
     """
