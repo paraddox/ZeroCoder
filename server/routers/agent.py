@@ -524,27 +524,51 @@ async def start_all_containers(project_name: str):
         )
 
     # Start coding containers with staggered delays to prevent race conditions
-    # Each container needs time to claim a feature and sync before next starts
+    # Each container needs time to claim a feature before next starts
     STAGGER_DELAY_SECONDS = 10
 
-    async def start_coding_container(manager):
-        """Start a single coding container with the coding prompt."""
+    async def start_container_and_agent(manager, container_num: int):
+        """Start container and then start agent as background task."""
         manager._current_agent_type = "coder"
         manager._force_claude_sdk = False
-        return await manager.start(instruction=coding_prompt)
+
+        # First, ensure container is running (non-blocking)
+        container_ok, container_msg = await manager.start_container_only()
+        if not container_ok:
+            return False, f"Container failed: {container_msg}"
+
+        # Wait for container to be ready
+        await asyncio.sleep(2)
+
+        # Start agent as background task (don't await completion!)
+        # The send_instruction blocks until agent completes, so we use create_task
+        async def run_agent():
+            try:
+                return await manager.send_instruction(coding_prompt)
+            except Exception as e:
+                logger.error(f"Agent error in container {container_num}: {e}")
+                return False, str(e)
+
+        # Fire-and-forget: create task but don't await it
+        task = asyncio.create_task(run_agent())
+        manager._agent_task = task  # Store reference to prevent garbage collection
+
+        return True, f"Container {container_num} started, agent launching"
 
     results = []
     for i, manager in enumerate(coding_managers):
+        container_num = i + 1
         if i > 0:
             # Wait between container starts to allow beads coordination
-            logger.info(f"[StartAll] Waiting {STAGGER_DELAY_SECONDS}s before starting container {i+1}...")
+            logger.info(f"[StartAll] Waiting {STAGGER_DELAY_SECONDS}s before starting container {container_num}...")
             await asyncio.sleep(STAGGER_DELAY_SECONDS)
         try:
-            logger.info(f"[StartAll] Starting coding container {i+1}...")
-            result = await start_coding_container(manager)
+            logger.info(f"[StartAll] Starting coding container {container_num}...")
+            result = await start_container_and_agent(manager, container_num)
             results.append(result)
         except Exception as e:
-            results.append(e)
+            logger.error(f"[StartAll] Error starting container {container_num}: {e}")
+            results.append((False, str(e)))
 
     # Analyze results
     successes = 0
