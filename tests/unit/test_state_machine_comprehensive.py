@@ -63,7 +63,7 @@ class TestContainerStateMachine:
         # Simulate container starting
         container_manager._status = "running"
         container_manager.started_at = datetime.now()
-        container_manager.last_activity = datetime.now()
+        # Note: last_activity is DB-backed, not needed for status callback test
 
         container_manager._notify_status_change("running")
 
@@ -144,16 +144,16 @@ class TestContainerStateMachine:
         """Test that get_status_dict returns all required fields."""
         container_manager._status = "running"
         container_manager.started_at = datetime.now()
-        container_manager.last_activity = datetime.now()
+        # last_activity is DB-backed, use mock for testing
+        with patch("registry.get_last_activity", return_value=datetime.now()):
+            status = container_manager.get_status_dict()
 
-        status = container_manager.get_status_dict()
-
-        assert "status" in status
-        assert "container_name" in status
-        assert "started_at" in status
-        assert "idle_seconds" in status
-        assert "agent_running" in status
-        assert "graceful_stop_requested" in status
+            assert "status" in status
+            assert "container_name" in status
+            assert "started_at" in status
+            assert "idle_seconds" in status
+            assert "agent_running" in status
+            assert "graceful_stop_requested" in status
 class TestContainerStateInvariants:
     """Tests for state machine invariants that must always hold."""
 
@@ -188,17 +188,19 @@ class TestContainerStateInvariants:
     @pytest.mark.unit
     def test_idle_seconds_zero_when_no_activity(self, container_manager):
         """Invariant: idle_seconds should be 0 when no activity recorded."""
-        container_manager.last_activity = None
-        assert container_manager.get_idle_seconds() == 0
+        # last_activity is DB-backed, use mock for testing
+        with patch("registry.get_last_activity", return_value=None):
+            assert container_manager.get_idle_seconds() == 0
 
     @pytest.mark.unit
     def test_idle_calculation_increases_over_time(self, container_manager):
         """Invariant: idle_seconds should increase as time passes."""
-        container_manager.last_activity = datetime.now() - timedelta(seconds=10)
-        idle1 = container_manager.get_idle_seconds()
+        # last_activity is DB-backed, use mock for testing
+        with patch("registry.get_last_activity", return_value=datetime.now() - timedelta(seconds=10)):
+            idle1 = container_manager.get_idle_seconds()
 
-        container_manager.last_activity = datetime.now() - timedelta(seconds=20)
-        idle2 = container_manager.get_idle_seconds()
+        with patch("registry.get_last_activity", return_value=datetime.now() - timedelta(seconds=20)):
+            idle2 = container_manager.get_idle_seconds()
 
         assert idle2 > idle1
 
@@ -323,32 +325,33 @@ class TestAgentStateMachine:
     @pytest.mark.unit
     def test_is_agent_stuck_requires_running_agent(self, container_manager):
         """Test is_agent_stuck only true when agent running but no output."""
-        container_manager.last_activity = datetime.now() - timedelta(minutes=15)
+        # last_activity is DB-backed, use mock for testing
+        with patch("registry.get_last_activity", return_value=datetime.now() - timedelta(minutes=15)):
+            # Not stuck if agent not running
+            with patch.object(container_manager, "is_agent_running", return_value=False):
+                assert container_manager.is_agent_stuck() is False
 
-        # Not stuck if agent not running
-        with patch.object(container_manager, "is_agent_running", return_value=False):
-            assert container_manager.is_agent_stuck() is False
-
-        # Stuck if agent running and no output
-        with patch.object(container_manager, "is_agent_running", return_value=True):
-            assert container_manager.is_agent_stuck() is True
+            # Stuck if agent running and no output
+            with patch.object(container_manager, "is_agent_running", return_value=True):
+                assert container_manager.is_agent_stuck() is True
 
     @pytest.mark.unit
     def test_is_idle_based_on_last_activity(self, container_manager):
         """Test is_idle calculation based on last_activity."""
         from server.services.container_manager import IDLE_TIMEOUT_MINUTES
 
+        # last_activity is DB-backed, use mock for testing
         # No activity - not idle
-        container_manager.last_activity = None
-        assert container_manager.is_idle() is False
+        with patch("registry.get_last_activity", return_value=None):
+            assert container_manager.is_idle() is False
 
         # Recent activity - not idle
-        container_manager.last_activity = datetime.now() - timedelta(minutes=5)
-        assert container_manager.is_idle() is False
+        with patch("registry.get_last_activity", return_value=datetime.now() - timedelta(minutes=5)):
+            assert container_manager.is_idle() is False
 
         # Old activity - idle
-        container_manager.last_activity = datetime.now() - timedelta(minutes=IDLE_TIMEOUT_MINUTES + 1)
-        assert container_manager.is_idle() is True
+        with patch("registry.get_last_activity", return_value=datetime.now() - timedelta(minutes=IDLE_TIMEOUT_MINUTES + 1)):
+            assert container_manager.is_idle() is True
 class TestAgentTypeTransitions:
     """Tests for agent type transitions during container lifecycle."""
 

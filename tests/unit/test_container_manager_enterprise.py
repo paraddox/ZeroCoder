@@ -758,13 +758,20 @@ class TestGracefulStop:
     @pytest.mark.unit
     def test_graceful_stop_requested_initially_false(self, container_manager):
         """Test graceful stop requested is initially False."""
-        assert container_manager._graceful_stop_requested is False
+        # _graceful_stop_requested is DB-backed, use mock for testing
+        with patch("registry.is_graceful_stop_requested", return_value=False):
+            assert container_manager._graceful_stop_requested is False
 
     @pytest.mark.unit
     def test_graceful_stop_flag_can_be_set(self, container_manager):
-        """Test graceful stop flag can be set directly."""
-        container_manager._graceful_stop_requested = True
-        assert container_manager._graceful_stop_requested is True
+        """Test graceful stop flag can be set and read via DB."""
+        # _graceful_stop_requested is DB-backed, use mocks for testing
+        with patch("registry.set_graceful_stop") as mock_set:
+            container_manager._graceful_stop_requested = True
+            mock_set.assert_called_once()
+
+        with patch("registry.is_graceful_stop_requested", return_value=True):
+            assert container_manager._graceful_stop_requested is True
 # =============================================================================
 # Agent Type Tests
 # =============================================================================

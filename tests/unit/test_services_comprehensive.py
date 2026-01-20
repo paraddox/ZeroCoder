@@ -288,33 +288,38 @@ class TestContainerManagerIdleTimeout:
     @pytest.mark.unit
     def test_is_idle_false_when_no_activity(self, container_manager):
         """Test is_idle returns False when no activity recorded."""
-        container_manager.last_activity = None
-        assert container_manager.is_idle() is False
+        # last_activity is DB-backed, use mock for testing
+        with patch("registry.get_last_activity", return_value=None):
+            assert container_manager.is_idle() is False
 
     @pytest.mark.unit
     def test_is_idle_false_when_recent_activity(self, container_manager):
         """Test is_idle returns False when activity is recent."""
-        container_manager.last_activity = datetime.now() - timedelta(minutes=5)
-        assert container_manager.is_idle() is False
+        # last_activity is DB-backed, use mock for testing
+        with patch("registry.get_last_activity", return_value=datetime.now() - timedelta(minutes=5)):
+            assert container_manager.is_idle() is False
 
     @pytest.mark.unit
     def test_is_idle_true_when_old_activity(self, container_manager):
         """Test is_idle returns True when activity is old."""
-        container_manager.last_activity = datetime.now() - timedelta(minutes=20)
-        assert container_manager.is_idle() is True
+        # last_activity is DB-backed, use mock for testing
+        with patch("registry.get_last_activity", return_value=datetime.now() - timedelta(minutes=20)):
+            assert container_manager.is_idle() is True
 
     @pytest.mark.unit
     def test_get_idle_seconds_zero_when_no_activity(self, container_manager):
         """Test get_idle_seconds returns 0 when no activity."""
-        container_manager.last_activity = None
-        assert container_manager.get_idle_seconds() == 0
+        # last_activity is DB-backed, use mock for testing
+        with patch("registry.get_last_activity", return_value=None):
+            assert container_manager.get_idle_seconds() == 0
 
     @pytest.mark.unit
     def test_get_idle_seconds_accurate(self, container_manager):
         """Test get_idle_seconds returns accurate count."""
-        container_manager.last_activity = datetime.now() - timedelta(seconds=60)
-        idle = container_manager.get_idle_seconds()
-        assert 55 <= idle <= 65  # Allow some tolerance
+        # last_activity is DB-backed, use mock for testing
+        with patch("registry.get_last_activity", return_value=datetime.now() - timedelta(seconds=60)):
+            idle = container_manager.get_idle_seconds()
+            assert 55 <= idle <= 65  # Allow some tolerance
 class TestContainerManagerAgentStuck:
     """Tests for stuck agent detection."""
 
@@ -342,22 +347,25 @@ class TestContainerManagerAgentStuck:
     @pytest.mark.unit
     def test_is_agent_stuck_false_when_no_activity(self, container_manager):
         """Test is_agent_stuck returns False when no activity recorded."""
-        container_manager.last_activity = None
-        assert container_manager.is_agent_stuck() is False
+        # last_activity is DB-backed, use mock for testing
+        with patch("registry.get_last_activity", return_value=None):
+            assert container_manager.is_agent_stuck() is False
 
     @pytest.mark.unit
     def test_is_agent_stuck_false_when_agent_not_running(self, container_manager):
         """Test is_agent_stuck returns False when agent not running."""
-        container_manager.last_activity = datetime.now() - timedelta(minutes=15)
-        with patch.object(container_manager, "is_agent_running", return_value=False):
-            assert container_manager.is_agent_stuck() is False
+        # last_activity is DB-backed, use mock for testing
+        with patch("registry.get_last_activity", return_value=datetime.now() - timedelta(minutes=15)):
+            with patch.object(container_manager, "is_agent_running", return_value=False):
+                assert container_manager.is_agent_stuck() is False
 
     @pytest.mark.unit
     def test_is_agent_stuck_true_when_no_output(self, container_manager):
         """Test is_agent_stuck returns True when agent running but no output."""
-        container_manager.last_activity = datetime.now() - timedelta(minutes=15)
-        with patch.object(container_manager, "is_agent_running", return_value=True):
-            assert container_manager.is_agent_stuck() is True
+        # last_activity is DB-backed, use mock for testing
+        with patch("registry.get_last_activity", return_value=datetime.now() - timedelta(minutes=15)):
+            with patch.object(container_manager, "is_agent_running", return_value=True):
+                assert container_manager.is_agent_stuck() is True
 class TestContainerManagerCallbacks:
     """Tests for callback management."""
 

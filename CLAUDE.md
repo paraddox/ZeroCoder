@@ -104,6 +104,13 @@ Pre-commit hooks run unit tests before each commit. To enable:
 
 To bypass hooks when needed: `git commit --no-verify`
 
+## Development Rules
+
+### Pre-Commit Hooks
+- **NEVER skip pre-commit hooks** with `--no-verify`
+- All commits MUST pass pre-commit tests
+- If tests fail, fix them before committing
+
 ## Architecture
 
 ### Core Python Modules
