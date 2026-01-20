@@ -324,11 +324,13 @@ def refresh_project_prompts(project_dir: Path) -> list[str]:
     is_existing = is_existing_repo_project(project_dir)
 
     # Define template mappings based on project type
+    # Both project types now use the same consolidated overseer template
+    # which adapts its behavior based on whether app_spec.txt exists
     if is_existing:
-        # Existing repos use different template variants
+        # Existing repos skip initializer
         templates = [
             ("coding_prompt.template.md", "coding_prompt.md"),
-            ("overseer_prompt_existing.template.md", "overseer_prompt.md"),
+            ("overseer_prompt.template.md", "overseer_prompt.md"),
         ]
     else:
         # New projects with app_spec
@@ -465,14 +467,14 @@ def scaffold_existing_repo(project_dir: Path) -> None:
         except (OSError, PermissionError) as e:
             print(f"  Warning: Could not create CLAUDE.md: {e}")
 
-    # 2. Create prompts directory with existing-repo variants
+    # 2. Create prompts directory with templates
     prompts_dir = get_project_prompts_dir(project_dir)
     prompts_dir.mkdir(parents=True, exist_ok=True)
 
-    # Template mappings for existing repos
+    # Template mappings for existing repos (uses same consolidated overseer template)
     templates = [
         ("coding_prompt.template.md", "coding_prompt.md"),
-        ("overseer_prompt_existing.template.md", "overseer_prompt.md"),
+        ("overseer_prompt.template.md", "overseer_prompt.md"),
     ]
 
     for template_name, dest_name in templates:

@@ -210,6 +210,7 @@ Defense-in-depth approach using Docker containers:
 - `.claude/skills/frontend-design/SKILL.md` - Skill for distinctive UI design
 - `.claude/templates/` - Prompt templates copied to new projects
 - `.claude/templates/project_claude.md.template` - CLAUDE.md template with beads workflow instructions
+- `.claude/templates/overseer_prompt.template.md` - Unified overseer prompt (adapts to project type)
 
 ## Key Patterns
 
@@ -224,9 +225,32 @@ Defense-in-depth approach using Docker containers:
 2. Container runs Claude Code with project-specific `CLAUDE.md`
 3. Claude implements ONE feature + verifies 3 others, then exits
 4. System detects exit, checks for remaining features:
-   - If features remain → auto-restart with fresh context
-   - If all done → mark `completed`, stop container
+   - If features remain → check for 10% milestone, then auto-restart with fresh context
+   - If all done → run final overseer verification, then mark `completed`
 5. Health monitor handles crash recovery (every 5 min)
+
+### Overseer Agent
+
+The **Overseer Agent** runs periodic quality verification at 10% completion milestones:
+
+**Trigger Points:**
+- At every 10% milestone (10%, 20%, 30%... up to 90%) - runs in parallel with coders
+- At 100% completion - final verification before marking project complete
+
+**Verification Tasks:**
+1. **Test Suite** - Run all tests, create issues for failures
+2. **Spec Verification** (if `app_spec.txt` exists) - Sample 15 features and verify implementations
+3. **Code Quality Scan** - Search for TODOs, placeholders, empty functions
+
+**Philosophy:** Better to create a false positive issue than miss a real problem.
+
+**Template:** `.claude/templates/overseer_prompt.template.md` (unified for all project types)
+
+**Key Behaviors:**
+- Overseer does NOT implement fixes - only creates/reopens issues
+- Uses parallel subagents (3x) for efficient spec verification
+- Creates issues aggressively to catch problems early
+- Runs in container 0 (`zerocoder-{project}-0`), separate from coding containers
 
 ### Real-time UI Updates
 

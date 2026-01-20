@@ -144,6 +144,8 @@ class FeatureStatsCache(Base):
     percentage = Column(Float, default=0.0)
     last_polled_at = Column(DateTime, nullable=False)
     poll_error = Column(String(500), nullable=True)
+    # Track last overseer milestone (0, 10, 20, ..., 90) for 10% periodic runs
+    last_overseer_milestone = Column(Integer, default=0)
 
 
 # =============================================================================
@@ -884,6 +886,82 @@ def list_all_containers() -> list[dict]:
             }
             for c in containers
         ]
+    finally:
+        session.close()
+
+
+# =============================================================================
+# Overseer Milestone Tracking Functions
+# =============================================================================
+
+def get_overseer_milestone(project_name: str) -> int:
+    """
+    Get the last overseer milestone for a project.
+
+    Args:
+        project_name: The project name.
+
+    Returns:
+        Last overseer milestone (0, 10, 20, ..., 90), or 0 if not found.
+    """
+    _, SessionLocal = _get_engine()
+    session = SessionLocal()
+    try:
+        cache = session.query(FeatureStatsCache).filter_by(project_name=project_name).first()
+        if cache is None:
+            return 0
+        return cache.last_overseer_milestone or 0
+    finally:
+        session.close()
+
+
+def update_overseer_milestone(project_name: str, milestone: int) -> bool:
+    """
+    Update the last overseer milestone for a project.
+
+    Args:
+        project_name: The project name.
+        milestone: The milestone value (0, 10, 20, ..., 90).
+
+    Returns:
+        True if updated, False if stats cache not found.
+    """
+    with _get_session() as session:
+        cache = session.query(FeatureStatsCache).filter_by(project_name=project_name).first()
+        if cache is None:
+            return False
+        cache.last_overseer_milestone = milestone
+    logger.info(f"Updated overseer milestone for {project_name} to {milestone}%")
+    return True
+
+
+def get_cached_stats(project_name: str) -> dict[str, Any] | None:
+    """
+    Get cached feature stats for a project.
+
+    Args:
+        project_name: The project name.
+
+    Returns:
+        Stats dict with pending, in_progress, done, total, percentage,
+        last_overseer_milestone, or None if not found.
+    """
+    _, SessionLocal = _get_engine()
+    session = SessionLocal()
+    try:
+        cache = session.query(FeatureStatsCache).filter_by(project_name=project_name).first()
+        if cache is None:
+            return None
+        return {
+            "pending": cache.pending_count,
+            "in_progress": cache.in_progress_count,
+            "done": cache.done_count,
+            "total": cache.total_count,
+            "percentage": cache.percentage,
+            "last_overseer_milestone": cache.last_overseer_milestone or 0,
+            "last_polled_at": cache.last_polled_at.isoformat() if cache.last_polled_at else None,
+            "poll_error": cache.poll_error,
+        }
     finally:
         session.close()
 

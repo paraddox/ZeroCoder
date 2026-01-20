@@ -185,6 +185,8 @@ class ContainerManager:
         self._current_agent_type: Literal["coder", "overseer"] = "coder"
         # Force Claude SDK for initializer (regardless of project model)
         self._force_claude_sdk: bool = False
+        # Track if this overseer is a milestone run (vs final 100% run)
+        self._is_milestone_overseer: bool = False
         # Track current feature being worked on (detected from logs)
         self._current_feature: str | None = None
         # Model to use when forcing Claude SDK (defaults to Opus 4.5)
@@ -1567,16 +1569,28 @@ class ContainerManager:
                 # Continue anyway - cleanup failure shouldn't block flow
 
             if self._user_started and self.has_open_features():
-                # Features remain - restart coding agent
+                # Features remain - check for milestone trigger, then restart coding agent
                 logger.info(f"[EXIT] Features remain in {self.container_name}, restarting coding agent...")
                 await self._broadcast_output("[System] Session complete. Starting fresh context for next task...")
+
+                # Check for 10% milestone BEFORE restarting (spawns overseer in parallel if milestone hit)
+                await self._check_overseer_milestone()
+
                 self._last_agent_was_overseer = False
                 return await self.restart_agent()
             elif self._user_started and not self.has_open_features():
                 # All features closed - determine verification flow
                 if self._last_agent_was_overseer:
-                    # Overseer completed - check if it created new issues
+                    # Overseer completed - check if it's a milestone overseer or final overseer
                     clear_verification_state(self.project_name)  # Release lock first
+
+                    if self._is_milestone_overseer:
+                        # Milestone overseer completed - just stop, don't affect other containers
+                        logger.info(f"Milestone overseer completed in {self.container_name}")
+                        await self._broadcast_output("[System] Milestone verification complete.")
+                        await self.stop()
+                        self._is_milestone_overseer = False
+                        return True, "Milestone verification complete"
 
                     if self.has_open_features():
                         # Overseer created new issues - restart all containers to work on them
@@ -1718,6 +1732,103 @@ class ContainerManager:
         finally:
             self._restarting = False
 
+    async def _check_overseer_milestone(self) -> None:
+        """
+        Check if we've hit a new 10% milestone and spawn overseer if so.
+
+        Overseer runs at every 10% milestone (10%, 20%, 30%, ... up to 90%).
+        The overseer runs in parallel with coding agents (doesn't block them).
+        """
+        from registry import get_cached_stats, update_overseer_milestone
+
+        stats = get_cached_stats(self.project_name)
+        if not stats or stats.get('total', 0) == 0:
+            return
+
+        # Calculate current milestone (floor to nearest 10%)
+        percentage = stats.get('percentage', 0)
+        current_milestone = int(percentage // 10) * 10
+        last_milestone = stats.get('last_overseer_milestone', 0)
+
+        # Trigger at 10%, 20%, 30%... up to 90% (not at 0% or 100%)
+        if current_milestone > last_milestone and 0 < current_milestone < 100:
+            logger.info(f"[{self.project_name}] Hit {current_milestone}% milestone - spawning overseer")
+            await self._spawn_overseer_at_milestone(current_milestone)
+
+    async def _spawn_overseer_at_milestone(self, milestone: int) -> None:
+        """
+        Spawn overseer container at 10% milestone (runs in parallel).
+
+        The overseer runs in a separate container and doesn't block coding agents.
+        It verifies implementations and creates issues for problems found.
+
+        Args:
+            milestone: The milestone percentage (10, 20, 30, ..., 90)
+        """
+        from registry import update_overseer_milestone
+        from prompts import get_overseer_prompt
+
+        # Update milestone tracker immediately to prevent duplicate triggers
+        update_overseer_milestone(self.project_name, milestone)
+
+        # Check if overseer already running (use existing verification lock)
+        if not set_verification_running(self.project_name, True):
+            logger.info(f"[{self.project_name}] Overseer already running, skipping milestone trigger")
+            return
+
+        try:
+            await self._broadcast_output(f"[System] {milestone}% milestone reached - running quality verification...")
+
+            # Create overseer container (use container_number=0 for overseer)
+            overseer_manager = ContainerManager(
+                project_name=self.project_name,
+                git_url=self.git_url,
+                container_number=0  # Overseer always uses container 0
+            )
+            overseer_manager._current_agent_type = "overseer"
+            overseer_manager._is_milestone_overseer = True  # Track that this is a milestone run
+            overseer_manager._last_agent_was_overseer = True  # Mark as overseer for exit handling
+            overseer_manager._user_started = True  # Mark as user-started for proper handling
+
+            # Get overseer prompt and start (runs in background, doesn't block)
+            try:
+                prompt = get_overseer_prompt(self.project_dir)
+            except FileNotFoundError:
+                logger.warning(f"[{self.project_name}] No overseer prompt found, skipping milestone verification")
+                set_verification_running(self.project_name, False)
+                return
+
+            # Start overseer in background task (doesn't block coding agent)
+            asyncio.create_task(self._run_milestone_overseer(overseer_manager, prompt, milestone))
+
+        except Exception as e:
+            logger.error(f"[{self.project_name}] Failed to spawn overseer: {e}")
+            set_verification_running(self.project_name, False)
+
+    async def _run_milestone_overseer(
+        self,
+        overseer_manager: "ContainerManager",
+        prompt: str,
+        milestone: int
+    ) -> None:
+        """
+        Run the milestone overseer and handle its completion.
+
+        This runs in a background task and releases the verification lock when done.
+        """
+        try:
+            logger.info(f"[{self.project_name}] Starting milestone overseer at {milestone}%")
+            success, message = await overseer_manager.start(prompt)
+            if not success:
+                logger.warning(f"[{self.project_name}] Milestone overseer failed to start: {message}")
+        except Exception as e:
+            logger.error(f"[{self.project_name}] Milestone overseer error: {e}")
+        finally:
+            # Note: verification lock is released in _handle_agent_exit when overseer completes
+            # For milestone overseers, we release it here if the start failed
+            if overseer_manager._status != "running":
+                clear_verification_state(self.project_name)
+
     async def restart_with_overseer(self) -> tuple[bool, str]:
         """
         Restart the agent with the overseer prompt.
@@ -1757,8 +1868,9 @@ class ContainerManager:
                     clear_verification_state(self.project_name)
                     return False, f"Failed to read overseer prompt: {e}"
 
-            # Mark that we're running overseer
+            # Mark that we're running overseer (final verification, not milestone)
             self._last_agent_was_overseer = True
+            self._is_milestone_overseer = False  # This is the final 100% verification
             # Set agent type for OpenCode routing
             self._current_agent_type = "overseer"
             # Use project's configured model (not forced Claude SDK)
