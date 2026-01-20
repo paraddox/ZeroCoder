@@ -163,67 +163,56 @@ class TestFeatureProcessingPerformance:
     """Performance tests for feature/beads processing."""
 
     @pytest.mark.performance
-    def test_large_feature_file_parsing(self, tmp_path):
-        """Test parsing performance for large feature files."""
-        from server.routers.features import read_local_beads_features
+    def test_large_feature_conversion_parsing(self):
+        """Test conversion performance for large feature lists."""
+        from server.routers.features import beads_task_to_feature
 
-        project_dir = tmp_path / "large-features"
-        project_dir.mkdir()
-        beads_dir = project_dir / ".beads"
-        beads_dir.mkdir()
+        # Create large feature list
+        tasks = [
+            {
+                "id": f"feat-{i}",
+                "title": f"Feature {i} with a somewhat longer title",
+                "description": f"Description for feature {i}" * 20,
+                "status": ["open", "in_progress", "closed"][i % 3],
+                "priority": i % 5,
+                "labels": [f"label-{i % 10}"],
+            }
+            for i in range(5000)
+        ]
 
-        # Create large feature file
-        issues_file = beads_dir / "issues.jsonl"
-        with open(issues_file, "w") as f:
-            for i in range(5000):
-                feature = {
-                    "id": f"feat-{i}",
-                    "title": f"Feature {i} with a somewhat longer title",
-                    "description": f"Description for feature {i}" * 20,
-                    "status": ["open", "in_progress", "closed"][i % 3],
-                    "priority": i % 5,
-                    "labels": [f"label-{i % 10}"],
-                }
-                f.write(json.dumps(feature) + "\n")
-
-        # Measure parsing time
+        # Measure conversion time
         start = time.time()
-        result = read_local_beads_features(project_dir)
+        result = [beads_task_to_feature(t) for t in tasks]
         duration = time.time() - start
 
-        assert duration < 3.0, f"Parsing took too long: {duration}s"
+        assert duration < 3.0, f"Conversion took too long: {duration}s"
 
         # Result is a list
         assert isinstance(result, list)
         assert len(result) == 5000
 
     @pytest.mark.performance
-    def test_feature_sorting_performance(self, tmp_path):
+    def test_feature_sorting_performance(self):
         """Test sorting performance for many features."""
-        from server.routers.features import read_local_beads_features
-
-        project_dir = tmp_path / "sort-features"
-        project_dir.mkdir()
-        beads_dir = project_dir / ".beads"
-        beads_dir.mkdir()
+        from server.routers.features import beads_task_to_feature
+        import random
 
         # Create features with random priorities
-        import random
-        issues_file = beads_dir / "issues.jsonl"
-        with open(issues_file, "w") as f:
-            for i in range(1000):
-                feature = {
-                    "id": f"feat-{i}",
-                    "title": f"Feature {i}",
-                    "status": "open",
-                    "priority": random.randint(0, 4),
-                }
-                f.write(json.dumps(feature) + "\n")
+        tasks = [
+            {
+                "id": f"feat-{i}",
+                "title": f"Feature {i}",
+                "status": "open",
+                "priority": random.randint(0, 4),
+            }
+            for i in range(1000)
+        ]
 
-        # Measure with sorting
+        # Measure conversion with sorting
         start = time.time()
         for _ in range(10):
-            result = read_local_beads_features(project_dir)
+            features = [beads_task_to_feature(t) for t in tasks]
+            sorted_features = sorted(features, key=lambda f: f.get("priority", 999))
         duration = time.time() - start
 
         assert duration < 5.0, f"Sorting took too long: {duration}s"
@@ -367,32 +356,27 @@ class TestMemoryUsage:
         assert growth < 50000, f"Too many new objects: {growth}"
 
     @pytest.mark.performance
-    def test_feature_parsing_memory(self, tmp_path):
-        """Test that feature parsing doesn't accumulate memory."""
-        from server.routers.features import read_local_beads_features
+    def test_feature_conversion_memory(self):
+        """Test that feature conversion doesn't accumulate memory."""
+        from server.routers.features import beads_task_to_feature
 
-        project_dir = tmp_path / "mem-features"
-        project_dir.mkdir()
-        beads_dir = project_dir / ".beads"
-        beads_dir.mkdir()
-
-        # Create moderate feature file
-        issues_file = beads_dir / "issues.jsonl"
-        with open(issues_file, "w") as f:
-            for i in range(100):
-                f.write(json.dumps({
-                    "id": f"feat-{i}",
-                    "title": f"Feature {i}",
-                    "status": "open",
-                    "priority": 1
-                }) + "\n")
+        # Create moderate task list
+        tasks = [
+            {
+                "id": f"feat-{i}",
+                "title": f"Feature {i}",
+                "status": "open",
+                "priority": 1
+            }
+            for i in range(100)
+        ]
 
         gc.collect()
         initial = len(gc.get_objects())
 
-        # Parse many times
+        # Convert many times
         for _ in range(50):
-            result = read_local_beads_features(project_dir)
+            result = [beads_task_to_feature(t) for t in tasks]
             del result
 
         gc.collect()
@@ -554,34 +538,28 @@ class TestStressConditions:
         assert duration < 30.0, f"Stress test took too long: {duration}s"
 
     @pytest.mark.stress
-    def test_feature_file_corruption_recovery(self, tmp_path):
-        """Test recovery from corrupted feature file."""
-        from server.routers.features import read_local_beads_features
+    def test_feature_malformed_data_recovery(self):
+        """Test recovery from malformed task data during conversion."""
+        from server.routers.features import beads_task_to_feature
 
-        project_dir = tmp_path / "corrupt-test"
-        project_dir.mkdir()
-        beads_dir = project_dir / ".beads"
-        beads_dir.mkdir()
+        # Mix of valid and problematic task data
+        tasks = []
+        for i in range(100):
+            if i % 10 == 5:
+                # Missing required fields
+                tasks.append({"id": f"feat-{i}"})
+            else:
+                tasks.append({
+                    "id": f"feat-{i}",
+                    "title": f"Feature {i}",
+                    "status": "open",
+                    "priority": 1
+                })
 
-        # Write mix of valid and invalid JSON lines
-        issues_file = beads_dir / "issues.jsonl"
-        with open(issues_file, "w") as f:
-            for i in range(100):
-                if i % 10 == 5:
-                    f.write("CORRUPTED DATA\n")
-                else:
-                    f.write(json.dumps({
-                        "id": f"feat-{i}",
-                        "title": f"Feature {i}",
-                        "status": "open",
-                        "priority": 1
-                    }) + "\n")
-
-        # Should handle gracefully - returns a list
-        result = read_local_beads_features(project_dir)
-        assert isinstance(result, list)
-        # Should have at least some valid entries (those not corrupted)
-        assert len(result) > 0
+        # Should handle gracefully - returns converted features
+        results = [beads_task_to_feature(t) for t in tasks]
+        assert isinstance(results, list)
+        assert len(results) == 100  # All converted (some with defaults)
 # =============================================================================
 # Benchmark Tests
 # =============================================================================
@@ -610,37 +588,32 @@ class TestBenchmarks:
         assert max_time < 0.5, f"Max time too high: {max_time}s"
 
     @pytest.mark.benchmark
-    def test_baseline_feature_read_time(self, tmp_path):
-        """Establish baseline for feature reading."""
-        from server.routers.features import read_local_beads_features
+    def test_baseline_feature_conversion_time(self):
+        """Establish baseline for feature conversion."""
+        from server.routers.features import beads_task_to_feature
 
-        project_dir = tmp_path / "benchmark-features"
-        project_dir.mkdir()
-        beads_dir = project_dir / ".beads"
-        beads_dir.mkdir()
-
-        # Create 100 features
-        issues_file = beads_dir / "issues.jsonl"
-        with open(issues_file, "w") as f:
-            for i in range(100):
-                f.write(json.dumps({
-                    "id": f"feat-{i}",
-                    "title": f"Feature {i}",
-                    "status": "open",
-                    "priority": 1
-                }) + "\n")
+        # Create 100 tasks
+        tasks = [
+            {
+                "id": f"feat-{i}",
+                "title": f"Feature {i}",
+                "status": "open",
+                "priority": 1
+            }
+            for i in range(100)
+        ]
 
         times = []
         for _ in range(20):
             start = time.time()
-            read_local_beads_features(project_dir)
+            [beads_task_to_feature(t) for t in tasks]
             times.append(time.time() - start)
 
         avg_time = sum(times) / len(times)
         max_time = max(times)
 
-        assert avg_time < 0.05, f"Average read time too high: {avg_time}s"
-        assert max_time < 0.2, f"Max read time too high: {max_time}s"
+        assert avg_time < 0.05, f"Average conversion time too high: {avg_time}s"
+        assert max_time < 0.2, f"Max conversion time too high: {max_time}s"
 
     @pytest.mark.benchmark
     @pytest.mark.asyncio

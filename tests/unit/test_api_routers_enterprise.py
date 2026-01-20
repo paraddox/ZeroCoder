@@ -138,91 +138,77 @@ class TestProjectStats:
 
     @pytest.mark.unit
     def test_get_stats_empty_project(self, temp_project_dir):
-        """Test stats for project with no features."""
+        """Test stats for project with no features (mocked count_passing_tests)."""
+        import server.routers.projects as projects_module
         from server.routers.projects import get_project_stats
 
-        stats = get_project_stats(temp_project_dir)
+        original = projects_module._count_passing_tests
+        projects_module._count_passing_tests = lambda *args, **kwargs: (0, 0, 0)
 
-        assert stats.total == 0
-        assert stats.passing == 0
-        assert stats.in_progress == 0
-        assert stats.percentage == 0.0
+        try:
+            stats = get_project_stats(temp_project_dir)
+
+            assert stats.total == 0
+            assert stats.passing == 0
+            assert stats.in_progress == 0
+            assert stats.percentage == 0.0
+        finally:
+            projects_module._count_passing_tests = original
 
     @pytest.mark.unit
     def test_get_stats_with_features(self, temp_project_dir):
-        """Test stats with features present."""
+        """Test stats with features present (mocked count_passing_tests)."""
+        import server.routers.projects as projects_module
         from server.routers.projects import get_project_stats
 
-        # Create beads issues
-        beads_dir = temp_project_dir / ".beads"
-        beads_dir.mkdir(exist_ok=True)
-        issues_file = beads_dir / "issues.jsonl"
+        original = projects_module._count_passing_tests
+        projects_module._count_passing_tests = lambda *args, **kwargs: (2, 1, 4)
 
-        features = [
-            {"id": "feat-1", "status": "open", "title": "Feature 1"},
-            {"id": "feat-2", "status": "in_progress", "title": "Feature 2"},
-            {"id": "feat-3", "status": "closed", "title": "Feature 3"},
-            {"id": "feat-4", "status": "closed", "title": "Feature 4"},
-        ]
+        try:
+            stats = get_project_stats(temp_project_dir)
 
-        with open(issues_file, "w") as f:
-            for feat in features:
-                f.write(json.dumps(feat) + "\n")
-
-        stats = get_project_stats(temp_project_dir)
-
-        assert stats.total == 4
-        assert stats.passing == 2
-        assert stats.in_progress == 1
-        assert stats.percentage == 50.0
+            assert stats.total == 4
+            assert stats.passing == 2
+            assert stats.in_progress == 1
+            assert stats.percentage == 50.0
+        finally:
+            projects_module._count_passing_tests = original
 
     @pytest.mark.unit
     def test_get_stats_all_passing(self, temp_project_dir):
-        """Test stats when all features are passing."""
+        """Test stats when all features are passing (mocked count_passing_tests)."""
+        import server.routers.projects as projects_module
         from server.routers.projects import get_project_stats
 
-        beads_dir = temp_project_dir / ".beads"
-        beads_dir.mkdir(exist_ok=True)
-        issues_file = beads_dir / "issues.jsonl"
+        original = projects_module._count_passing_tests
+        projects_module._count_passing_tests = lambda *args, **kwargs: (2, 0, 2)
 
-        features = [
-            {"id": "feat-1", "status": "closed", "title": "Feature 1"},
-            {"id": "feat-2", "status": "closed", "title": "Feature 2"},
-        ]
+        try:
+            stats = get_project_stats(temp_project_dir)
 
-        with open(issues_file, "w") as f:
-            for feat in features:
-                f.write(json.dumps(feat) + "\n")
-
-        stats = get_project_stats(temp_project_dir)
-
-        assert stats.total == 2
-        assert stats.passing == 2
-        assert stats.percentage == 100.0
+            assert stats.total == 2
+            assert stats.passing == 2
+            assert stats.percentage == 100.0
+        finally:
+            projects_module._count_passing_tests = original
 
     @pytest.mark.unit
     def test_get_stats_none_passing(self, temp_project_dir):
-        """Test stats when no features are passing."""
+        """Test stats when no features are passing (mocked count_passing_tests)."""
+        import server.routers.projects as projects_module
         from server.routers.projects import get_project_stats
 
-        beads_dir = temp_project_dir / ".beads"
-        beads_dir.mkdir(exist_ok=True)
-        issues_file = beads_dir / "issues.jsonl"
+        original = projects_module._count_passing_tests
+        projects_module._count_passing_tests = lambda *args, **kwargs: (0, 0, 2)
 
-        features = [
-            {"id": "feat-1", "status": "open", "title": "Feature 1"},
-            {"id": "feat-2", "status": "open", "title": "Feature 2"},
-        ]
+        try:
+            stats = get_project_stats(temp_project_dir)
 
-        with open(issues_file, "w") as f:
-            for feat in features:
-                f.write(json.dumps(feat) + "\n")
-
-        stats = get_project_stats(temp_project_dir)
-
-        assert stats.total == 2
-        assert stats.passing == 0
-        assert stats.percentage == 0.0
+            assert stats.total == 2
+            assert stats.passing == 0
+            assert stats.percentage == 0.0
+        finally:
+            projects_module._count_passing_tests = original
 
 
 # =============================================================================
@@ -596,53 +582,6 @@ class TestFeaturesRouter:
         assert response.name == "User Login"
         assert response.passes is True
         assert response.in_progress is False
-
-    @pytest.mark.unit
-    def test_read_local_beads_features(self, temp_project_dir):
-        """Test reading features from local beads file."""
-        from server.routers.features import read_local_beads_features
-
-        beads_dir = temp_project_dir / ".beads"
-        beads_dir.mkdir(exist_ok=True)
-        issues_file = beads_dir / "issues.jsonl"
-
-        features = [
-            {"id": "feat-1", "title": "Feature 1", "status": "open", "priority": 1},
-            {"id": "feat-2", "title": "Feature 2", "status": "closed", "priority": 2},
-        ]
-
-        with open(issues_file, "w") as f:
-            for feat in features:
-                f.write(json.dumps(feat) + "\n")
-
-        result = read_local_beads_features(temp_project_dir)
-
-        assert len(result) == 2
-        assert result[0]["name"] == "Feature 1"
-        assert result[1]["name"] == "Feature 2"
-
-    @pytest.mark.unit
-    def test_read_local_beads_features_empty(self, temp_project_dir):
-        """Test reading features when file is empty."""
-        from server.routers.features import read_local_beads_features
-
-        beads_dir = temp_project_dir / ".beads"
-        beads_dir.mkdir(exist_ok=True)
-        issues_file = beads_dir / "issues.jsonl"
-        issues_file.write_text("")
-
-        result = read_local_beads_features(temp_project_dir)
-
-        assert len(result) == 0
-
-    @pytest.mark.unit
-    def test_read_local_beads_features_no_file(self, temp_project_dir):
-        """Test reading features when file doesn't exist."""
-        from server.routers.features import read_local_beads_features
-
-        result = read_local_beads_features(temp_project_dir)
-
-        assert len(result) == 0
 
     @pytest.mark.unit
     def test_features_project_name_validation(self):

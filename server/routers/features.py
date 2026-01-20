@@ -6,7 +6,6 @@ API endpoints for feature/test case management using beads.
 All beads operations run on the host via BeadsManager with file-based locking.
 """
 
-import json
 import logging
 import re
 import sys
@@ -20,7 +19,7 @@ from ..schemas import (
     FeatureResponse,
     FeatureUpdate,
 )
-from ..services.beads_manager import get_cached_features, get_beads_manager
+from ..services.beads_manager import get_beads_manager
 
 logger = logging.getLogger(__name__)
 
@@ -59,28 +58,6 @@ def _get_in_progress_features_from_containers(project_name: str) -> set[str]:
         return {c["current_feature"] for c in containers if c.get("current_feature")}
     except Exception:
         return set()
-
-
-def read_local_beads_features(project_dir: Path) -> list[dict]:
-    """Read features directly from local project's .beads/issues.jsonl."""
-    issues_file = project_dir / ".beads" / "issues.jsonl"
-    if not issues_file.exists():
-        return []
-
-    features = []
-    try:
-        with open(issues_file, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    try:
-                        task = json.loads(line)
-                        features.append(beads_task_to_feature(task))
-                    except json.JSONDecodeError:
-                        continue
-    except (PermissionError, OSError) as e:
-        logger.warning(f"Failed to read local beads: {e}")
-    return features
 
 
 router = APIRouter(prefix="/api/projects/{project_name}/features", tags=["features"])
@@ -166,7 +143,7 @@ async def list_features(project_name: str):
     if not project_dir.exists():
         raise HTTPException(status_code=404, detail="Project directory not found")
 
-    # Read from local beads database (no sync needed - background poller handles it)
+    # Read from beads via BeadsManager (uses live bd commands)
     features = []
     git_url = _get_project_git_url(project_name)
     if git_url:
@@ -178,14 +155,6 @@ async def list_features(project_name: str):
                 features = [beads_task_to_feature(t) for t in tasks]
         except Exception as e:
             logger.warning(f"Failed to get features from beads for {project_name}: {e}")
-
-    # Fall back to cache lookup if beads didn't return data
-    if not features:
-        features = get_cached_features(project_name)
-
-    # Final fallback: read directly from local project beads
-    if not features:
-        features = read_local_beads_features(project_dir)
 
     # Get features currently being worked on from containers
     # This is more reliable than beads status since it's managed by our own code
@@ -266,21 +235,17 @@ async def get_feature(project_name: str, feature_id: str):
         raise HTTPException(status_code=404, detail="Project directory not found")
 
     git_url = _get_project_git_url(project_name)
-    if git_url:
-        try:
-            manager = await get_beads_manager(project_name, git_url)
-            feature = manager.get_feature(feature_id)
+    if not git_url:
+        raise HTTPException(status_code=404, detail="Project has no git URL")
 
-            if feature:
-                return feature_to_response(feature)
-        except Exception as e:
-            logger.warning(f"Failed to get feature from beads: {e}")
+    try:
+        manager = await get_beads_manager(project_name, git_url)
+        feature = manager.get_feature(feature_id)
 
-    # Fallback to cache
-    cached_features = get_cached_features(project_name)
-    for f in cached_features:
-        if str(f.get("id", "")) == feature_id:
-            return feature_to_response(f)
+        if feature:
+            return feature_to_response(feature)
+    except Exception as e:
+        logger.warning(f"Failed to get feature from beads: {e}")
 
     raise HTTPException(status_code=404, detail=f"Feature {feature_id} not found")
 

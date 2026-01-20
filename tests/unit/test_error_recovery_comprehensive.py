@@ -527,25 +527,17 @@ class TestGracefulDegradation:
     """Tests for graceful degradation when components fail."""
 
     @pytest.mark.unit
-    def test_features_available_without_container(self, tmp_path):
-        """Test that features can be read without running container."""
-        project_dir = tmp_path / "no-container"
-        project_dir.mkdir()
-        beads_dir = project_dir / ".beads"
-        beads_dir.mkdir()
+    def test_features_conversion_without_container(self):
+        """Test that beads_task_to_feature correctly converts task data."""
+        from server.routers.features import beads_task_to_feature
 
-        # Create feature file
-        issues_file = beads_dir / "issues.jsonl"
-        issues_file.write_text('{"id":"feat-1","title":"Test","status":"open","priority":1}\n')
+        task = {"id": "feat-1", "title": "Test", "status": "open", "priority": 1}
+        result = beads_task_to_feature(task)
 
-        from server.routers.features import read_local_beads_features
-        result = read_local_beads_features(project_dir)
-
-        # read_local_beads_features returns features converted by beads_task_to_feature
-        # which has passes/in_progress booleans instead of status string
-        assert len(result) == 1
-        assert result[0]["passes"] is False  # status=open means not passed
-        assert result[0]["in_progress"] is False
+        # beads_task_to_feature returns features with passes/in_progress booleans
+        assert result["id"] == "feat-1"
+        assert result["passes"] is False  # status=open means not passed
+        assert result["in_progress"] is False
 
     @pytest.mark.unit
     def test_progress_without_beads(self, tmp_path):

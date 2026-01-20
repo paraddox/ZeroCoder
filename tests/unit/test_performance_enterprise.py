@@ -131,41 +131,34 @@ class TestMemoryUsage:
 
     @pytest.mark.unit
     @pytest.mark.slow
-    def test_large_issues_file_memory(self, tmp_path):
-        """Test memory usage with large issues file."""
-        from progress import count_passing_tests
+    def test_large_feature_conversion_memory(self):
+        """Test memory usage with large feature conversion."""
+        from server.routers.features import beads_task_to_feature
 
-        project_dir = tmp_path / "large-issues"
-        project_dir.mkdir()
-        beads_dir = project_dir / ".beads"
-        beads_dir.mkdir()
-        (beads_dir / "config.yaml").write_text("prefix: feat\n")
-
-        # Create large issues file
-        issues_file = beads_dir / "issues.jsonl"
-        with open(issues_file, "w") as f:
-            for i in range(10000):
-                issue = {
-                    "id": f"feat-{i}",
-                    "title": f"Feature {i} with a longer description to increase memory",
-                    "status": "open" if i % 3 == 0 else ("in_progress" if i % 3 == 1 else "closed"),
-                    "priority": i % 5,
-                    "description": "Lorem ipsum " * 50,
-                }
-                f.write(json.dumps(issue) + "\n")
+        # Create large list of tasks
+        tasks = [
+            {
+                "id": f"feat-{i}",
+                "title": f"Feature {i} with a longer description to increase memory",
+                "status": "open" if i % 3 == 0 else ("in_progress" if i % 3 == 1 else "closed"),
+                "priority": i % 5,
+                "description": "Lorem ipsum " * 50,
+            }
+            for i in range(10000)
+        ]
 
         # Start memory tracking
         tracemalloc.start()
 
-        passing, in_progress, total = count_passing_tests(project_dir)
+        features = [beads_task_to_feature(t) for t in tasks]
 
         current, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
 
         # Verify correctness
-        assert total == 10000
+        assert len(features) == 10000
 
-        # Peak memory should be under 100MB for 10k issues
+        # Peak memory should be under 100MB for 10k features
         assert peak < 100 * 1024 * 1024, f"Peak memory: {peak / 1024 / 1024:.2f}MB"
 
     @pytest.mark.unit
@@ -343,30 +336,25 @@ class TestLargeDatasets:
 
     @pytest.mark.unit
     @pytest.mark.slow
-    def test_large_feature_list_parsing(self, tmp_path):
-        """Test parsing large feature lists."""
-        from server.routers.features import read_local_beads_features
+    def test_large_feature_list_parsing(self):
+        """Test parsing large feature lists via beads_task_to_feature."""
+        from server.routers.features import beads_task_to_feature
 
-        project_dir = tmp_path / "large-features"
-        project_dir.mkdir()
-        beads_dir = project_dir / ".beads"
-        beads_dir.mkdir()
-
-        issues_file = beads_dir / "issues.jsonl"
-        with open(issues_file, "w") as f:
-            for i in range(5000):
-                issue = {
-                    "id": f"feat-{i}",
-                    "title": f"Feature {i}",
-                    "status": "open",
-                    "priority": i % 5,
-                    "labels": [f"label-{i % 10}"],
-                    "description": "1. Step one\n2. Step two\n3. Step three",
-                }
-                f.write(json.dumps(issue) + "\n")
+        # Create task list
+        tasks = [
+            {
+                "id": f"feat-{i}",
+                "title": f"Feature {i}",
+                "status": "open",
+                "priority": i % 5,
+                "labels": [f"label-{i % 10}"],
+                "description": "1. Step one\n2. Step two\n3. Step three",
+            }
+            for i in range(5000)
+        ]
 
         start = time.time()
-        features = read_local_beads_features(project_dir)
+        features = [beads_task_to_feature(t) for t in tasks]
         elapsed = time.time() - start
 
         assert len(features) == 5000

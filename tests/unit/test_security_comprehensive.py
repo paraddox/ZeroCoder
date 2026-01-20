@@ -397,181 +397,140 @@ class TestFeatureDataSecurity:
 
     @pytest.mark.unit
     @pytest.mark.security
-    def test_feature_id_validation(self, tmp_path):
+    def test_feature_id_validation(self):
         """Test that feature IDs are handled as strings."""
-        from server.routers.features import read_local_beads_features
-
-        project_dir = tmp_path / "test-project"
-        project_dir.mkdir()
-        beads_dir = project_dir / ".beads"
-        beads_dir.mkdir()
+        from server.routers.features import beads_task_to_feature
 
         # Features with potentially dangerous IDs
-        features = [
+        tasks = [
             {"id": "../etc/passwd", "title": "Evil", "status": "open", "priority": 1},
             {"id": "; rm -rf /", "title": "Evil", "status": "open", "priority": 1},
             {"id": "<script>alert(1)</script>", "title": "Evil", "status": "open", "priority": 1},
         ]
 
-        issues_file = beads_dir / "issues.jsonl"
-        with open(issues_file, "w") as f:
-            for feat in features:
-                f.write(json.dumps(feat) + "\n")
-
-        # Reading should return data as strings, not execute anything
-        result = read_local_beads_features(project_dir)
-
-        # Result is a list of feature dicts
-        assert isinstance(result, list)
-        for feat in result:
+        for task in tasks:
+            result = beads_task_to_feature(task)
             # IDs should be strings, not executed
-            assert isinstance(feat.get("id"), str)
+            assert isinstance(result.get("id"), str)
+            assert result["id"] == task["id"]
 
     @pytest.mark.unit
     @pytest.mark.security
-    def test_feature_description_xss_prevention(self, tmp_path):
+    def test_feature_description_xss_prevention(self):
         """Test that feature descriptions with XSS are returned safely."""
-        from server.routers.features import read_local_beads_features
+        from server.routers.features import beads_task_to_feature
 
-        project_dir = tmp_path / "test-project"
-        project_dir.mkdir()
-        beads_dir = project_dir / ".beads"
-        beads_dir.mkdir()
+        xss_task = {
+            "id": "feat-1",
+            "title": "<script>alert('XSS')</script>",
+            "description": "<img src=x onerror=alert('XSS')>",
+            "status": "open",
+            "priority": 1
+        }
 
-        xss_features = [
-            {
-                "id": "feat-1",
-                "title": "<script>alert('XSS')</script>",
-                "description": "<img src=x onerror=alert('XSS')>",
-                "status": "open",
-                "priority": 1
-            },
-        ]
-
-        issues_file = beads_dir / "issues.jsonl"
-        with open(issues_file, "w") as f:
-            for feat in xss_features:
-                f.write(json.dumps(feat) + "\n")
-
-        result = read_local_beads_features(project_dir)
+        result = beads_task_to_feature(xss_task)
 
         # Backend returns data as strings (XSS prevention is frontend's job)
         # This test documents that data is passed through as-is
-        assert isinstance(result, list)
-        assert len(result) == 1
+        assert isinstance(result, dict)
+        assert result["name"] == "<script>alert('XSS')</script>"
+        assert result["description"] == "<img src=x onerror=alert('XSS')>"
 # =============================================================================
 # JSON Parsing Security Tests
 # =============================================================================
 
 class TestJSONParsingSecurity:
-    """Tests for JSON parsing security."""
+    """Tests for JSON parsing security via beads_task_to_feature."""
 
     @pytest.mark.unit
     @pytest.mark.security
-    def test_handles_malformed_json(self, tmp_path):
-        """Test that malformed JSON lines are skipped gracefully."""
-        from server.routers.features import read_local_beads_features
+    def test_handles_missing_fields(self):
+        """Test that missing fields are handled gracefully."""
+        from server.routers.features import beads_task_to_feature
 
-        project_dir = tmp_path / "test-project"
-        project_dir.mkdir()
-        beads_dir = project_dir / ".beads"
-        beads_dir.mkdir()
+        # Minimal task with missing optional fields
+        minimal_task = {"id": "feat-1"}
 
-        # Write mix of valid and malformed JSON (JSONL format allows line-by-line handling)
-        issues_file = beads_dir / "issues.jsonl"
-        issues_file.write_text('{"id": "feat-1", "title": "Valid", "status": "open", "priority": 1}\n{invalid json}\n')
+        result = beads_task_to_feature(minimal_task)
 
-        # Should handle gracefully - either skip bad lines or return partial
-        result = read_local_beads_features(project_dir)
-
-        # Returns a list
-        assert isinstance(result, list)
-        # Should have at least the valid entry
-        assert len(result) >= 1
+        # Should return defaults for missing fields
+        assert isinstance(result, dict)
+        assert result["id"] == "feat-1"
+        assert result["name"] == ""  # title missing
+        assert result["priority"] == 999  # default priority
+        assert result["passes"] is False  # default for missing status
 
     @pytest.mark.unit
     @pytest.mark.security
-    def test_handles_deeply_nested_json(self, tmp_path):
-        """Test that deeply nested JSON doesn't cause issues."""
-        from server.routers.features import read_local_beads_features
+    def test_handles_extra_fields(self):
+        """Test that extra unexpected fields don't cause issues."""
+        from server.routers.features import beads_task_to_feature
 
-        project_dir = tmp_path / "test-project"
-        project_dir.mkdir()
-        beads_dir = project_dir / ".beads"
-        beads_dir.mkdir()
-
-        # Create a feature with nested metadata (still valid structure)
-        nested = {"id": "feat-1", "title": "Test", "status": "open", "priority": 1}
-
-        issues_file = beads_dir / "issues.jsonl"
-        issues_file.write_text(json.dumps(nested) + "\n")
+        # Task with extra fields
+        task = {
+            "id": "feat-1",
+            "title": "Test",
+            "status": "open",
+            "priority": 1,
+            "extra_field": "should be ignored",
+            "nested": {"data": "also ignored"}
+        }
 
         # Should handle without crashing
-        result = read_local_beads_features(project_dir)
-        assert isinstance(result, list)
-        assert len(result) == 1
+        result = beads_task_to_feature(task)
+        assert isinstance(result, dict)
+        assert result["id"] == "feat-1"
 # =============================================================================
 # File Size and Resource Limit Tests
 # =============================================================================
 
 class TestResourceLimits:
-    """Tests for resource limit handling."""
+    """Tests for resource limit handling in beads_task_to_feature."""
 
     @pytest.mark.unit
     @pytest.mark.security
-    def test_handles_large_feature_file(self, tmp_path):
-        """Test handling of large feature files."""
-        from server.routers.features import read_local_beads_features
-
-        project_dir = tmp_path / "test-project"
-        project_dir.mkdir()
-        beads_dir = project_dir / ".beads"
-        beads_dir.mkdir()
-
-        # Create a file with many features
-        issues_file = beads_dir / "issues.jsonl"
-        with open(issues_file, "w") as f:
-            for i in range(1000):
-                feat = {
-                    "id": f"feat-{i}",
-                    "title": f"Feature {i}",
-                    "description": "Description",
-                    "status": "open",
-                    "priority": i % 5
-                }
-                f.write(json.dumps(feat) + "\n")
-
-        # Should handle file without crashing
+    def test_handles_large_batch_of_features(self):
+        """Test handling of converting many features."""
+        from server.routers.features import beads_task_to_feature
         import time
+
+        # Create many feature dicts
+        tasks = [
+            {
+                "id": f"feat-{i}",
+                "title": f"Feature {i}",
+                "description": "Description",
+                "status": "open",
+                "priority": i % 5
+            }
+            for i in range(1000)
+        ]
+
+        # Should handle conversion without crashing
         start = time.time()
-        result = read_local_beads_features(project_dir)
+        results = [beads_task_to_feature(task) for task in tasks]
         duration = time.time() - start
 
         # Should complete in reasonable time
-        assert duration < 10.0, f"Took too long: {duration}s"
-        # Returns a list of all features
-        assert isinstance(result, list)
-        assert len(result) == 1000
+        assert duration < 5.0, f"Took too long: {duration}s"
+        # Returns all converted features
+        assert len(results) == 1000
+        for result in results:
+            assert isinstance(result, dict)
 
     @pytest.mark.unit
     @pytest.mark.security
-    def test_handles_empty_file(self, tmp_path):
-        """Test handling of empty feature file."""
-        from server.routers.features import read_local_beads_features
+    def test_handles_empty_task(self):
+        """Test handling of empty task dict."""
+        from server.routers.features import beads_task_to_feature
 
-        project_dir = tmp_path / "test-project"
-        project_dir.mkdir()
-        beads_dir = project_dir / ".beads"
-        beads_dir.mkdir()
+        result = beads_task_to_feature({})
 
-        issues_file = beads_dir / "issues.jsonl"
-        issues_file.write_text("")
-
-        result = read_local_beads_features(project_dir)
-
-        # Returns an empty list
-        assert isinstance(result, list)
-        assert result == []
+        # Returns a dict with default values
+        assert isinstance(result, dict)
+        assert result["id"] == ""
+        assert result["name"] == ""
+        assert result["priority"] == 999
 # =============================================================================
 # Concurrent Access Security Tests
 # =============================================================================

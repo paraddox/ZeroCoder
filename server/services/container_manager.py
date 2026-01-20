@@ -581,39 +581,15 @@ class ContainerManager:
         return self._user_started  # Uses DB-backed property
 
     def has_open_features(self) -> bool:
-        """Check if project has open features remaining using BeadsSyncManager."""
-        from .beads_manager import get_beads_sync_manager
+        """Check if project has open features using BeadsManager."""
+        from .beads_manager import get_cached_stats
 
         try:
-            manager = get_beads_sync_manager(self.project_name, self.git_url)
-            stats = manager.get_stats()
-            open_count = stats.get("open", 0) + stats.get("in_progress", 0)
-            return open_count > 0
+            stats = get_cached_stats(self.project_name)
+            return stats.get("pending", 0) + stats.get("in_progress", 0) > 0
         except Exception as e:
             logger.warning(f"Failed to check open features: {e}")
-            return self._has_open_features_direct()
-
-    def _has_open_features_direct(self) -> bool:
-        """Fallback: Check open features by reading JSONL directly (may fail due to permissions)."""
-        issues_file = self.project_dir / ".beads" / "issues.jsonl"
-        if not issues_file.exists():
-            return False
-        try:
-            open_count = 0
-            with open(issues_file, "r") as f:
-                for line in f:
-                    try:
-                        issue = json.loads(line.strip())
-                        if issue.get("status") in ("open", "in_progress"):
-                            open_count += 1
-                    except json.JSONDecodeError as e:
-                        logger.warning(f"Skipped corrupt JSON in {self.project_name} issues.jsonl: {e}")
-                        continue
-            return open_count > 0
-        except Exception as e:
-            logger.warning(f"Failed to read issues file directly: {e}")
-            # On read error, assume features exist (safer than assuming none)
-            return True
+            return True  # Assume features exist on error (safer)
 
     # =========================================================================
     # Git State Recovery
@@ -1842,7 +1818,8 @@ class ContainerManager:
         Overseer runs at every 10% milestone (10%, 20%, 30%, ... up to 90%).
         The overseer runs in parallel with coding agents (doesn't block them).
         """
-        from registry import get_cached_stats, update_overseer_milestone
+        from .beads_manager import get_cached_stats
+        from registry import get_overseer_milestone
 
         stats = get_cached_stats(self.project_name)
         if not stats or stats.get('total', 0) == 0:
@@ -1851,7 +1828,7 @@ class ContainerManager:
         # Calculate current milestone (floor to nearest 10%)
         percentage = stats.get('percentage', 0)
         current_milestone = int(percentage // 10) * 10
-        last_milestone = stats.get('last_overseer_milestone', 0)
+        last_milestone = get_overseer_milestone(self.project_name)
 
         # Trigger at 10%, 20%, 30%... up to 90% (not at 0% or 100%)
         if current_milestone > last_milestone and 0 < current_milestone < 100:

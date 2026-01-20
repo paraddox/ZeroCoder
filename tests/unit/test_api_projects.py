@@ -109,33 +109,48 @@ class TestGetProjectStats:
     """Tests for get_project_stats function."""
 
     @pytest.mark.unit
-    def test_get_stats_with_features(self, temp_project_dir, sample_beads_issues):
-        """Test getting stats with features present."""
-        # Create beads issues file
-        beads_dir = temp_project_dir / ".beads"
-        beads_dir.mkdir(exist_ok=True)
-        issues_file = beads_dir / "issues.jsonl"
+    def test_get_stats_with_features(self, temp_project_dir):
+        """Test getting stats with features present (mocked count_passing_tests)."""
+        import server.routers.projects as projects_module
 
-        with open(issues_file, "w") as f:
-            for issue in sample_beads_issues:
-                f.write(json.dumps(issue) + "\n")
+        # Ensure lazy imports are initialized first (so _init_imports() won't overwrite our patch)
+        projects_module._init_imports()
 
-        stats = get_project_stats(temp_project_dir)
+        # Save original and patch
+        original = projects_module._count_passing_tests
+        projects_module._count_passing_tests = lambda *args, **kwargs: (1, 1, 3)
 
-        assert stats.total == 3
-        assert stats.passing == 1
-        assert stats.in_progress == 1
-        assert stats.percentage == pytest.approx(33.3, rel=0.1)
+        try:
+            stats = get_project_stats(temp_project_dir)
+
+            assert stats.total == 3
+            assert stats.passing == 1
+            assert stats.in_progress == 1
+            assert stats.percentage == pytest.approx(33.3, rel=0.1)
+        finally:
+            projects_module._count_passing_tests = original
 
     @pytest.mark.unit
     def test_get_stats_empty_project(self, temp_project_dir):
-        """Test getting stats with no features."""
-        stats = get_project_stats(temp_project_dir)
+        """Test getting stats with no features (mocked count_passing_tests)."""
+        import server.routers.projects as projects_module
 
-        assert stats.total == 0
-        assert stats.passing == 0
-        assert stats.in_progress == 0
-        assert stats.percentage == 0.0
+        # Ensure lazy imports are initialized first (so _init_imports() won't overwrite our patch)
+        projects_module._init_imports()
+
+        # Save original and patch
+        original = projects_module._count_passing_tests
+        projects_module._count_passing_tests = lambda *args, **kwargs: (0, 0, 0)
+
+        try:
+            stats = get_project_stats(temp_project_dir)
+
+            assert stats.total == 0
+            assert stats.passing == 0
+            assert stats.in_progress == 0
+            assert stats.percentage == 0.0
+        finally:
+            projects_module._count_passing_tests = original
 
 
 class TestWizardStatus:

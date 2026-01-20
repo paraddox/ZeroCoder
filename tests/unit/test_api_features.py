@@ -20,7 +20,6 @@ from server.routers.features import (
     validate_project_name,
     feature_to_response,
     beads_task_to_feature,
-    read_local_beads_features,
 )
 
 
@@ -242,82 +241,20 @@ class TestFeatureToResponse:
         assert result.in_progress is False
 
 
-class TestReadLocalBeadsFeatures:
-    """Tests for read_local_beads_features function."""
-
-    @pytest.mark.unit
-    def test_reads_features_from_jsonl(self, temp_project_dir, sample_beads_issues):
-        """Test reading features from issues.jsonl file."""
-        beads_dir = temp_project_dir / ".beads"
-        beads_dir.mkdir(exist_ok=True)
-        issues_file = beads_dir / "issues.jsonl"
-
-        with open(issues_file, "w") as f:
-            for issue in sample_beads_issues:
-                f.write(json.dumps(issue) + "\n")
-
-        result = read_local_beads_features(temp_project_dir)
-
-        assert len(result) == 3
-
-    @pytest.mark.unit
-    def test_returns_empty_for_missing_file(self, temp_project_dir):
-        """Test returns empty list when file doesn't exist."""
-        result = read_local_beads_features(temp_project_dir)
-        assert result == []
-
-    @pytest.mark.unit
-    def test_handles_malformed_json_lines(self, temp_project_dir):
-        """Test handling of malformed JSON lines."""
-        beads_dir = temp_project_dir / ".beads"
-        beads_dir.mkdir(exist_ok=True)
-        issues_file = beads_dir / "issues.jsonl"
-
-        content = '{"id": "feat-1", "title": "Valid", "status": "open"}\n'
-        content += 'invalid json line\n'
-        content += '{"id": "feat-2", "title": "Also Valid", "status": "closed"}\n'
-        issues_file.write_text(content)
-
-        result = read_local_beads_features(temp_project_dir)
-
-        # Should skip invalid line
-        assert len(result) == 2
-
-    @pytest.mark.unit
-    def test_skips_empty_lines(self, temp_project_dir):
-        """Test that empty lines are skipped."""
-        beads_dir = temp_project_dir / ".beads"
-        beads_dir.mkdir(exist_ok=True)
-        issues_file = beads_dir / "issues.jsonl"
-
-        content = '{"id": "feat-1", "title": "Test", "status": "open"}\n\n\n'
-        issues_file.write_text(content)
-
-        result = read_local_beads_features(temp_project_dir)
-
-        assert len(result) == 1
-
-
 class TestFeatureListResponse:
     """Tests for feature list response organization."""
 
     @pytest.mark.unit
-    def test_organizes_by_status(self, temp_project_dir):
+    def test_organizes_by_status(self):
         """Test that features are organized into pending/in_progress/done."""
-        beads_dir = temp_project_dir / ".beads"
-        beads_dir.mkdir(exist_ok=True)
-        issues_file = beads_dir / "issues.jsonl"
-
         issues = [
             {"id": "feat-1", "title": "Open", "status": "open", "priority": 1, "labels": []},
             {"id": "feat-2", "title": "WIP", "status": "in_progress", "priority": 2, "labels": []},
             {"id": "feat-3", "title": "Done", "status": "closed", "priority": 3, "labels": []},
         ]
-        with open(issues_file, "w") as f:
-            for issue in issues:
-                f.write(json.dumps(issue) + "\n")
 
-        features = read_local_beads_features(temp_project_dir)
+        # Convert tasks to features using the beads_task_to_feature function
+        features = [beads_task_to_feature(issue) for issue in issues]
 
         # Organize by status
         pending = [f for f in features if not f.get("passes") and not f.get("in_progress")]
@@ -344,10 +281,8 @@ class TestFeatureAPIEndpoints:
     @pytest.mark.skip(reason="Requires full application context - covered by integration tests")
     @patch("server.routers.features._get_project_path")
     @patch("server.routers.features._get_project_git_url")
-    @patch("server.routers.features.get_cached_features")
     def test_list_features_not_found(
         self,
-        mock_cache,
         mock_git_url,
         mock_path,
         test_client
@@ -363,12 +298,10 @@ class TestFeatureAPIEndpoints:
     @pytest.mark.skip(reason="Requires full application context - covered by integration tests")
     @patch("server.routers.features._get_project_path")
     @patch("server.routers.features._get_project_git_url")
-    @patch("server.routers.features.get_cached_features")
-    @patch("server.routers.features.read_local_beads_features")
+    @patch("server.routers.features.get_beads_manager")
     def test_list_features_success(
         self,
-        mock_read_local,
-        mock_cache,
+        mock_beads_manager,
         mock_git_url,
         mock_path,
         test_client,
@@ -380,8 +313,9 @@ class TestFeatureAPIEndpoints:
 
         mock_path.return_value = project_dir
         mock_git_url.return_value = "https://github.com/user/repo.git"
-        mock_cache.return_value = []
-        mock_read_local.return_value = []
+        mock_manager = AsyncMock()
+        mock_manager.get_tasks.return_value = []
+        mock_beads_manager.return_value = mock_manager
 
         response = test_client.get("/api/projects/test-project/features")
 
