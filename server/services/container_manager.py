@@ -1268,9 +1268,13 @@ class ContainerManager:
             logger.exception("Failed to start container")
             return False, f"Failed to start container: {e}"
 
-    async def stop(self) -> tuple[bool, str]:
+    async def stop(self, preserve_user_started: bool = False) -> tuple[bool, str]:
         """
         Stop the container (don't remove it).
+
+        Args:
+            preserve_user_started: If True, don't reset the _user_started flag.
+                                   Used during programmatic restarts to maintain auto-restart capability.
 
         Returns:
             Tuple of (success, message)
@@ -1295,11 +1299,13 @@ class ContainerManager:
             # Reset graceful stop flag in database
             self._graceful_stop_requested = False
 
-            # Reset user_started flag to prevent auto-restart
+            # Reset user_started flag to prevent auto-restart (unless preserving for restart)
             # User explicitly stopped, so we shouldn't auto-restart
-            logger.info(f"[STOP] Resetting _user_started flag for {self.container_name}")
-            self._user_started = False
-            self._user_started = False  # Clear via DB-backed property
+            if not preserve_user_started:
+                logger.info(f"[STOP] Resetting _user_started flag for {self.container_name}")
+                self._user_started = False
+            else:
+                logger.info(f"[STOP] Preserving _user_started flag for {self.container_name} (programmatic restart)")
 
             # Clear verification state if this container was running verification
             if self._last_agent_was_overseer:
@@ -1756,8 +1762,8 @@ class ContainerManager:
 
         self._restarting = True
         try:
-            # Stop the container
-            await self.stop()
+            # Stop the container (preserve user_started so auto-restart continues working)
+            await self.stop(preserve_user_started=True)
 
             # Read the coding prompt from the project
             coding_prompt_path = self.project_dir / "prompts" / "coding_prompt.md"
@@ -1798,8 +1804,8 @@ class ContainerManager:
 
         self._restarting = True
         try:
-            # Stop the container
-            await self.stop()
+            # Stop the container (preserve user_started so auto-restart continues working)
+            await self.stop(preserve_user_started=True)
 
             # Get the reviewer prompt with feature ID injected
             import sys
@@ -1940,8 +1946,8 @@ class ContainerManager:
 
         self._restarting = True
         try:
-            # Stop the container
-            await self.stop()
+            # Stop the container (preserve user_started so auto-restart continues working)
+            await self.stop(preserve_user_started=True)
 
             # Read the overseer prompt from the project
             overseer_prompt_path = self.project_dir / "prompts" / "overseer_prompt.md"
