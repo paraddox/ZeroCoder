@@ -1110,6 +1110,7 @@ class ContainerManager:
                     cmd.extend(["-e", f"ZHIPU_API_KEY={zhipu_key}"])
                 # Pass project name and host API URL for beads_client.sh
                 cmd.extend(["-e", f"PROJECT_NAME={self.project_name}"])
+                cmd.extend(["-e", f"CONTAINER_NUMBER={self.container_number}"])
                 server_port = os.getenv("PORT", "8888")
                 cmd.extend(["-e", f"HOST_API_URL=http://host.docker.internal:{server_port}"])
                 # Pass TZ env var for Node.js if available
@@ -2061,6 +2062,7 @@ class ContainerManager:
                     cmd.extend(["-e", f"ZHIPU_API_KEY={zhipu_key}"])
                 # Pass project name and host API URL for beads_client.sh
                 cmd.extend(["-e", f"PROJECT_NAME={self.project_name}"])
+                cmd.extend(["-e", f"CONTAINER_NUMBER={self.container_number}"])
                 server_port = os.getenv("PORT", "8888")
                 cmd.extend(["-e", f"HOST_API_URL=http://host.docker.internal:{server_port}"])
                 # Pass TZ env var for Node.js if available
