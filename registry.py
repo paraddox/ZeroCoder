@@ -272,6 +272,23 @@ def _migrate_schema(engine) -> None:
                     except Exception as e:
                         logger.debug(f"Column {col_name} may already exist: {e}")
 
+    # Migrate feature_stats_cache table
+    if 'feature_stats_cache' in inspector.get_table_names():
+        columns = {col['name'] for col in inspector.get_columns('feature_stats_cache')}
+        stats_columns = [
+            ('last_overseer_milestone', 'INTEGER DEFAULT 0'),
+        ]
+
+        with engine.connect() as conn:
+            for col_name, col_type in stats_columns:
+                if col_name not in columns:
+                    try:
+                        conn.execute(text(f'ALTER TABLE feature_stats_cache ADD COLUMN {col_name} {col_type}'))
+                        conn.commit()
+                        logger.info(f"Added column {col_name} to feature_stats_cache table")
+                    except Exception as e:
+                        logger.debug(f"Column {col_name} may already exist: {e}")
+
     # Create project_verification_state table if it doesn't exist
     # (Base.metadata.create_all handles this, but we log for visibility)
     if 'project_verification_state' not in inspector.get_table_names():
