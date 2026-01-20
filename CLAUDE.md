@@ -23,7 +23,7 @@ start-app.sh      # Windows
 ### Python Backend (Manual)
 
 ```bash
-# Create and activate virtual hhh
+# Create and activate virtual environment
 python -m venv venv
 venv\Scripts\activate  # Windows
 source venv/bin/activate  # macOS/Linux
@@ -91,7 +91,7 @@ DOCKER_BUILDKIT=1 docker build \
 - Auto-restarts crashed agents and stopped containers (user-started only)
 - Skips containers already in restart process
 
-**Container naming:** `zerocoder-{project-name}`
+**Container naming:** `zerocoder-{project-name}-{N}` (e.g., `zerocoder-nexus-1`, `zerocoder-nexus-2`)
 
 ### Git Hooks
 
@@ -166,12 +166,12 @@ Features are tracked using **beads** (git-backed issue tracking). Each project h
 - `title` - Feature name
 - `description` - Detailed description with implementation steps
 
-**Agent uses beads CLI directly:**
-- `bd stats` - Progress statistics
-- `bd ready` - Get available features (no blockers)
-- `bd list --status=open` - List pending features
-- `bd close <id>` - Mark feature complete
-- `bd create` - Create new features
+**Agent uses `beads_client` (routes through host API for coordination):**
+- `beads_client claim` - Atomically claim next available feature (server-side locking)
+- `beads_client stats` - Progress statistics
+- `beads_client list --status=open` - List pending features
+- `beads_client close <id>` - Mark feature complete
+- `beads_client show <id>` - View feature details
 
 ### React UI (ui/)
 
@@ -198,9 +198,11 @@ Projects can be stored in any directory (registered in `~/.zerocoder/registry.db
 ### Security Model
 
 Defense-in-depth approach using Docker containers:
-1. Each project runs in isolated Docker container
-2. Container filesystem limited to mounted project directory
-3. Claude credentials passed via environment variables
+1. Each project runs in isolated Docker container (no volume mounts)
+2. Container clones repo fresh at startup - fully isolated filesystem
+3. SSH key baked into image at build time (not mounted at runtime)
+4. Claude credentials passed via environment variables
+5. Non-root `coder` user executes agent code
 
 ## Claude Code Integration
 
@@ -224,7 +226,7 @@ Defense-in-depth approach using Docker containers:
 4. System detects exit, checks for remaining features:
    - If features remain → auto-restart with fresh context
    - If all done → mark `completed`, stop container
-5. Health monitor handles crash recovery (every 10 min)
+5. Health monitor handles crash recovery (every 5 min)
 
 ### Real-time UI Updates
 
