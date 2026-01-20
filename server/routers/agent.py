@@ -43,6 +43,96 @@ from prompts import (
 import asyncio
 
 
+def _run_git_recovery(project_dir: Path) -> tuple[bool, str]:
+    """
+    Pre-flight check: Recover from corrupted git state before starting agents.
+
+    Handles:
+    - Stuck rebase/merge/cherry-pick operations
+    - Missing origin remote
+    - Divergent branches
+
+    Returns:
+        Tuple of (success, message)
+    """
+    if not (project_dir / ".git").exists():
+        return True, "Not a git repo"
+
+    def run_git(cmd: list[str], timeout: int = 30) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "-C", str(project_dir)] + cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+
+    messages = []
+
+    try:
+        # 1. Abort any stuck operations
+        for abort_cmd, op_name in [
+            (["rebase", "--abort"], "rebase"),
+            (["merge", "--abort"], "merge"),
+            (["cherry-pick", "--abort"], "cherry-pick"),
+        ]:
+            result = run_git(abort_cmd)
+            if result.returncode == 0:
+                messages.append(f"Aborted stuck {op_name}")
+
+        # 2. Check origin remote exists
+        result = run_git(["remote", "get-url", "origin"])
+        if result.returncode != 0:
+            messages.append("Warning: No origin remote configured")
+
+        # 3. Clean up any ref locks
+        git_dir = project_dir / ".git"
+        if git_dir.is_dir():
+            for lock_file in git_dir.glob("*.lock"):
+                try:
+                    lock_file.unlink()
+                    messages.append(f"Removed stale lock: {lock_file.name}")
+                except Exception:
+                    pass
+            refs_dir = git_dir / "refs"
+            if refs_dir.exists():
+                for lock_file in refs_dir.rglob("*.lock"):
+                    try:
+                        lock_file.unlink()
+                        messages.append(f"Removed stale lock: {lock_file.name}")
+                    except Exception:
+                        pass
+
+        # 4. Check for divergent branches and fix
+        result = run_git(["status", "--porcelain", "-b"])
+        if result.returncode == 0 and "[" in result.stdout:
+            # Has tracking info - check if diverged
+            if "ahead" in result.stdout and "behind" in result.stdout:
+                messages.append("Detected divergent branches")
+                # Reset to remote to fix divergence
+                result = run_git(["fetch", "origin"])
+                if result.returncode == 0:
+                    # Get default branch
+                    default_branch = "main"
+                    result = run_git(["rev-parse", "--verify", "origin/main"])
+                    if result.returncode != 0:
+                        result = run_git(["rev-parse", "--verify", "origin/master"])
+                        if result.returncode == 0:
+                            default_branch = "master"
+
+                    result = run_git(["reset", "--hard", f"origin/{default_branch}"])
+                    if result.returncode == 0:
+                        messages.append(f"Reset to origin/{default_branch}")
+
+        if messages:
+            return True, "; ".join(messages)
+        return True, "Git state OK"
+
+    except subprocess.TimeoutExpired:
+        return False, "Git recovery timed out"
+    except Exception as e:
+        return False, f"Git recovery error: {e}"
+
+
 def _get_project_path(project_name: str) -> Path | None:
     """Get project path from registry."""
     return get_project_path(project_name)
@@ -303,6 +393,15 @@ async def start_all_containers(project_name: str):
             status_code=404,
             detail=f"Project directory not found for '{project_name}'"
         )
+
+    # Pre-flight git health check before any git operations
+    # This recovers from stuck rebases, divergent branches, etc.
+    if (project_dir / ".git").exists():
+        recovery_ok, recovery_msg = _run_git_recovery(project_dir)
+        if recovery_ok and recovery_msg != "Git state OK":
+            print(f"[StartAll] Pre-flight recovery: {recovery_msg}")
+        elif not recovery_ok:
+            print(f"[StartAll] Pre-flight recovery warning: {recovery_msg}")
 
     # Pull latest changes to local clone before checking state
     # This ensures we have up-to-date .beads/ data for has_features check

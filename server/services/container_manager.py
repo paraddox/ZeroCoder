@@ -755,21 +755,39 @@ class ContainerManager:
         try:
             await self._broadcast_output("[System] Syncing with remote before starting agent...")
 
+            # Check if origin remote exists before attempting fetch
+            origin_check = run_git(["git", "remote", "get-url", "origin"])
+            has_origin = origin_check.returncode == 0
+            if not has_origin:
+                logger.warning(f"No origin remote configured in container - skipping fetch")
+                await self._broadcast_output("[System] Warning: No origin remote - using existing code")
+
             # Detect default branch
             default_branch = get_default_branch()
 
             # For worktrees, we can't checkout the main branch if it's checked out elsewhere.
             # Instead: fetch, discard local changes, reset to origin/default_branch
             # Note: Use explicit refspec to ensure all remote branches are fetched in worktrees
-            commands = [
-                (["git", "fetch", "origin", "+refs/heads/*:refs/remotes/origin/*"], "Fetching from origin"),
-                (["git", "reset", "--hard", "HEAD"], "Discarding local changes"),
-                (["git", "clean", "-fd"], "Removing untracked files"),
-                (["git", "reset", "--hard", f"origin/{default_branch}"], f"Resetting to origin/{default_branch}"),
-            ]
+            if has_origin:
+                commands = [
+                    (["git", "fetch", "origin", "+refs/heads/*:refs/remotes/origin/*"], "Fetching from origin", False),
+                    (["git", "reset", "--hard", "HEAD"], "Discarding local changes", True),
+                    (["git", "clean", "-fd"], "Removing untracked files", True),
+                    (["git", "reset", "--hard", f"origin/{default_branch}"], f"Resetting to origin/{default_branch}", False),
+                ]
+            else:
+                # No origin - just clean up local state
+                commands = [
+                    (["git", "reset", "--hard", "HEAD"], "Discarding local changes", True),
+                    (["git", "clean", "-fd"], "Removing untracked files", True),
+                ]
 
             recovery_attempted = False
-            for cmd, desc in commands:
+            for item in commands:
+                cmd, desc = item[0], item[1]
+                # is_critical indicates if failure should trigger recovery
+                is_critical = item[2] if len(item) > 2 else True
+
                 result = subprocess.run(
                     ["docker", "exec", "-u", "coder", self.container_name] + cmd,
                     capture_output=True,
@@ -780,8 +798,18 @@ class ContainerManager:
                     error_msg = result.stderr + result.stdout
                     logger.warning(f"{desc} failed: {error_msg}")
 
+                    # Check for SSH/network errors that shouldn't trigger full recovery
+                    ssh_errors = ["Host key verification failed", "Permission denied", "Connection refused", "Could not resolve host"]
+                    is_ssh_error = any(e in error_msg for e in ssh_errors)
+
+                    if is_ssh_error and "fetch" in desc.lower():
+                        # SSH/network errors during fetch are non-fatal - worktree has code
+                        logger.warning(f"Network/SSH error during fetch - continuing with existing code")
+                        await self._broadcast_output("[System] Fetch failed (network/SSH) - using existing code...")
+                        continue
+
                     # Check if this is a recoverable git error
-                    if not recovery_attempted and needs_recovery(error_msg):
+                    if is_critical and not recovery_attempted and needs_recovery(error_msg):
                         logger.info(f"Detected recoverable git error, attempting recovery...")
                         recovery_attempted = True
                         recovery_ok, recovery_msg = await self.recover_git_state()

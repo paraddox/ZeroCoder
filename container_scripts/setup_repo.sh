@@ -43,16 +43,11 @@ if [ "$CONTAINER_TYPE" = "init" ]; then
     exit 0
 fi
 
-# Coding containers: Sync beads state via host API
-if [ -d "$BEADS_DIR" ]; then
-    # Check if beads_client is available and environment is set
-    if command -v beads_client &> /dev/null && [ -n "$HOST_API_URL" ] && [ -n "$PROJECT_NAME" ]; then
-        log "Syncing beads state via host API..."
-        beads_client sync 2>&1 || log "WARNING: beads_client sync failed (host API may not be ready yet)"
-    else
-        log "Skipping beads sync (beads_client not configured)"
-    fi
-fi
+# NOTE: Beads sync is now handled by the host API server (BeadsManager)
+# Container-side sync was removed to avoid race conditions and divergent branches
+# when multiple containers try to sync simultaneously. The atomic /claim endpoint
+# handles coordination between containers.
+log "Skipping container-side beads sync (handled by host)"
 
 log "Repository setup complete"
 exit 0

@@ -232,6 +232,24 @@ class WorktreeManager:
                 timeout=10,
             )
 
+            # Add origin remote (worktrees from bare repos don't inherit remotes)
+            # First check if origin already exists
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ["git", "-C", str(worktree_path), "remote", "get-url", "origin"],
+                capture_output=True,
+                timeout=10,
+            )
+            if result.returncode != 0:
+                # Origin doesn't exist, add it
+                await asyncio.to_thread(
+                    subprocess.run,
+                    ["git", "-C", str(worktree_path), "remote", "add", "origin", self.git_url],
+                    capture_output=True,
+                    timeout=10,
+                )
+                logger.info(f"Added origin remote to worktree {name}: {self.git_url}")
+
             # Register worktree in database
             try:
                 from registry import register_worktree
