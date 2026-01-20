@@ -47,6 +47,20 @@ def _get_project_git_url(project_name: str) -> str | None:
     return get_project_git_url(project_name)
 
 
+def _get_in_progress_features_from_containers(project_name: str) -> set[str]:
+    """Get feature IDs currently being worked on by containers."""
+    _root = Path(__file__).parent.parent.parent
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+
+    from registry import list_project_containers
+    try:
+        containers = list_project_containers(project_name)
+        return {c["current_feature"] for c in containers if c.get("current_feature")}
+    except Exception:
+        return set()
+
+
 def read_local_beads_features(project_dir: Path) -> list[dict]:
     """Read features directly from local project's .beads/issues.jsonl."""
     issues_file = project_dir / ".beads" / "issues.jsonl"
@@ -173,15 +187,23 @@ async def list_features(project_name: str):
     if not features:
         features = read_local_beads_features(project_dir)
 
+    # Get features currently being worked on from containers
+    # This is more reliable than beads status since it's managed by our own code
+    in_progress_ids = _get_in_progress_features_from_containers(project_name)
+
     pending = []
     in_progress = []
     done = []
 
     for f in features:
         feature_response = feature_to_response(f)
+        feature_id = str(f.get("id", ""))
+
         if f.get("passes"):
             done.append(feature_response)
-        elif f.get("in_progress"):
+        elif feature_id in in_progress_ids or f.get("in_progress"):
+            # Use container's current_feature as primary indicator,
+            # fall back to beads in_progress status as secondary
             in_progress.append(feature_response)
         else:
             pending.append(feature_response)
