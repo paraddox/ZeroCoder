@@ -57,8 +57,10 @@ npm run lint     # Run ESLint
 The system uses per-project Docker containers for isolated development:
 
 ```bash
-# Build the project container image
-docker build -f Dockerfile.project -t zerocoder-project .
+# Build the project container image (with SSH key for git clone)
+DOCKER_BUILDKIT=1 docker build \
+  --secret id=ssh_key,src=$HOME/.ssh/id_ed25519 \
+  -f Dockerfile.project -t zerocoder-project .
 
 # Run the test suite (builds, tests containers, cleans up)
 ./docker-test.sh
@@ -67,12 +69,14 @@ docker build -f Dockerfile.project -t zerocoder-project .
 **Architecture:**
 - Host runs FastAPI server + React UI (project management, progress monitoring)
 - Each project gets its own Docker container with Claude Code + beads CLI
-- Project worktree mounted via `-v` for instant startup (no clone needed)
+- Containers are fully standalone - they clone the repo at runtime (no volume mounts)
+- SSH key is baked into the image at build time using BuildKit secrets
 - Multiple containers can run simultaneously for different projects
+- 60-second staggered startup between containers to allow git clone
 
 **Container lifecycle:**
 - `not_created` → `running` → `stopped` (15 min idle timeout) → `completed`
-- Stopped containers persist and restart instantly (worktree already mounted)
+- Stopped containers can restart, but will re-fetch latest code from git
 - Progress visible via cached data (polled from container every 30s)
 - `completed` status when all features are done
 
@@ -109,23 +113,21 @@ To bypass hooks when needed: `git commit --no-verify`
 - `progress.py` - Progress tracking using beads, webhook notifications
 - `registry.py` - Project registry for mapping names to paths (cross-platform)
 
-### Project Registry & Worktrees
+### Project Registry
 
-Projects use git worktrees for fast startup and shared git data:
+Projects are tracked in a SQLite registry:
 - **Registry**: `~/.zerocoder/registry.db` (SQLite)
-- **Bare repos**: `~/.zerocoder/repos/{name}.git`
-- **Worktrees**: `~/.zerocoder/worktrees/{name}/{purpose}/`
-  - `main/` - for wizard/edit mode (UI operations)
-  - `container-1/`, `container-2/`, etc. - for coding containers
+- **Local clones**: `~/.zerocoder/projects/{name}/` (for wizard/edit mode only)
 
-**Benefits:**
-- Instant container startup (no clone needed)
-- Shared git object database reduces disk usage
-- Each container has isolated working directory
+**Container architecture:**
+- Containers are fully standalone - they clone repos at runtime
+- SSH key is baked into the image at build time (not mounted)
+- No volume mounts required - containers are fully isolated
 
 **Key services:**
-- `server/services/worktree_manager.py` - Creates/manages worktrees
-- `registry.py` - Stores worktree metadata in `Worktree` model
+- `server/services/container_manager.py` - Container lifecycle and agent control
+- `server/services/local_project_manager.py` - Local clones for wizard/edit mode
+- `registry.py` - Project and container metadata
 
 The registry uses:
 - SQLite database with SQLAlchemy ORM

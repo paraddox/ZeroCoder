@@ -26,9 +26,11 @@ if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
 from prompts import refresh_project_prompts
-from server.services.worktree_manager import WorktreeManager
 
 logger = logging.getLogger(__name__)
+
+# Staggered startup delay in seconds between containers
+CONTAINER_STARTUP_DELAY = 60
 
 # Container image name
 CONTAINER_IMAGE = "zerocoder-project"
@@ -153,13 +155,9 @@ class ContainerManager:
         self.git_url = git_url
         self.container_number = container_number
 
-        # WorktreeManager for managing git worktrees
-        self.worktree_manager = WorktreeManager(project_name, git_url)
-
-        # Local path is now the main worktree (for wizard/edit mode)
-        # Falls back to old projects dir for backwards compatibility
-        from registry import get_worktrees_dir
-        self.project_dir = project_dir or (get_worktrees_dir() / project_name / "main")
+        # Local path is the projects dir (used for reading prompts/config locally)
+        from registry import get_projects_dir
+        self.project_dir = project_dir or (get_projects_dir() / project_name)
 
         # Container naming: init container vs coding containers
         if container_number == 0:  # Init container
@@ -639,7 +637,7 @@ class ContainerManager:
             if result.returncode != 0:
                 logger.warning(f"git remote prune failed: {result.stderr}")
 
-            # 4. Fetch latest from origin (use explicit refspec for worktrees)
+            # 4. Fetch latest from origin (explicit refspec ensures all branches are fetched)
             result = run_git(["git", "fetch", "origin", "+refs/heads/*:refs/remotes/origin/*"], timeout=60)
             if result.returncode != 0:
                 logger.warning(f"git fetch failed after recovery: {result.stderr}")
@@ -660,8 +658,8 @@ class ContainerManager:
             # 7. Checkout and reset default branch to match origin
             result = run_git(["git", "checkout", default_branch])
             if result.returncode != 0:
-                # May fail in worktrees if branch checked out elsewhere - that's OK
-                logger.warning(f"Checkout {default_branch} failed (may be worktree): {result.stderr}")
+                # May fail if branch doesn't exist or other git state issues
+                logger.warning(f"Checkout {default_branch} failed: {result.stderr}")
 
             # Check if origin/default_branch exists before resetting
             result = run_git(["git", "rev-parse", "--verify", f"origin/{default_branch}"])
@@ -717,7 +715,7 @@ class ContainerManager:
             "not possible because you have unmerged files",
             "unstaged changes",  # git pull --rebase requires clean state
             "uncommitted changes",
-            "is already checked out",  # worktree branch conflict
+            "is already checked out",  # branch conflict
         ]
 
         def needs_recovery(stderr: str) -> bool:
@@ -765,9 +763,8 @@ class ContainerManager:
             # Detect default branch
             default_branch = get_default_branch()
 
-            # For worktrees, we can't checkout the main branch if it's checked out elsewhere.
-            # Instead: fetch, discard local changes, reset to origin/default_branch
-            # Note: Use explicit refspec to ensure all remote branches are fetched in worktrees
+            # Fetch latest, discard local changes, reset to origin/default_branch
+            # Note: Use explicit refspec to ensure all remote branches are fetched
             if has_origin:
                 commands = [
                     (["git", "fetch", "origin", "+refs/heads/*:refs/remotes/origin/*"], "Fetching from origin", False),
@@ -803,7 +800,7 @@ class ContainerManager:
                     is_ssh_error = any(e in error_msg for e in ssh_errors)
 
                     if is_ssh_error and "fetch" in desc.lower():
-                        # SSH/network errors during fetch are non-fatal - worktree has code
+                        # SSH/network errors during fetch are non-fatal - container has code
                         logger.warning(f"Network/SSH error during fetch - continuing with existing code")
                         await self._broadcast_output("[System] Fetch failed (network/SSH) - using existing code...")
                         continue
@@ -1034,30 +1031,16 @@ class ContainerManager:
                 if not image_ok:
                     return False, image_msg
 
-                # Determine worktree name based on container type
-                if self._is_init_container:
-                    worktree_name = "main"
-                else:
-                    worktree_name = f"container-{self.container_number}"
-
-                # Create worktree for this container (bare repo + worktree)
-                worktree_ok, worktree_path = await self.worktree_manager.create_worktree(worktree_name)
-                if not worktree_ok:
-                    return False, f"Failed to create worktree for {worktree_name}"
-
-                # Create new container with worktree mounted
-                # Also mount bare repo at same path so gitdir references work
-                bare_repo_path = self.worktree_manager.bare_repo_path
+                # Create new standalone container (clones repo at runtime)
+                # No volume mounts needed - SSH key is baked into image
                 cmd = [
                     "docker", "run", "-d",
                     "--name", self.container_name,
                     # Enable host.docker.internal on Linux (works natively on Mac/Windows)
                     "--add-host", "host.docker.internal:host-gateway",
-                    # Mount worktree instead of cloning from git
-                    "-v", f"{worktree_path}:/project:rw",
-                    # Mount bare repo at same absolute path so .git gitdir reference works
-                    "-v", f"{bare_repo_path}:{bare_repo_path}:rw",
                 ]
+                # Pass git URL for container to clone (always clones main branch)
+                cmd.extend(["-e", f"GIT_REMOTE_URL={self.git_url}"])
                 # Pass container type for setup_repo.sh (init vs coding)
                 container_type = "init" if self._is_init_container else "coding"
                 cmd.extend(["-e", f"CONTAINER_TYPE={container_type}"])
@@ -1077,32 +1060,10 @@ class ContainerManager:
                 cmd.extend(["-e", f"PROJECT_NAME={self.project_name}"])
                 server_port = os.getenv("PORT", "8888")
                 cmd.extend(["-e", f"HOST_API_URL=http://host.docker.internal:{server_port}"])
-                # Sync timezone with host
-                if os.path.exists("/etc/localtime"):
-                    cmd.extend(["-v", "/etc/localtime:/etc/localtime:ro"])
-                if os.path.exists("/etc/timezone"):
-                    cmd.extend(["-v", "/etc/timezone:/etc/timezone:ro"])
-                    # Also pass TZ env var for Node.js (doesn't read /etc/localtime)
-                    try:
-                        with open("/etc/timezone", "r") as f:
-                            tz = f.read().strip()
-                            if tz:
-                                cmd.extend(["-e", f"TZ={tz}"])
-                    except Exception:
-                        pass
-                # Mount port file so containers can dynamically read current port
-                # This allows containers to work even when host restarts on different port
-                port_file = "/tmp/zerocoder-port.txt"
-                if os.path.exists(port_file):
-                    cmd.extend(["-v", f"{port_file}:/app/host-port.txt:ro"])
-                # Mount SSH key for git operations if configured
-                # Mount to temp location; entrypoint copies with correct permissions
-                ssh_key_path = os.getenv("GIT_SSH_KEY_PATH")
-                if ssh_key_path:
-                    expanded_path = os.path.expanduser(ssh_key_path)
-                    if os.path.exists(expanded_path):
-                        cmd.extend(["-v", f"{expanded_path}:/tmp/ssh_key:ro"])
-                        logger.info(f"Added SSH key mount: {expanded_path}")
+                # Pass TZ env var for Node.js if available
+                tz = os.getenv("TZ")
+                if tz:
+                    cmd.extend(["-e", f"TZ={tz}"])
                 cmd.append(CONTAINER_IMAGE)
 
                 result = subprocess.run(cmd, capture_output=True, text=True)
@@ -1144,36 +1105,21 @@ class ContainerManager:
 
             # Handle init container specially
             if self._is_init_container:
-                # Worktree is mounted - just verify it's accessible
-                # Note: Worktrees use a .git FILE (not directory), so use -e not -d
-                await asyncio.sleep(1)  # Brief wait for container startup
-                check = subprocess.run(
-                    ["docker", "exec", "-u", "coder", self.container_name,
-                     "test", "-e", "/project/.git"],
-                    capture_output=True,
-                    text=True,
-                )
-                if check.returncode != 0:
-                    return False, "Project worktree not mounted correctly"
-                logger.info(f"Init container {self.container_name}: worktree mounted successfully")
-
-                # Wait for SSH setup to complete (entrypoint copies key and runs ssh-keyscan)
-                # Test actual SSH connectivity rather than just file existence
-                for attempt in range(10):
+                # Wait for git clone to complete (entrypoint clones repo at startup)
+                for attempt in range(30):  # Up to 60 seconds for clone
+                    await asyncio.sleep(2)
                     check = subprocess.run(
                         ["docker", "exec", "-u", "coder", self.container_name,
-                         "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
-                         "-T", "git@github.com"],
+                         "test", "-e", "/project/.git"],
                         capture_output=True,
                         text=True,
-                        timeout=10,
                     )
-                    # SSH to GitHub returns exit code 1 with "successfully authenticated" message
-                    if "successfully authenticated" in check.stderr:
-                        logger.info(f"Init container {self.container_name}: SSH setup verified")
+                    if check.returncode == 0:
+                        logger.info(f"Init container {self.container_name}: repository cloned successfully")
                         break
-                    await asyncio.sleep(1)
-                    logger.info(f"Waiting for SSH setup (attempt {attempt + 1}/10)")
+                    logger.info(f"Waiting for git clone (attempt {attempt + 1}/30)")
+                else:
+                    return False, "Repository clone failed or timed out"
 
                 # Pre-agent sync: pull latest code and beads state
                 sync_ok, sync_msg = await self.pre_agent_sync()
@@ -1201,18 +1147,21 @@ class ContainerManager:
 
             # Send instruction if provided (for coding containers)
             if instruction:
-                # Worktree is mounted - just verify it's accessible
-                # Note: Worktrees use a .git FILE (not directory), so use -e not -d
-                await asyncio.sleep(1)  # Brief wait for container startup
-                check = subprocess.run(
-                    ["docker", "exec", "-u", "coder", self.container_name,
-                     "test", "-e", "/project/.git"],
-                    capture_output=True,
-                    text=True,
-                )
-                if check.returncode != 0:
-                    return False, "Project worktree not mounted correctly"
-                logger.info(f"Container {self.container_name}: worktree mounted successfully")
+                # Wait for git clone to complete (entrypoint clones repo at startup)
+                for attempt in range(30):  # Up to 60 seconds for clone
+                    await asyncio.sleep(2)
+                    check = subprocess.run(
+                        ["docker", "exec", "-u", "coder", self.container_name,
+                         "test", "-e", "/project/.git"],
+                        capture_output=True,
+                        text=True,
+                    )
+                    if check.returncode == 0:
+                        logger.info(f"Container {self.container_name}: repository cloned successfully")
+                        break
+                    logger.info(f"Waiting for git clone (attempt {attempt + 1}/30)")
+                else:
+                    return False, "Repository clone failed or timed out"
 
                 # Wait for agent app to be available
                 # If forcing Claude SDK (e.g., for initializer), always check for Claude SDK
@@ -1698,7 +1647,7 @@ class ContainerManager:
 
     async def remove(self) -> tuple[bool, str]:
         """
-        Remove the container and its worktree completely.
+        Remove the container completely.
 
         Returns:
             Tuple of (success, message)
@@ -1717,20 +1666,6 @@ class ContainerManager:
             if result.returncode != 0:
                 if "No such container" not in result.stderr:
                     return False, f"Failed to remove container: {result.stderr}"
-
-            # Determine worktree name and remove it
-            if self._is_init_container:
-                worktree_name = "main"
-            else:
-                worktree_name = f"container-{self.container_number}"
-
-            # Remove the worktree (force to handle uncommitted changes)
-            worktree_ok, worktree_msg = await self.worktree_manager.remove_worktree(
-                worktree_name, force=True
-            )
-            if not worktree_ok:
-                logger.warning(f"Failed to remove worktree {worktree_name}: {worktree_msg}")
-                # Continue anyway - worktree removal failure shouldn't block container removal
 
             self.status = "not_created"
             return True, f"Container {self.container_name} removed"
@@ -1891,30 +1826,16 @@ class ContainerManager:
                 if not image_ok:
                     return False, image_msg
 
-                # Determine worktree name based on container type
-                if self._is_init_container:
-                    worktree_name = "main"
-                else:
-                    worktree_name = f"container-{self.container_number}"
-
-                # Create worktree for this container (bare repo + worktree)
-                worktree_ok, worktree_path = await self.worktree_manager.create_worktree(worktree_name)
-                if not worktree_ok:
-                    return False, f"Failed to create worktree for {worktree_name}"
-
-                # Create new container with worktree mounted
-                # Also mount bare repo at same path so gitdir references work
-                bare_repo_path = self.worktree_manager.bare_repo_path
+                # Create new standalone container (clones repo at runtime)
+                # No volume mounts needed - SSH key is baked into image
                 cmd = [
                     "docker", "run", "-d",
                     "--name", self.container_name,
                     # Enable host.docker.internal on Linux (works natively on Mac/Windows)
                     "--add-host", "host.docker.internal:host-gateway",
-                    # Mount worktree instead of cloning from git
-                    "-v", f"{worktree_path}:/project:rw",
-                    # Mount bare repo at same absolute path so .git gitdir reference works
-                    "-v", f"{bare_repo_path}:{bare_repo_path}:rw",
                 ]
+                # Pass git URL for container to clone (always clones main branch)
+                cmd.extend(["-e", f"GIT_REMOTE_URL={self.git_url}"])
                 # Pass container type for setup_repo.sh (init vs coding)
                 container_type = "init" if self._is_init_container else "coding"
                 cmd.extend(["-e", f"CONTAINER_TYPE={container_type}"])
@@ -1934,32 +1855,10 @@ class ContainerManager:
                 cmd.extend(["-e", f"PROJECT_NAME={self.project_name}"])
                 server_port = os.getenv("PORT", "8888")
                 cmd.extend(["-e", f"HOST_API_URL=http://host.docker.internal:{server_port}"])
-                # Sync timezone with host
-                if os.path.exists("/etc/localtime"):
-                    cmd.extend(["-v", "/etc/localtime:/etc/localtime:ro"])
-                if os.path.exists("/etc/timezone"):
-                    cmd.extend(["-v", "/etc/timezone:/etc/timezone:ro"])
-                    # Also pass TZ env var for Node.js (doesn't read /etc/localtime)
-                    try:
-                        with open("/etc/timezone", "r") as f:
-                            tz = f.read().strip()
-                            if tz:
-                                cmd.extend(["-e", f"TZ={tz}"])
-                    except Exception:
-                        pass
-                # Mount port file so containers can dynamically read current port
-                # This allows containers to work even when host restarts on different port
-                port_file = "/tmp/zerocoder-port.txt"
-                if os.path.exists(port_file):
-                    cmd.extend(["-v", f"{port_file}:/app/host-port.txt:ro"])
-                # Mount SSH key for git operations if configured
-                # Mount to temp location; entrypoint copies with correct permissions
-                ssh_key_path = os.getenv("GIT_SSH_KEY_PATH")
-                if ssh_key_path:
-                    expanded_path = os.path.expanduser(ssh_key_path)
-                    if os.path.exists(expanded_path):
-                        cmd.extend(["-v", f"{expanded_path}:/tmp/ssh_key:ro"])
-                        logger.info(f"Added SSH key mount: {expanded_path}")
+                # Pass TZ env var for Node.js if available
+                tz = os.getenv("TZ")
+                if tz:
+                    cmd.extend(["-e", f"TZ={tz}"])
                 cmd.append(CONTAINER_IMAGE)
 
                 result = subprocess.run(cmd, capture_output=True, text=True)

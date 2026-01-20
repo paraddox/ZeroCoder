@@ -64,9 +64,26 @@ echo "Installing dependencies..."
 pip install -r requirements.txt --quiet
 
 # Always build Docker image to pick up any changes
+# Uses BuildKit with SSH key secret for git clone support
 DOCKER_IMAGE="zerocoder-project"
-echo "Building Docker image '$DOCKER_IMAGE'..."
-docker build -f Dockerfile.project -t "$DOCKER_IMAGE" .
+SSH_KEY_PATH="${GIT_SSH_KEY_PATH:-$HOME/.ssh/id_ed25519}"
+
+echo "Building Docker image '$DOCKER_IMAGE' with BuildKit..."
+
+# Check if SSH key exists
+if [ ! -f "$SSH_KEY_PATH" ]; then
+    echo "WARNING: SSH key not found at $SSH_KEY_PATH"
+    echo "Container will not be able to clone private repositories"
+    echo "Set GIT_SSH_KEY_PATH environment variable to specify a different key"
+    # Build without SSH key secret
+    DOCKER_BUILDKIT=1 docker build -f Dockerfile.project -t "$DOCKER_IMAGE" .
+else
+    # Build with SSH key secret (key is copied securely, not stored in image layers)
+    DOCKER_BUILDKIT=1 docker build \
+        --secret id=ssh_key,src="$SSH_KEY_PATH" \
+        -f Dockerfile.project -t "$DOCKER_IMAGE" .
+fi
+
 if [ $? -ne 0 ]; then
     echo "ERROR: Failed to build Docker image"
     exit 1

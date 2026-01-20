@@ -36,6 +36,8 @@ beads_client close <id>                         # Mark complete AFTER validation
 - Returns the full issue details as JSON
 - Uses server-side locking so different agents get different issues
 
+**Architecture:** `beads_client` routes all requests through the host API (not directly to beads). This enables atomic claiming, server-side locking, and coordination between containers.
+
 **Skipping these commands breaks the UI monitoring.** Users track your progress by reading beads status.
 
 ---
@@ -89,7 +91,7 @@ Plans are cheap. Don't salvage stale plans.
 
 ### STEP 2: CLAIM FEATURE + CREATE BRANCH
 
-**Note:** You're on a worktree branch (e.g., `worktree-projectname-1`). Create feature branches from here.
+**Note:** Container starts on main branch. Create a feature branch for your work.
 
 ```bash
 # Claim next available feature (atomic - server handles locking)
@@ -303,17 +305,12 @@ git checkout main && git pull origin main
 git merge "$BRANCH" --no-ff -m "Merge: $FEATURE_TITLE"
 git push origin main
 
-# Delete feature branch
+# Delete feature branch (local and remote)
 git branch -d "$BRANCH"
 git push origin --delete "$BRANCH" 2>/dev/null || true
 
-# Return to worktree branch and reset to main (ready for next feature)
-# The worktree branch name follows pattern: worktree-{project}-{number}
-WORKTREE_BRANCH=$(git branch --list "worktree-*" | head -1 | tr -d ' *')
-if [ -n "$WORKTREE_BRANCH" ]; then
-    git checkout "$WORKTREE_BRANCH"
-    git reset --hard main
-fi
+# Session complete - exit and let agent_app start fresh session for next feature
+exit 0
 ```
 
 #### Error Path (blocked, timeout, or incomplete)

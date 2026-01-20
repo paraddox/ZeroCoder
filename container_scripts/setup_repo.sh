@@ -2,7 +2,7 @@
 # =============================================================================
 # Repository Setup Script
 # =============================================================================
-# Runs after repo clone/pull in container entrypoint.
+# Runs after repo clone in container entrypoint.
 # Handles beads sync via host API (beads_client) instead of local bd.
 #
 # For init containers: Skip beads sync (agent creates beads from scratch)
@@ -24,7 +24,15 @@ log() {
 }
 
 log "Starting repository setup (type: $CONTAINER_TYPE)"
+
+# Verify repo was cloned successfully (done by entrypoint)
+if [ ! -e "$PROJECT_DIR/.git" ]; then
+    log "ERROR: /project/.git not found - repository not cloned"
+    exit 1
+fi
+
 cd "$PROJECT_DIR" || exit 1
+log "Repository verified at $PROJECT_DIR"
 
 # Kill any stale daemon processes and remove lock files
 if [ -f "$BEADS_DIR/daemon.pid" ]; then

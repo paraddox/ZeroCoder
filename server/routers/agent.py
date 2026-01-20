@@ -279,7 +279,7 @@ async def start_agent(
     if not check_image_exists():
         raise HTTPException(
             status_code=503,
-            detail="Container image 'zerocoder-project' not found. Run: docker build -f Dockerfile.project -t zerocoder-project ."
+            detail="Container image 'zerocoder-project' not found. Run: DOCKER_BUILDKIT=1 docker build --secret id=ssh_key,src=$HOME/.ssh/id_ed25519 -f Dockerfile.project -t zerocoder-project ."
         )
 
     manager = get_project_container(project_name)
@@ -359,7 +359,7 @@ async def start_all_containers(project_name: str):
     if not check_image_exists():
         raise HTTPException(
             status_code=503,
-            detail="Container image 'zerocoder-project' not found. Run: docker build -f Dockerfile.project -t zerocoder-project ."
+            detail="Container image 'zerocoder-project' not found. Run: DOCKER_BUILDKIT=1 docker build --secret id=ssh_key,src=$HOME/.ssh/id_ed25519 -f Dockerfile.project -t zerocoder-project ."
         )
 
     # Validate project name
@@ -524,8 +524,10 @@ async def start_all_containers(project_name: str):
         )
 
     # Start coding containers with staggered delays to prevent race conditions
-    # Each container needs time to claim a feature before next starts
-    STAGGER_DELAY_SECONDS = 10
+    # Each container needs time to clone repo and claim a feature before next starts
+    # 60 seconds allows for git clone + agent startup
+    from server.services.container_manager import CONTAINER_STARTUP_DELAY
+    STAGGER_DELAY_SECONDS = CONTAINER_STARTUP_DELAY
 
     async def start_container_and_agent(manager, container_num: int):
         """Start container and then start agent as background task."""
@@ -758,7 +760,7 @@ async def start_container_only(project_name: str):
     if not check_image_exists():
         raise HTTPException(
             status_code=503,
-            detail="Container image 'zerocoder-project' not found. Run: docker build -f Dockerfile.project -t zerocoder-project ."
+            detail="Container image 'zerocoder-project' not found. Run: DOCKER_BUILDKIT=1 docker build --secret id=ssh_key,src=$HOME/.ssh/id_ed25519 -f Dockerfile.project -t zerocoder-project ."
         )
 
     manager = get_project_container(project_name)

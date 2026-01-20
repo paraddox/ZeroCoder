@@ -2,12 +2,11 @@
 Local Project Manager
 =====================
 
-Manages local worktrees for projects used in:
+Manages local clones for projects used in:
 - Spec creation wizard (new projects)
 - Task editing (edit mode)
 
-Uses git worktrees stored at ~/.zerocoder/worktrees/{name}/main/
-Bare repos are stored at ~/.zerocoder/repos/{name}.git
+Uses direct git clone stored at ~/.zerocoder/projects/{name}/
 """
 
 import asyncio
@@ -22,13 +21,13 @@ logger = logging.getLogger(__name__)
 
 
 def get_projects_dir() -> Path:
-    """Get the projects directory (DEPRECATED - use worktrees instead)."""
+    """Get the projects directory for local clones."""
     from registry import get_projects_dir as registry_get_projects_dir
     return registry_get_projects_dir()
 
 
 class LocalProjectManager:
-    """Manages local worktree for wizard and edit mode."""
+    """Manages local clone for wizard and edit mode."""
 
     def __init__(self, project_name: str, git_url: str):
         """
@@ -40,11 +39,7 @@ class LocalProjectManager:
         """
         self.project_name = project_name
         self.git_url = git_url
-
-        # Use WorktreeManager for worktree operations
-        from server.services.worktree_manager import WorktreeManager
-        self.worktree_manager = WorktreeManager(project_name, git_url)
-        self.local_path = self.worktree_manager.get_worktree_path("main")
+        self.local_path = get_projects_dir() / project_name
 
     def _get_default_branch(self) -> str:
         """Get the default branch name from remote."""
@@ -87,36 +82,57 @@ class LocalProjectManager:
 
     async def ensure_cloned(self) -> tuple[bool, str]:
         """
-        Ensure the main worktree exists for the project.
-
-        Uses git worktrees instead of full clone:
-        1. Ensures bare repo exists (clones if needed)
-        2. Creates main worktree if not exists
+        Ensure the local clone exists for the project.
 
         Returns:
             Tuple of (success, message)
         """
-        # Check if worktree already exists
+        # Check if already cloned
         if self.local_path.exists() and (self.local_path / ".git").exists():
-            return True, "Worktree already exists"
+            return True, "Already cloned"
 
         try:
-            # Create main worktree (this will also ensure bare repo exists)
-            ok, worktree_path = await self.worktree_manager.create_worktree("main")
+            # Create parent directory
+            self.local_path.parent.mkdir(parents=True, exist_ok=True)
 
-            if not ok:
-                return False, f"Failed to create main worktree"
+            # Clone the repository
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ["git", "clone", self.git_url, str(self.local_path)],
+                capture_output=True,
+                text=True,
+                timeout=300,  # 5 minute timeout for clone
+            )
 
-            logger.info(f"Created main worktree for {self.project_name} at {worktree_path}")
-            return True, "Worktree created successfully"
+            if result.returncode != 0:
+                return False, f"Clone failed: {result.stderr}"
 
+            # Configure git user
+            await asyncio.to_thread(
+                subprocess.run,
+                ["git", "-C", str(self.local_path), "config", "user.email", "wizard@zerocoder.local"],
+                capture_output=True,
+                timeout=10,
+            )
+            await asyncio.to_thread(
+                subprocess.run,
+                ["git", "-C", str(self.local_path), "config", "user.name", "ZeroCoder Wizard"],
+                capture_output=True,
+                timeout=10,
+            )
+
+            logger.info(f"Cloned {self.project_name} to {self.local_path}")
+            return True, "Cloned successfully"
+
+        except subprocess.TimeoutExpired:
+            return False, "Clone timed out"
         except Exception as e:
-            logger.exception(f"Failed to create worktree for {self.project_name}")
-            return False, f"Worktree creation error: {e}"
+            logger.exception(f"Failed to clone {self.project_name}")
+            return False, f"Clone error: {e}"
 
     async def pull_latest(self) -> tuple[bool, str]:
         """
-        Sync the main worktree with remote.
+        Pull latest changes from remote.
 
         Returns:
             Tuple of (success, message)
@@ -125,15 +141,37 @@ class LocalProjectManager:
             return await self.ensure_cloned()
 
         try:
-            # Use worktree manager to sync the main worktree
-            ok, msg = await self.worktree_manager.sync_worktree("main")
-            if not ok:
-                return False, f"Sync failed: {msg}"
-            return True, "Synced successfully"
+            default_branch = self._get_default_branch()
 
+            # Fetch from origin
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ["git", "-C", str(self.local_path), "fetch", "origin"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if result.returncode != 0:
+                logger.warning(f"Fetch failed: {result.stderr}")
+
+            # Reset to origin/default_branch
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ["git", "-C", str(self.local_path), "reset", "--hard", f"origin/{default_branch}"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                return False, f"Reset failed: {result.stderr}"
+
+            return True, "Pulled successfully"
+
+        except subprocess.TimeoutExpired:
+            return False, "Pull timed out"
         except Exception as e:
-            logger.warning(f"Failed to sync worktree for {self.project_name}: {e}")
-            return False, f"Sync error: {e}"
+            logger.warning(f"Failed to pull latest for {self.project_name}: {e}")
+            return False, f"Pull error: {e}"
 
     async def sync_beads(self) -> tuple[bool, str]:
         """
@@ -176,6 +214,8 @@ class LocalProjectManager:
             Tuple of (success, message)
         """
         try:
+            default_branch = self._get_default_branch()
+
             # Add all changes
             add_result = await asyncio.to_thread(
                 subprocess.run,
@@ -211,7 +251,7 @@ class LocalProjectManager:
             # Push
             result = await asyncio.to_thread(
                 subprocess.run,
-                ["git", "-C", str(self.local_path), "push", "origin", "main"],
+                ["git", "-C", str(self.local_path), "push", "origin", default_branch],
                 capture_output=True,
                 text=True,
                 timeout=60,

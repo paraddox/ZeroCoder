@@ -2,6 +2,8 @@
 
 This project uses **beads** for feature/issue tracking and **Ralph artifacts** for session continuity.
 
+**Architecture Note:** The `beads_client` command routes all requests through the host API (not directly to beads). This enables atomic claiming, server-side locking, and coordination between multiple containers. The host API manages the actual beads operations and syncs changes to git.
+
 ## ⚠️ MANDATORY WORKFLOW - NEVER SKIP
 
 **You MUST follow this workflow. It is NOT optional.**
@@ -18,26 +20,25 @@ cat IMPLEMENTATION_PLAN.md 2>/dev/null || echo "No plan"
 # 3. Recent history (last 30 lines only)
 tail -30 IMPLEMENTATION_HISTORY.md 2>/dev/null
 
-# 4. Get available features
-beads_client stats && beads_client ready
+# 4. Get progress stats
+beads_client stats
 ```
 
 ### Session Flow
 
 ```
-1. LOAD CONTEXT          → Read artifacts in order above
-2. CLAIM FEATURE         → beads_client update <id> --status=in_progress
-3. GAP ANALYSIS          → What exists vs what's needed?
-4. PLAN                  → Create/update IMPLEMENTATION_PLAN.md
-5. IMPLEMENT             → Follow the plan
-6. VALIDATION GATE       → ./validate.sh (MUST PASS - blocks close)
-7. SELF-REVIEW           → No TODOs, no placeholders, tests work
-8. CLOSE                 → beads_client close <id>
-9. ARCHIVE + EXIT        → Archive plan, commit, sync
+1. LOAD CONTEXT    → Read artifacts in order above
+2. CLAIM FEATURE   → beads_client claim (atomic, returns issue JSON)
+3. CREATE BRANCH   → feature/{id}-{title-slug}
+4. GAP ANALYSIS    → Create IMPLEMENTATION_PLAN.md
+5. IMPLEMENT       → Follow the plan
+6. VALIDATE        → ./validate.sh (MUST PASS - blocks close)
+7. SELF-REVIEW     → No TODOs, no placeholders, tests work
+8. CLOSE           → beads_client close <id>
+9. MERGE + EXIT    → Merge to main, delete branch, push, EXIT SESSION
 ```
 
-**Skipping `--status=in_progress` breaks the UI monitoring. NEVER skip it.**
-**Features CANNOT be closed until validation passes AND self-review is clean.**
+**Agent exits after completing one feature. agent_app starts a fresh session for the next feature.**
 
 ---
 
@@ -77,27 +78,39 @@ This file is **overwritten for each feature** and archived to IMPLEMENTATION_HIS
 
 ## Workflow
 
-### Starting Work
+### Claiming Work (Atomic)
 
-1. Check what's ready to work on:
-   ```bash
-   beads_client ready
-   ```
+Use `beads_client claim` to atomically claim the next available feature:
 
-2. Pick a feature and view details:
-   ```bash
-   beads_client show <feature-id>
-   ```
+```bash
+# Claim next available feature (atomic - server handles locking)
+CLAIM_RESULT=$(beads_client claim)
 
-3. **REQUIRED: Mark the feature as in_progress BEFORE starting any work:**
-   ```bash
-   beads_client update <feature-id> --status=in_progress
-   ```
-   This step is MANDATORY. It allows the UI to show what you're currently working on.
+if [ $? -ne 0 ]; then
+    echo "No features available - exiting"
+    exit 0
+fi
+
+# Parse the claimed issue
+FEATURE_ID=$(echo "$CLAIM_RESULT" | jq -r '.id')
+FEATURE_TITLE=$(echo "$CLAIM_RESULT" | jq -r '.title' | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd '[:alnum:]-' | cut -c1-30)
+
+# Create feature branch
+BRANCH="feature/${FEATURE_ID}-${FEATURE_TITLE}"
+git checkout -b "$BRANCH"
+
+echo "Claimed $FEATURE_ID on branch $BRANCH"
+```
+
+The `claim` command:
+- Finds the next open issue with no blockers
+- Marks it `in_progress` atomically
+- Returns the full issue details as JSON
+- Uses server-side locking so different agents get different issues
 
 ### Implementing Features
 
-**After marking in_progress:**
+**After claiming and creating your branch:**
 1. Create/update IMPLEMENTATION_PLAN.md with gap analysis + task breakdown
 2. Follow the tasks in your plan
 3. Update discoveries in IMPLEMENTATION_PLAN.md as you work
@@ -117,35 +130,64 @@ npm run lint && npm run typecheck && npm test
 # Self-review: verify no TODOs, placeholders, or incomplete code
 
 # Only after ALL pass:
-beads_client close <feature-id>
+beads_client close "$FEATURE_ID"
 ```
 
 **If validation fails, FIX THE ISSUES. DO NOT close with failing validation.**
 
-Check overall progress:
+### Merge and Exit
+
+After closing the feature, merge to main and exit:
+
 ```bash
-beads_client stats
+# Archive plan to history
+if [ -f IMPLEMENTATION_PLAN.md ]; then
+    {
+        echo ""
+        echo "---"
+        echo "## Completed: $(date '+%Y-%m-%d %H:%M')"
+        cat IMPLEMENTATION_PLAN.md
+    } >> IMPLEMENTATION_HISTORY.md && rm IMPLEMENTATION_PLAN.md
+fi
+
+# Commit final changes
+git add .
+git diff --cached --quiet || git commit -m "Implement: $FEATURE_TITLE"
+
+# Merge to main
+git fetch origin main
+git checkout main && git pull origin main
+git merge "$BRANCH" --no-ff -m "Merge: $FEATURE_TITLE"
+git push origin main
+
+# Delete feature branch (local and remote)
+git branch -d "$BRANCH"
+git push origin --delete "$BRANCH" 2>/dev/null || true
+
+# Session complete - exit and let agent_app start fresh session
+exit 0
 ```
 
 ### If Blocked
 
 If you encounter a blocker:
 ```bash
-beads_client update <feature-id> --status=blocked
-beads_client comments <feature-id> --add "Blocked because: <reason>"
+beads_client update "$FEATURE_ID" --status=blocked
+beads_client comments "$FEATURE_ID" --add "Blocked because: <reason>"
 ```
 
-Then move to the next available feature with `beads_client ready`.
+Commit partial work and exit. agent_app will start a new session.
 
 ## Beads Quick Reference
 
+All commands route through the host API for coordination and atomic operations.
+
 | Command | Description |
 |---------|-------------|
-| `beads_client ready` | List features ready to work on |
+| `beads_client claim` | Claim next available feature (atomic, server-locked) |
 | `beads_client show <id>` | View feature details |
 | `beads_client list --status=open` | List all open features |
 | `beads_client list --status=in_progress` | List features being worked on |
-| `beads_client update <id> --status=in_progress` | Claim a feature |
 | `beads_client close <id>` | Mark feature as complete |
 | `beads_client stats` | Show progress statistics |
 | `beads_client comments <id> --add "..."` | Add a comment to a feature |
@@ -158,4 +200,4 @@ Then move to the next available feature with `beads_client ready`.
 - **Update artifacts** - Log discoveries to AGENTS.md
 - Follow existing code patterns and conventions
 - Commit changes with descriptive messages
-- One feature at a time - complete or skip before moving on
+- **One feature per session** - complete, merge, and exit
