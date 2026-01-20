@@ -169,28 +169,20 @@ class ContainerManager:
 
         self._status: Literal["not_created", "running", "stopped", "completed"] = "not_created"
         self.started_at: datetime | None = None
-        self.last_activity: datetime | None = None
         self._log_task: asyncio.Task | None = None
 
-        # Track if user started this container (for auto-restart monitoring)
-        # Restore from marker file if it exists (survives server restart)
-        self._user_started: bool = self._check_user_started_marker()
-        # Flag to prevent health monitor conflicts during restart
-        self._restarting: bool = False
-        # Track if the last agent was overseer (for completion detection)
-        self._last_agent_was_overseer: bool = False
-        # Track if graceful stop was requested
-        self._graceful_stop_requested: bool = False
         # Track current agent type for OpenCode SDK routing
         self._current_agent_type: Literal["coder", "overseer"] = "coder"
         # Force Claude SDK for initializer (regardless of project model)
         self._force_claude_sdk: bool = False
-        # Track if this overseer is a milestone run (vs final 100% run)
-        self._is_milestone_overseer: bool = False
         # Track current feature being worked on (detected from logs)
         self._current_feature: str | None = None
         # Model to use when forcing Claude SDK (defaults to Opus 4.5)
         self._forced_model: str = "claude-opus-4-5-20251101"
+
+        # Note: Session state (user_started, graceful_stop_requested, restarting,
+        # last_agent_was_overseer, is_milestone_overseer, last_activity) is now
+        # stored in the database and accessed via registry functions.
 
         # Callbacks for WebSocket notifications
         self._output_callbacks: Set[Callable[[str], Awaitable[None]]] = set()
@@ -200,31 +192,86 @@ class ContainerManager:
         # Check initial container status
         self._sync_status()
 
-    def _get_marker_file_path(self) -> Path:
-        """Get path to the user-started marker file (per-container)."""
-        # Use container-specific marker to avoid conflicts in multi-container setups
-        # Each container (nexus-1, nexus-2, etc.) gets its own marker file
-        return self.project_dir / f".agent_started.{self.container_number}"
+    # =========================================================================
+    # Session State Properties (DB-backed)
+    # =========================================================================
 
-    def _check_user_started_marker(self) -> bool:
-        """Check if user-started marker file exists."""
-        return self._get_marker_file_path().exists()
+    @property
+    def _user_started(self) -> bool:
+        """Check if user started this container (from database)."""
+        from registry import is_user_started
+        return is_user_started(self.project_name, self.container_number, self.container_type)
 
-    def _set_user_started_marker(self) -> None:
-        """Create user-started marker file."""
-        try:
-            self._get_marker_file_path().touch()
-        except Exception as e:
-            logger.warning(f"Failed to create user-started marker: {e}")
+    @_user_started.setter
+    def _user_started(self, value: bool) -> None:
+        """Set user started state (to database)."""
+        from registry import set_user_started
+        set_user_started(self.project_name, self.container_number, value, self.container_type)
 
-    def _remove_user_started_marker(self) -> None:
-        """Remove user-started marker file."""
-        try:
-            marker = self._get_marker_file_path()
-            if marker.exists():
-                marker.unlink()
-        except Exception as e:
-            logger.warning(f"Failed to remove user-started marker: {e}")
+    @property
+    def _graceful_stop_requested(self) -> bool:
+        """Check if graceful stop was requested (from database)."""
+        from registry import is_graceful_stop_requested
+        return is_graceful_stop_requested(self.project_name, self.container_number, self.container_type)
+
+    @_graceful_stop_requested.setter
+    def _graceful_stop_requested(self, value: bool) -> None:
+        """Set graceful stop requested state (to database)."""
+        from registry import set_graceful_stop
+        set_graceful_stop(self.project_name, self.container_number, value, self.container_type)
+
+    @property
+    def _restarting(self) -> bool:
+        """Check if container is restarting (from database)."""
+        from registry import is_restarting
+        return is_restarting(self.project_name, self.container_number, self.container_type)
+
+    @_restarting.setter
+    def _restarting(self, value: bool) -> None:
+        """Set restarting state (to database)."""
+        from registry import set_restarting
+        set_restarting(self.project_name, self.container_number, value, self.container_type)
+
+    @property
+    def _last_agent_was_overseer(self) -> bool:
+        """Check if last agent was overseer (from database)."""
+        from registry import get_overseer_flags
+        last_was, _ = get_overseer_flags(self.project_name, self.container_number, self.container_type)
+        return last_was
+
+    @_last_agent_was_overseer.setter
+    def _last_agent_was_overseer(self, value: bool) -> None:
+        """Set last agent was overseer flag (to database)."""
+        from registry import set_overseer_flags, get_overseer_flags
+        _, is_milestone = get_overseer_flags(self.project_name, self.container_number, self.container_type)
+        set_overseer_flags(self.project_name, self.container_number, value, is_milestone, self.container_type)
+
+    @property
+    def _is_milestone_overseer(self) -> bool:
+        """Check if this is a milestone overseer (from database)."""
+        from registry import get_overseer_flags
+        _, is_milestone = get_overseer_flags(self.project_name, self.container_number, self.container_type)
+        return is_milestone
+
+    @_is_milestone_overseer.setter
+    def _is_milestone_overseer(self, value: bool) -> None:
+        """Set milestone overseer flag (to database)."""
+        from registry import set_overseer_flags, get_overseer_flags
+        last_was, _ = get_overseer_flags(self.project_name, self.container_number, self.container_type)
+        set_overseer_flags(self.project_name, self.container_number, last_was, value, self.container_type)
+
+    @property
+    def last_activity(self) -> datetime | None:
+        """Get last activity timestamp (from database)."""
+        from registry import get_last_activity
+        return get_last_activity(self.project_name, self.container_number, self.container_type)
+
+    @last_activity.setter
+    def last_activity(self, value: datetime | None) -> None:
+        """Set last activity timestamp (to database)."""
+        if value is not None:
+            from registry import update_last_activity
+            update_last_activity(self.project_name, self.container_number, self.container_type)
 
     def _sync_status(self) -> None:
         """Sync status with actual Docker container state (Docker is source of truth)."""
@@ -232,8 +279,7 @@ class ContainerManager:
         if self._status == "completed":
             return
 
-        # Always refresh user_started from marker file (may have been created externally)
-        self._user_started = self._check_user_started_marker()
+        # Note: user_started is now read from database on-demand via property
 
         # Docker is the source of truth - check Docker first
         try:
@@ -527,8 +573,8 @@ class ContainerManager:
 
     @property
     def user_started(self) -> bool:
-        """Whether the user explicitly started this container."""
-        return self._user_started
+        """Whether the user explicitly started this container (from DB)."""
+        return self._user_started  # Uses DB-backed property
 
     def has_open_features(self) -> bool:
         """Check if project has open features remaining using BeadsSyncManager."""
@@ -1003,7 +1049,7 @@ class ContainerManager:
             # Container already running, just send instruction if provided
             if instruction:
                 self._user_started = True  # Mark as user-started for auto-restart
-                self._set_user_started_marker()
+                # user_started set via DB-backed property
                 return await self.send_instruction(instruction)
             return True, "Container already running"
 
@@ -1100,7 +1146,7 @@ class ContainerManager:
             self._update_activity()
             self.status = "running"
             self._user_started = True  # Mark as user-started for monitoring
-            self._set_user_started_marker()
+            # user_started set via DB-backed property
 
             # Start log streaming
             self._log_task = asyncio.create_task(self._stream_logs())
@@ -1241,23 +1287,14 @@ class ContainerManager:
                 except asyncio.CancelledError:
                     pass
 
-            # Clean up graceful stop flag if exists
-            try:
-                flag_file = Path(self.project_dir) / ".graceful_stop"
-                if flag_file.exists():
-                    flag_file.unlink()
-                    logger.info(f"Cleaned up graceful stop flag for {self.container_name}")
-            except Exception as e:
-                logger.warning(f"Failed to clean up graceful stop flag: {e}")
-
-            # Reset graceful stop flag in memory
+            # Reset graceful stop flag in database
             self._graceful_stop_requested = False
 
             # Reset user_started flag to prevent auto-restart
             # User explicitly stopped, so we shouldn't auto-restart
             logger.info(f"[STOP] Resetting _user_started flag for {self.container_name}")
             self._user_started = False
-            self._remove_user_started_marker()
+            self._user_started = False  # Clear via DB-backed property
 
             # Clear verification state if this container was running verification
             if self._last_agent_was_overseer:
@@ -1331,12 +1368,8 @@ class ContainerManager:
             return True, "Graceful stop already requested"
 
         try:
-            # Set flag in memory
+            # Set flag in database (container queries API to check this)
             self._graceful_stop_requested = True
-
-            # Create flag file in project directory
-            flag_file = Path(self.project_dir) / ".graceful_stop"
-            flag_file.touch(mode=0o666)  # World-writable for container access
 
             logger.info(f"Graceful stop requested for {self.container_name}")
             await self._broadcast_output("[System] Graceful stop requested, completing current session...")
@@ -1545,15 +1578,7 @@ class ContainerManager:
             logger.info(f"Graceful stop completed for {self.container_name}")
             await self._broadcast_output("[System] Graceful stop completed")
 
-            # Clean up flag file
-            try:
-                flag_file = Path(self.project_dir) / ".graceful_stop"
-                if flag_file.exists():
-                    flag_file.unlink()
-            except Exception as e:
-                logger.warning(f"Failed to clean up graceful stop flag: {e}")
-
-            # Reset flag and stop container
+            # Reset flag in database and stop container
             self._graceful_stop_requested = False
             await self.stop()
             return True, "Graceful stop completed"
@@ -1605,7 +1630,7 @@ class ContainerManager:
                         await self._broadcast_output("[System] Verification complete! All features verified.")
                         await self.stop()
                         self.status = "completed"
-                        self._remove_user_started_marker()
+                        self._user_started = False  # Clear via DB-backed property
                         await self._stop_other_containers()
                         return True, "All features verified complete"
                 else:
@@ -2017,35 +2042,13 @@ _managers_lock = threading.Lock()
 # Alias for backward compatibility with tests
 _container_managers = _managers
 
-# Project-level verification state tracking
-# When all features are closed, only ONE container should run the overseer
-_verification_running: dict[str, bool] = {}  # project_name -> is_running
-_verification_lock = threading.Lock()
-
-
-def is_verification_running(project_name: str) -> bool:
-    """Check if overseer verification is already running for project."""
-    with _verification_lock:
-        return _verification_running.get(project_name, False)
-
-
-def set_verification_running(project_name: str, running: bool) -> bool:
-    """
-    Set verification running state.
-
-    Returns False if already running (couldn't acquire).
-    """
-    with _verification_lock:
-        if running and _verification_running.get(project_name, False):
-            return False  # Already running, can't acquire
-        _verification_running[project_name] = running
-        return True
-
-
-def clear_verification_state(project_name: str) -> None:
-    """Clear verification state for project."""
-    with _verification_lock:
-        _verification_running.pop(project_name, None)
+# Project-level verification state tracking (now DB-backed)
+# Import functions from registry for verification state management
+from registry import (
+    is_verification_running,
+    set_verification_running,
+    clear_verification_state,
+)
 
 
 def get_projects_dir() -> Path:
@@ -2469,7 +2472,7 @@ async def monitor_agent_health() -> list[str]:
             if not manager.has_open_features():
                 logger.info(f"Container {manager.container_name} stopped, no open features - marking complete")
                 manager.status = "completed"
-                manager._remove_user_started_marker()
+                manager._user_started = False  # Clear via DB-backed property
                 continue
 
             logger.warning(

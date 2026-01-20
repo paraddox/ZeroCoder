@@ -798,3 +798,131 @@ async def resume_agent(_project_name: str):
         status_code=400,
         detail="Resume is not supported for containers. Use start instead."
     )
+
+
+# =============================================================================
+# Container Session Endpoints (for container-to-host communication)
+# =============================================================================
+
+@router.get("/containers/{container_number}/session")
+async def get_container_session(project_name: str, container_number: int):
+    """
+    Container queries if it should continue running.
+
+    Called by agent inside container to check:
+    - If graceful stop was requested
+    - If container was user-started
+    - Configuration (model, etc.)
+
+    Returns JSON with session state for container to use.
+    """
+    project_name = validate_project_name(project_name)
+
+    from registry import (
+        is_user_started,
+        is_graceful_stop_requested,
+    )
+
+    container_type = "init" if container_number == 0 else "coding"
+
+    user_started = is_user_started(project_name, container_number, container_type)
+    graceful_stop = is_graceful_stop_requested(project_name, container_number, container_type)
+
+    # Get model config from project directory
+    project_dir = _get_project_path(project_name)
+    config = {}
+    if project_dir:
+        config_path = project_dir / "prompts" / ".agent_config.json"
+        if config_path.exists():
+            try:
+                import json
+                config = json.loads(config_path.read_text())
+            except Exception:
+                pass
+
+    return {
+        "should_continue": user_started and not graceful_stop,
+        "graceful_stop_requested": graceful_stop,
+        "user_started": user_started,
+        "config": config,
+    }
+
+
+@router.post("/containers/{container_number}/heartbeat")
+async def container_heartbeat(project_name: str, container_number: int):
+    """
+    Container sends periodic heartbeat to update last activity.
+
+    Called by agent inside container periodically to:
+    - Update last_activity_at timestamp
+    - Check if graceful stop was requested
+    - Report current feature being worked on
+
+    Request body (optional):
+    - status: Current agent status
+    - current_feature: Feature ID being worked on
+
+    Returns acknowledgment and any pending commands.
+    """
+    project_name = validate_project_name(project_name)
+
+    from registry import (
+        update_last_activity,
+        is_graceful_stop_requested,
+    )
+
+    container_type = "init" if container_number == 0 else "coding"
+
+    # Update last activity timestamp
+    update_last_activity(project_name, container_number, container_type)
+
+    # Check if graceful stop requested
+    graceful_stop = is_graceful_stop_requested(project_name, container_number, container_type)
+
+    return {
+        "acknowledged": True,
+        "graceful_stop_requested": graceful_stop,
+    }
+
+
+@router.post("/containers/{container_number}/exit")
+async def container_exit_notification(project_name: str, container_number: int):
+    """
+    Container notifies host before exiting.
+
+    Called by agent inside container when about to exit to:
+    - Report exit code and reason
+    - Get restart instructions
+
+    Request body (optional):
+    - exit_code: Exit code from agent
+    - reason: Reason for exit
+    - features_completed: List of completed feature IDs
+
+    Returns restart instructions:
+    - restart: Whether container should restart
+    - prompt: Which prompt to use (coding, overseer, or null to stop)
+    """
+    project_name = validate_project_name(project_name)
+
+    from registry import (
+        is_user_started,
+        is_graceful_stop_requested,
+    )
+
+    container_type = "init" if container_number == 0 else "coding"
+
+    user_started = is_user_started(project_name, container_number, container_type)
+    graceful_stop = is_graceful_stop_requested(project_name, container_number, container_type)
+
+    # Determine if restart is needed
+    # The actual restart logic happens in container_manager._handle_agent_exit()
+    # This endpoint just provides state information back to the container
+    should_restart = user_started and not graceful_stop
+
+    return {
+        "restart": should_restart,
+        "prompt": "coding" if should_restart else None,
+        "user_started": user_started,
+        "graceful_stop_requested": graceful_stop,
+    }

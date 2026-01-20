@@ -298,7 +298,7 @@ class TestContainerManagerIntegration:
         with patch("server.services.container_manager.get_projects_dir") as mock_dir:
             mock_dir.return_value = tmp_path
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     manager = ContainerManager(
                         project_name="container-test",
                         git_url="https://github.com/user/repo.git",
@@ -345,7 +345,7 @@ class TestContainerManagerIntegration:
         with patch("server.services.container_manager.get_projects_dir") as mock_dir:
             mock_dir.return_value = tmp_path
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     # Create multiple containers for same project
                     managers = []
                     for i in range(3):

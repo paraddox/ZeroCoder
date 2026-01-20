@@ -45,7 +45,7 @@ class TestContainerStateMachine:
             mock_dir.return_value = tmp_path
 
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     manager = ContainerManager(
                         project_name="state-test",
                         git_url="https://github.com/user/repo.git",
@@ -330,7 +330,7 @@ class TestContainerNaming:
                 mock_dir.return_value = tmp_path
 
                 with patch.object(ContainerManager, "_sync_status"):
-                    with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                    with patch("registry.is_user_started", return_value=False):
                         return ContainerManager(
                             project_name=project_name,
                             git_url="https://github.com/user/repo.git",
@@ -387,7 +387,7 @@ class TestCallbackManagement:
             mock_dir.return_value = tmp_path
 
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     manager = ContainerManager(
                         project_name="callback-test",
                         git_url="https://github.com/user/repo.git",
@@ -479,7 +479,7 @@ class TestStatusDict:
             mock_dir.return_value = tmp_path
 
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     manager = ContainerManager(
                         project_name="status-dict-test",
                         git_url="https://github.com/user/repo.git",
@@ -516,14 +516,16 @@ class TestStatusDict:
     @pytest.mark.unit
     def test_idle_seconds_calculation(self, container_manager):
         """Test idle seconds calculation."""
-        # No activity yet
-        status = container_manager.get_status_dict()
-        assert status["idle_seconds"] == 0
+        # No activity yet - last_activity is now DB-backed
+        with patch("registry.get_last_activity", return_value=None):
+            status = container_manager.get_status_dict()
+            assert status["idle_seconds"] == 0
 
         # Set last activity to 5 minutes ago
-        container_manager.last_activity = datetime.now() - timedelta(minutes=5)
-        status = container_manager.get_status_dict()
-        assert 290 <= status["idle_seconds"] <= 310
+        five_mins_ago = datetime.now() - timedelta(minutes=5)
+        with patch("registry.get_last_activity", return_value=five_mins_ago):
+            status = container_manager.get_status_dict()
+            assert 290 <= status["idle_seconds"] <= 310
 # =============================================================================
 # Agent Running Detection Tests
 # =============================================================================
@@ -543,7 +545,7 @@ class TestAgentRunningDetection:
             mock_dir.return_value = tmp_path
 
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     manager = ContainerManager(
                         project_name="agent-test",
                         git_url="https://github.com/user/repo.git",
@@ -611,7 +613,7 @@ class TestContainerManagerRegistry:
             mock_dir.return_value = tmp_path
 
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     manager = get_container_manager(
                         project_name="new-project",
                         git_url="https://github.com/user/repo.git",
@@ -640,7 +642,7 @@ class TestContainerManagerRegistry:
             mock_dir.return_value = tmp_path
 
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     manager1 = get_container_manager(
                         project_name="existing-project",
                         git_url="https://github.com/user/repo.git",
@@ -687,7 +689,7 @@ class TestIdleTimeout:
             mock_dir.return_value = tmp_path
 
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     manager = ContainerManager(
                         project_name="idle-test",
                         git_url="https://github.com/user/repo.git",
@@ -700,25 +702,30 @@ class TestIdleTimeout:
     @pytest.mark.unit
     def test_is_idle_false_when_no_activity(self, container_manager):
         """Test is_idle returns False when no activity recorded."""
-        container_manager.last_activity = None
-        result = container_manager.is_idle()
-        assert result is False
+        # last_activity is now DB-backed
+        with patch("registry.get_last_activity", return_value=None):
+            result = container_manager.is_idle()
+            assert result is False
 
     @pytest.mark.unit
     def test_is_idle_false_when_recent_activity(self, container_manager):
         """Test is_idle returns False with recent activity."""
-        container_manager.last_activity = datetime.now() - timedelta(minutes=5)
-        result = container_manager.is_idle()
-        assert result is False
+        # last_activity is now DB-backed
+        five_mins_ago = datetime.now() - timedelta(minutes=5)
+        with patch("registry.get_last_activity", return_value=five_mins_ago):
+            result = container_manager.is_idle()
+            assert result is False
 
     @pytest.mark.unit
     def test_is_idle_true_when_exceeded_timeout(self, container_manager):
         """Test is_idle returns True when timeout exceeded."""
         from server.services.container_manager import IDLE_TIMEOUT_MINUTES
 
-        container_manager.last_activity = datetime.now() - timedelta(minutes=IDLE_TIMEOUT_MINUTES + 1)
-        result = container_manager.is_idle()
-        assert result is True
+        # last_activity is now DB-backed
+        long_ago = datetime.now() - timedelta(minutes=IDLE_TIMEOUT_MINUTES + 1)
+        with patch("registry.get_last_activity", return_value=long_ago):
+            result = container_manager.is_idle()
+            assert result is True
 # =============================================================================
 # Graceful Stop Tests
 # =============================================================================
@@ -738,7 +745,7 @@ class TestGracefulStop:
             mock_dir.return_value = tmp_path
 
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     manager = ContainerManager(
                         project_name="graceful-test",
                         git_url="https://github.com/user/repo.git",
@@ -777,7 +784,7 @@ class TestAgentTypes:
             mock_dir.return_value = tmp_path
 
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     manager = ContainerManager(
                         project_name="agent-type-test",
                         git_url="https://github.com/user/repo.git",

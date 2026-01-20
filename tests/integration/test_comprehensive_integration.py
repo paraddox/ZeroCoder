@@ -150,7 +150,7 @@ class TestContainerManagementIntegration:
         with patch("server.services.container_manager.get_projects_dir") as mock_dir:
             mock_dir.return_value = tmp_path
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     # Get manager (creates new)
                     manager = get_container_manager(
                         project_name="test-project",
@@ -190,7 +190,7 @@ class TestContainerManagementIntegration:
         with patch("server.services.container_manager.get_projects_dir") as mock_dir:
             mock_dir.return_value = tmp_path
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     # Create multiple containers
                     manager1 = get_container_manager(
                         "multi-test", "https://github.com/user/repo.git",
@@ -605,7 +605,7 @@ class TestErrorRecoveryIntegration:
         with patch("server.services.container_manager.get_projects_dir") as mock_dir:
             mock_dir.return_value = Path("/tmp")
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     manager = ContainerManager(
                         project_name="error-test",
                         git_url="https://github.com/user/repo.git",
@@ -689,7 +689,7 @@ class TestConcurrentAccessIntegration:
             with patch("server.services.container_manager.get_projects_dir") as mock_dir:
                 mock_dir.return_value = tmp_path
                 with patch.object(ContainerManager, "_sync_status"):
-                    with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                    with patch("registry.is_user_started", return_value=False):
                         return get_container_manager(
                             "concurrent-test",
                             "https://github.com/user/repo.git",

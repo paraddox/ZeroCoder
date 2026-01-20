@@ -122,6 +122,14 @@ async def lifespan(app: FastAPI):
     # Setup signal handlers
     setup_signal_handlers()
 
+    # Clear session-scoped state from database (prevents stale state from previous run)
+    try:
+        from registry import clear_session_state
+        clear_session_state()
+        logger.info("Cleared session-scoped state from database")
+    except Exception as e:
+        logger.warning(f"Failed to clear session state: {e}")
+
     # Restore container managers from registry (for server restarts)
     try:
         restored = await restore_managers_from_registry()

@@ -115,7 +115,7 @@ class TestTimeoutHandling:
             mock_dir.return_value = tmp_path
 
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     manager = ContainerManager(
                         project_name="timeout-test",
                         git_url="https://github.com/user/repo.git",
@@ -229,7 +229,7 @@ class TestResourceCleanup:
             mock_dir.return_value = tmp_path
 
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     manager = ContainerManager(
                         project_name="cleanup-test",
                         git_url="https://github.com/user/repo.git",
@@ -605,7 +605,7 @@ class TestRaceConditionPrevention:
             mock_dir.return_value = tmp_path
 
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     manager = ContainerManager(
                         project_name="race-callback",
                         git_url="https://github.com/user/repo.git",

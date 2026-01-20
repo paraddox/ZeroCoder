@@ -12,6 +12,7 @@ Features:
 - Graceful interrupt handling
 - Exit codes for different failure modes
 - Runtime model selection via config file
+- API-based communication with host for state management
 """
 
 import asyncio
@@ -22,6 +23,8 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
+import requests
+
 from claude_agent_sdk import (
     query,
     ClaudeAgentOptions,
@@ -29,6 +32,11 @@ from claude_agent_sdk import (
     TextBlock,
     ToolUseBlock,
 )
+
+# Host API configuration (set by container environment)
+HOST_API_URL = os.environ.get("HOST_API_URL", "http://host.docker.internal:8888")
+PROJECT_NAME = os.environ.get("PROJECT_NAME", "")
+CONTAINER_NUMBER = int(os.environ.get("CONTAINER_NUMBER", "1"))
 
 # Default model for coder/overseer agents
 DEFAULT_AGENT_MODEL = "glm-4-7"
@@ -123,9 +131,58 @@ def clear_state() -> None:
 
 
 def check_graceful_stop(project_dir: str) -> bool:
-    """Check if graceful stop was requested via flag file."""
+    """Check if graceful stop was requested via host API."""
+    # Fall back to file check if API not available (backwards compatibility)
     flag_file = Path(project_dir) / ".graceful_stop"
-    return flag_file.exists()
+    if flag_file.exists():
+        return True
+
+    # Query host API for graceful stop state
+    if not PROJECT_NAME:
+        return False
+
+    try:
+        url = f"{HOST_API_URL}/api/projects/{PROJECT_NAME}/agent/containers/{CONTAINER_NUMBER}/session"
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("graceful_stop_requested", False)
+    except Exception as e:
+        log(f"[WARN] Failed to check graceful stop via API: {e}")
+
+    return False
+
+
+def send_heartbeat() -> dict:
+    """Send heartbeat to host API and get current session state."""
+    if not PROJECT_NAME:
+        return {}
+
+    try:
+        url = f"{HOST_API_URL}/api/projects/{PROJECT_NAME}/agent/containers/{CONTAINER_NUMBER}/heartbeat"
+        response = requests.post(url, timeout=5, json={"status": "running"})
+        if response.status_code == 200:
+            return response.json()
+    except Exception as e:
+        log(f"[WARN] Failed to send heartbeat: {e}")
+
+    return {}
+
+
+def get_session_config() -> dict:
+    """Get session configuration from host API."""
+    if not PROJECT_NAME:
+        return {}
+
+    try:
+        url = f"{HOST_API_URL}/api/projects/{PROJECT_NAME}/agent/containers/{CONTAINER_NUMBER}/session"
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            return response.json()
+    except Exception as e:
+        log(f"[WARN] Failed to get session config: {e}")
+
+    return {}
 
 
 async def run_agent(prompt: str, project_dir: str, max_retries: int = 3) -> int:
@@ -140,6 +197,20 @@ async def run_agent(prompt: str, project_dir: str, max_retries: int = 3) -> int:
     Returns:
         Exit code (0=success, 1=failure, 129=graceful_stop, 130=interrupted)
     """
+    # Check session state and send initial heartbeat
+    session = get_session_config()
+    if session:
+        if session.get("graceful_stop_requested"):
+            log("[AGENT] Graceful stop already requested, exiting early")
+            return 129
+        if not session.get("should_continue", True):
+            log("[AGENT] Session indicates should not continue")
+            return 0
+        log(f"[AGENT] Session validated - user_started: {session.get('user_started')}")
+
+    # Send initial heartbeat
+    send_heartbeat()
+
     # Get model from project config (can be changed at runtime)
     model = get_agent_model(project_dir)
 
@@ -158,6 +229,8 @@ async def run_agent(prompt: str, project_dir: str, max_retries: int = 3) -> int:
 
     attempt = 0
     last_error = None
+    message_count = 0
+    heartbeat_interval = 10  # Send heartbeat every 10 messages
 
     while attempt < max_retries:
         attempt += 1
@@ -172,6 +245,8 @@ async def run_agent(prompt: str, project_dir: str, max_retries: int = 3) -> int:
             log(f"[AGENT] Starting attempt {attempt}/{max_retries}")
 
             async for message in query(prompt=prompt, options=options):
+                message_count += 1
+
                 # Stream output to stdout (captured by docker logs)
                 # Use typed checks per SDK documentation
                 if isinstance(message, AssistantMessage):
@@ -182,6 +257,14 @@ async def run_agent(prompt: str, project_dir: str, max_retries: int = 3) -> int:
                         elif isinstance(block, ToolUseBlock):
                             # Tool use events - log for debugging
                             log(f"[TOOL] Using: {block.name}")
+
+                # Periodic heartbeat to keep host updated
+                if message_count % heartbeat_interval == 0:
+                    heartbeat_response = send_heartbeat()
+                    if heartbeat_response.get("graceful_stop_requested"):
+                        log("[AGENT] Graceful stop requested via heartbeat")
+                        clear_state()
+                        return 129
 
                 # Check for graceful stop after processing each message
                 if check_graceful_stop(project_dir):

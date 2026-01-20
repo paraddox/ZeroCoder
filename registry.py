@@ -96,6 +96,14 @@ class Container(Base):
     current_feature = Column(String(50), nullable=True)  # beads-42
     created_at = Column(DateTime, nullable=False, default=datetime.now)
 
+    # Session-scoped state (cleared on server restart)
+    user_started_at = Column(DateTime, nullable=True)  # Non-null = user started this container
+    graceful_stop_requested = Column(Boolean, default=False)
+    restarting = Column(Boolean, default=False)
+    last_agent_was_overseer = Column(Boolean, default=False)
+    is_milestone_overseer = Column(Boolean, default=False)
+    last_activity_at = Column(DateTime, nullable=True)
+
     __table_args__ = (
         UniqueConstraint('project_name', 'container_number', 'container_type', name='uq_container_identity'),
         CheckConstraint("container_type IN ('init', 'coding')", name='valid_container_type'),
@@ -146,6 +154,15 @@ class FeatureStatsCache(Base):
     poll_error = Column(String(500), nullable=True)
     # Track last overseer milestone (0, 10, 20, ..., 90) for 10% periodic runs
     last_overseer_milestone = Column(Integer, default=0)
+
+
+class ProjectVerificationState(Base):
+    """Session-scoped verification state (cleared on server restart)."""
+    __tablename__ = "project_verification_state"
+
+    project_name = Column(String(50), primary_key=True)
+    verification_running = Column(Boolean, default=False)
+    started_at = Column(DateTime, nullable=True)
 
 
 # =============================================================================
@@ -219,6 +236,46 @@ def get_registry_path() -> Path:
     return get_config_dir() / "registry.db"
 
 
+def _migrate_schema(engine) -> None:
+    """
+    Migrate database schema to add new columns.
+
+    This handles upgrading existing databases with new columns.
+    SQLite doesn't support adding columns with constraints inline,
+    so we add them with defaults.
+    """
+    from sqlalchemy import text, inspect
+
+    inspector = inspect(engine)
+
+    # Check if containers table exists and needs migration
+    if 'containers' in inspector.get_table_names():
+        columns = {col['name'] for col in inspector.get_columns('containers')}
+        new_columns = [
+            ('user_started_at', 'DATETIME'),
+            ('graceful_stop_requested', 'BOOLEAN DEFAULT 0'),
+            ('restarting', 'BOOLEAN DEFAULT 0'),
+            ('last_agent_was_overseer', 'BOOLEAN DEFAULT 0'),
+            ('is_milestone_overseer', 'BOOLEAN DEFAULT 0'),
+            ('last_activity_at', 'DATETIME'),
+        ]
+
+        with engine.connect() as conn:
+            for col_name, col_type in new_columns:
+                if col_name not in columns:
+                    try:
+                        conn.execute(text(f'ALTER TABLE containers ADD COLUMN {col_name} {col_type}'))
+                        conn.commit()
+                        logger.info(f"Added column {col_name} to containers table")
+                    except Exception as e:
+                        logger.debug(f"Column {col_name} may already exist: {e}")
+
+    # Create project_verification_state table if it doesn't exist
+    # (Base.metadata.create_all handles this, but we log for visibility)
+    if 'project_verification_state' not in inspector.get_table_names():
+        logger.info("Creating project_verification_state table")
+
+
 def _get_engine():
     """
     Get or create the database engine (singleton pattern).
@@ -232,6 +289,11 @@ def _get_engine():
         db_path = get_registry_path()
         db_url = f"sqlite:///{db_path.as_posix()}"
         _engine = create_engine(db_url, connect_args={"check_same_thread": False})
+
+        # Migrate schema for existing databases
+        _migrate_schema(_engine)
+
+        # Create any new tables
         Base.metadata.create_all(bind=_engine)
         _SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
         logger.debug("Initialized registry database at: %s", db_path)
@@ -964,5 +1026,363 @@ def get_cached_stats(project_name: str) -> dict[str, Any] | None:
         }
     finally:
         session.close()
+
+
+# =============================================================================
+# Session State Functions (cleared on server restart)
+# =============================================================================
+
+def clear_session_state() -> None:
+    """
+    Clear all session-scoped state on server startup.
+
+    This resets:
+    - Container session state (user_started_at, graceful_stop_requested, etc.)
+    - Project verification state
+
+    Should be called during server startup before any other operations.
+    """
+    with _get_session() as session:
+        # Reset container session state
+        session.query(Container).update({
+            Container.user_started_at: None,
+            Container.graceful_stop_requested: False,
+            Container.restarting: False,
+            Container.last_agent_was_overseer: False,
+            Container.is_milestone_overseer: False,
+            Container.last_activity_at: None,
+        })
+        # Clear verification state
+        session.query(ProjectVerificationState).delete()
+    logger.info("Cleared all session-scoped state")
+
+
+def set_user_started(project_name: str, container_number: int, started: bool, container_type: str = 'coding') -> bool:
+    """
+    Set the user_started state for a container.
+
+    Args:
+        project_name: The project name.
+        container_number: The container number.
+        started: True to mark as user-started, False to clear.
+        container_type: Container type ('init' or 'coding').
+
+    Returns:
+        True if updated, False if container not found.
+    """
+    with _get_session() as session:
+        container = session.query(Container).filter(
+            Container.project_name == project_name,
+            Container.container_number == container_number,
+            Container.container_type == container_type
+        ).first()
+        if not container:
+            return False
+        container.user_started_at = datetime.now() if started else None
+    return True
+
+
+def is_user_started(project_name: str, container_number: int, container_type: str = 'coding') -> bool:
+    """
+    Check if a container was user-started in this session.
+
+    Args:
+        project_name: The project name.
+        container_number: The container number.
+        container_type: Container type ('init' or 'coding').
+
+    Returns:
+        True if user-started, False otherwise.
+    """
+    _, SessionLocal = _get_engine()
+    session = SessionLocal()
+    try:
+        container = session.query(Container).filter(
+            Container.project_name == project_name,
+            Container.container_number == container_number,
+            Container.container_type == container_type
+        ).first()
+        return container is not None and container.user_started_at is not None
+    finally:
+        session.close()
+
+
+def set_graceful_stop(project_name: str, container_number: int, requested: bool, container_type: str = 'coding') -> bool:
+    """
+    Set the graceful_stop_requested state for a container.
+
+    Args:
+        project_name: The project name.
+        container_number: The container number.
+        requested: True to request graceful stop, False to clear.
+        container_type: Container type ('init' or 'coding').
+
+    Returns:
+        True if updated, False if container not found.
+    """
+    with _get_session() as session:
+        container = session.query(Container).filter(
+            Container.project_name == project_name,
+            Container.container_number == container_number,
+            Container.container_type == container_type
+        ).first()
+        if not container:
+            return False
+        container.graceful_stop_requested = requested
+    return True
+
+
+def is_graceful_stop_requested(project_name: str, container_number: int, container_type: str = 'coding') -> bool:
+    """
+    Check if graceful stop was requested for a container.
+
+    Args:
+        project_name: The project name.
+        container_number: The container number.
+        container_type: Container type ('init' or 'coding').
+
+    Returns:
+        True if graceful stop requested, False otherwise.
+    """
+    _, SessionLocal = _get_engine()
+    session = SessionLocal()
+    try:
+        container = session.query(Container).filter(
+            Container.project_name == project_name,
+            Container.container_number == container_number,
+            Container.container_type == container_type
+        ).first()
+        return container is not None and container.graceful_stop_requested
+    finally:
+        session.close()
+
+
+def set_restarting(project_name: str, container_number: int, restarting: bool, container_type: str = 'coding') -> bool:
+    """
+    Set the restarting state for a container.
+
+    Args:
+        project_name: The project name.
+        container_number: The container number.
+        restarting: True if restart in progress, False when done.
+        container_type: Container type ('init' or 'coding').
+
+    Returns:
+        True if updated, False if container not found.
+    """
+    with _get_session() as session:
+        container = session.query(Container).filter(
+            Container.project_name == project_name,
+            Container.container_number == container_number,
+            Container.container_type == container_type
+        ).first()
+        if not container:
+            return False
+        container.restarting = restarting
+    return True
+
+
+def is_restarting(project_name: str, container_number: int, container_type: str = 'coding') -> bool:
+    """
+    Check if a container is currently restarting.
+
+    Args:
+        project_name: The project name.
+        container_number: The container number.
+        container_type: Container type ('init' or 'coding').
+
+    Returns:
+        True if restarting, False otherwise.
+    """
+    _, SessionLocal = _get_engine()
+    session = SessionLocal()
+    try:
+        container = session.query(Container).filter(
+            Container.project_name == project_name,
+            Container.container_number == container_number,
+            Container.container_type == container_type
+        ).first()
+        return container is not None and container.restarting
+    finally:
+        session.close()
+
+
+def set_overseer_flags(
+    project_name: str,
+    container_number: int,
+    last_was_overseer: bool,
+    is_milestone: bool,
+    container_type: str = 'coding'
+) -> bool:
+    """
+    Set the overseer-related flags for a container.
+
+    Args:
+        project_name: The project name.
+        container_number: The container number.
+        last_was_overseer: Whether last agent was overseer.
+        is_milestone: Whether this is a milestone overseer.
+        container_type: Container type ('init' or 'coding').
+
+    Returns:
+        True if updated, False if container not found.
+    """
+    with _get_session() as session:
+        container = session.query(Container).filter(
+            Container.project_name == project_name,
+            Container.container_number == container_number,
+            Container.container_type == container_type
+        ).first()
+        if not container:
+            return False
+        container.last_agent_was_overseer = last_was_overseer
+        container.is_milestone_overseer = is_milestone
+    return True
+
+
+def get_overseer_flags(project_name: str, container_number: int, container_type: str = 'coding') -> tuple[bool, bool]:
+    """
+    Get the overseer-related flags for a container.
+
+    Args:
+        project_name: The project name.
+        container_number: The container number.
+        container_type: Container type ('init' or 'coding').
+
+    Returns:
+        Tuple of (last_agent_was_overseer, is_milestone_overseer).
+    """
+    _, SessionLocal = _get_engine()
+    session = SessionLocal()
+    try:
+        container = session.query(Container).filter(
+            Container.project_name == project_name,
+            Container.container_number == container_number,
+            Container.container_type == container_type
+        ).first()
+        if not container:
+            return False, False
+        return container.last_agent_was_overseer, container.is_milestone_overseer
+    finally:
+        session.close()
+
+
+def update_last_activity(project_name: str, container_number: int, container_type: str = 'coding') -> bool:
+    """
+    Update the last_activity_at timestamp for a container.
+
+    Args:
+        project_name: The project name.
+        container_number: The container number.
+        container_type: Container type ('init' or 'coding').
+
+    Returns:
+        True if updated, False if container not found.
+    """
+    with _get_session() as session:
+        container = session.query(Container).filter(
+            Container.project_name == project_name,
+            Container.container_number == container_number,
+            Container.container_type == container_type
+        ).first()
+        if not container:
+            return False
+        container.last_activity_at = datetime.now()
+    return True
+
+
+def get_last_activity(project_name: str, container_number: int, container_type: str = 'coding') -> datetime | None:
+    """
+    Get the last_activity_at timestamp for a container.
+
+    Args:
+        project_name: The project name.
+        container_number: The container number.
+        container_type: Container type ('init' or 'coding').
+
+    Returns:
+        The last activity timestamp, or None if not set or container not found.
+    """
+    _, SessionLocal = _get_engine()
+    session = SessionLocal()
+    try:
+        container = session.query(Container).filter(
+            Container.project_name == project_name,
+            Container.container_number == container_number,
+            Container.container_type == container_type
+        ).first()
+        return container.last_activity_at if container else None
+    finally:
+        session.close()
+
+
+# =============================================================================
+# Project Verification State Functions
+# =============================================================================
+
+def set_verification_running(project_name: str, running: bool) -> bool:
+    """
+    Set verification running state for a project.
+
+    Returns False if already running (couldn't acquire lock).
+
+    Args:
+        project_name: The project name.
+        running: True to start verification, False to stop.
+
+    Returns:
+        True if state was set, False if verification already running.
+    """
+    with _get_session() as session:
+        state = session.query(ProjectVerificationState).filter_by(project_name=project_name).first()
+
+        if running:
+            if state and state.verification_running:
+                return False  # Already running, can't acquire
+            if state:
+                state.verification_running = True
+                state.started_at = datetime.now()
+            else:
+                state = ProjectVerificationState(
+                    project_name=project_name,
+                    verification_running=True,
+                    started_at=datetime.now()
+                )
+                session.add(state)
+        else:
+            if state:
+                state.verification_running = False
+                state.started_at = None
+    return True
+
+
+def is_verification_running(project_name: str) -> bool:
+    """
+    Check if verification is running for a project.
+
+    Args:
+        project_name: The project name.
+
+    Returns:
+        True if verification is running, False otherwise.
+    """
+    _, SessionLocal = _get_engine()
+    session = SessionLocal()
+    try:
+        state = session.query(ProjectVerificationState).filter_by(project_name=project_name).first()
+        return state is not None and state.verification_running
+    finally:
+        session.close()
+
+
+def clear_verification_state(project_name: str) -> None:
+    """
+    Clear verification state for a project.
+
+    Args:
+        project_name: The project name.
+    """
+    with _get_session() as session:
+        session.query(ProjectVerificationState).filter_by(project_name=project_name).delete()
 
 

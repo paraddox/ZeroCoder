@@ -283,7 +283,7 @@ class TestContainerManagerConcurrency:
         with patch("server.services.container_manager.get_projects_dir") as mock_dir:
             mock_dir.return_value = tmp_path
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     manager = ContainerManager(
                         project_name="concurrent-cm",
                         git_url="https://github.com/user/repo.git",
@@ -390,24 +390,24 @@ class TestAsyncCoordination:
         with patch("server.services.container_manager.get_projects_dir") as mock_dir:
             mock_dir.return_value = tmp_path
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     manager = ContainerManager(
                         project_name="graceful-stop",
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
                         project_dir=project_dir,
-                        
+
                     )
 
         # Test flag visibility across concurrent operations
-        manager._graceful_stop_requested = True
+        # Since _graceful_stop_requested is now DB-backed, mock the registry function
+        with patch("registry.is_graceful_stop_requested", return_value=True):
+            async def check_flag():
+                for _ in range(100):
+                    assert manager._graceful_stop_requested is True
+                    await asyncio.sleep(0.001)
 
-        async def check_flag():
-            for _ in range(100):
-                assert manager._graceful_stop_requested is True
-                await asyncio.sleep(0.001)
-
-        await asyncio.gather(*[check_flag() for _ in range(5)])
+            await asyncio.gather(*[check_flag() for _ in range(5)])
 # =============================================================================
 # Thread Pool Executor Tests
 # =============================================================================
@@ -579,7 +579,7 @@ class TestDeadlockPrevention:
         with patch("server.services.container_manager.get_projects_dir") as mock_dir:
             mock_dir.return_value = tmp_path
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     manager = ContainerManager(
                         project_name="deadlock-test",
                         git_url="https://github.com/user/repo.git",

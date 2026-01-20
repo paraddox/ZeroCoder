@@ -46,7 +46,7 @@ class TestContainerManagerInitialization:
         project_dir.mkdir(parents=True)
 
         with patch.object(ContainerManager, "_sync_status"):
-            with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+            with patch("registry.is_user_started", return_value=False):
                 manager = ContainerManager(
                     project_name="my-app",
                     git_url="https://github.com/user/repo.git",
@@ -67,7 +67,7 @@ class TestContainerManagerInitialization:
         project_dir.mkdir(parents=True)
 
         with patch.object(ContainerManager, "_sync_status"):
-            with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+            with patch("registry.is_user_started", return_value=False):
                 manager = ContainerManager(
                     project_name="my-app",
                     git_url="https://github.com/user/repo.git",
@@ -88,7 +88,7 @@ class TestContainerManagerInitialization:
         project_dir.mkdir(parents=True)
 
         with patch.object(ContainerManager, "_sync_status"):
-            with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+            with patch("registry.is_user_started", return_value=False):
                 manager = ContainerManager(
                     project_name="test",
                     git_url="https://github.com/user/repo.git",
@@ -112,7 +112,7 @@ class TestContainerManagerInitialization:
         project_dir.mkdir(parents=True)
 
         with patch.object(ContainerManager, "_sync_status"):
-            with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+            with patch("registry.is_user_started", return_value=False):
                 init_manager = ContainerManager(
                     project_name="test",
                     git_url="https://github.com/user/repo.git",
@@ -144,7 +144,7 @@ class TestContainerManagerStatusSync:
         with patch("server.services.container_manager.get_projects_dir") as mock_dir:
             mock_dir.return_value = tmp_path
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     manager = ContainerManager(
                         project_name="test-project",
                         git_url="https://github.com/user/repo.git",
@@ -221,7 +221,7 @@ class TestContainerManagerAgentModel:
         with patch("server.services.container_manager.get_projects_dir") as mock_dir:
             mock_dir.return_value = tmp_path
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     manager = ContainerManager(
                         project_name="test-project",
                         git_url="https://github.com/user/repo.git",
@@ -275,7 +275,7 @@ class TestContainerManagerIdleTimeout:
         with patch("server.services.container_manager.get_projects_dir") as mock_dir:
             mock_dir.return_value = tmp_path
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     manager = ContainerManager(
                         project_name="test-project",
                         git_url="https://github.com/user/repo.git",
@@ -329,7 +329,7 @@ class TestContainerManagerAgentStuck:
         with patch("server.services.container_manager.get_projects_dir") as mock_dir:
             mock_dir.return_value = tmp_path
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     manager = ContainerManager(
                         project_name="test-project",
                         git_url="https://github.com/user/repo.git",
@@ -372,7 +372,7 @@ class TestContainerManagerCallbacks:
         with patch("server.services.container_manager.get_projects_dir") as mock_dir:
             mock_dir.return_value = tmp_path
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     manager = ContainerManager(
                         project_name="test-project",
                         git_url="https://github.com/user/repo.git",
@@ -447,7 +447,7 @@ class TestContainerManagerMarkerFiles:
         with patch("server.services.container_manager.get_projects_dir") as mock_dir:
             mock_dir.return_value = tmp_path
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     manager = ContainerManager(
                         project_name="test-project",
                         git_url="https://github.com/user/repo.git",
@@ -458,42 +458,34 @@ class TestContainerManagerMarkerFiles:
         return manager
 
     @pytest.mark.unit
-    def test_marker_file_path_includes_container_number(self, container_manager):
-        """Test marker file path is container-specific."""
-        path = container_manager._get_marker_file_path()
-        assert ".agent_started.1" in str(path)
+    def test_user_started_property_reads_from_db(self, container_manager):
+        """Test user_started property reads from database."""
+        with patch("registry.is_user_started", return_value=False) as mock_is:
+            result = container_manager._user_started
+            assert result is False
+            mock_is.assert_called_once()
 
     @pytest.mark.unit
-    def test_set_user_started_marker_creates_file(self, container_manager):
-        """Test that setting marker creates the file."""
-        marker_path = container_manager._get_marker_file_path()
-        assert not marker_path.exists()
-
-        container_manager._set_user_started_marker()
-
-        assert marker_path.exists()
+    def test_user_started_setter_writes_to_db(self, container_manager):
+        """Test user_started setter writes to database."""
+        with patch("registry.set_user_started") as mock_set:
+            container_manager._user_started = True
+            mock_set.assert_called_once()
 
     @pytest.mark.unit
-    def test_remove_user_started_marker_deletes_file(self, container_manager):
-        """Test that removing marker deletes the file."""
-        marker_path = container_manager._get_marker_file_path()
-        marker_path.touch()
-        assert marker_path.exists()
-
-        container_manager._remove_user_started_marker()
-
-        assert not marker_path.exists()
+    def test_graceful_stop_property_reads_from_db(self, container_manager):
+        """Test graceful_stop_requested property reads from database."""
+        with patch("registry.is_graceful_stop_requested", return_value=True) as mock_is:
+            result = container_manager._graceful_stop_requested
+            assert result is True
+            mock_is.assert_called_once()
 
     @pytest.mark.unit
-    def test_check_user_started_marker(self, container_manager):
-        """Test checking marker file existence."""
-        marker_path = container_manager._get_marker_file_path()
-
-        assert container_manager._check_user_started_marker() is False
-
-        marker_path.touch()
-
-        assert container_manager._check_user_started_marker() is True
+    def test_graceful_stop_setter_writes_to_db(self, container_manager):
+        """Test graceful_stop_requested setter writes to database."""
+        with patch("registry.set_graceful_stop") as mock_set:
+            container_manager._graceful_stop_requested = True
+            mock_set.assert_called_once()
 # =============================================================================
 # Container Beads Service Tests
 # =============================================================================
@@ -1053,7 +1045,7 @@ class TestContainerManagerRegistry:
         with patch("server.services.container_manager.get_projects_dir") as mock_dir:
             mock_dir.return_value = tmp_path
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     manager = get_container_manager(
                         project_name="new-project",
                         git_url="https://github.com/user/repo.git",
@@ -1083,7 +1075,7 @@ class TestContainerManagerRegistry:
         with patch("server.services.container_manager.get_projects_dir") as mock_dir:
             mock_dir.return_value = tmp_path
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     manager1 = get_container_manager(
                         project_name="cached-project",
                         git_url="https://github.com/user/repo.git",
@@ -1133,7 +1125,7 @@ class TestContainerManagerRegistry:
         with patch("server.services.container_manager.get_projects_dir") as mock_dir:
             mock_dir.return_value = tmp_path
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     get_container_manager(
                         project_name="to-clear",
                         git_url="https://github.com/user/repo.git",
@@ -1181,7 +1173,7 @@ class TestServicePerformance:
         with patch("server.services.container_manager.get_projects_dir") as mock_dir:
             mock_dir.return_value = tmp_path
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     manager = ContainerManager(
                         project_name="perf-test",
                         git_url="https://github.com/user/repo.git",

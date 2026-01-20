@@ -158,7 +158,7 @@ class TestMultiContainerOrchestration:
         with patch("server.services.container_manager.get_projects_dir") as mock_dir:
             mock_dir.return_value = tmp_path
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     # Step 1: Create init container
                     init_manager = get_container_manager(
                         project_name="multi-container-test",
@@ -201,7 +201,7 @@ class TestMultiContainerOrchestration:
         with patch("server.services.container_manager.get_projects_dir") as mock_dir:
             mock_dir.return_value = tmp_path
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     # Create multiple containers
                     managers = []
                     callbacks = []
@@ -439,7 +439,7 @@ class TestErrorRecovery:
         with patch("server.services.container_manager.get_projects_dir") as mock_dir:
             mock_dir.return_value = tmp_path
             with patch.object(ContainerManager, "_sync_status"):
-                with patch.object(ContainerManager, "_check_user_started_marker", return_value=False):
+                with patch("registry.is_user_started", return_value=False):
                     manager = ContainerManager(
                         project_name="callback-error",
                         git_url="https://github.com/user/repo.git",
