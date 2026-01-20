@@ -238,12 +238,14 @@ async def claim_next_issue(project_name: str):
             if "error" in ready_result:
                 raise HTTPException(status_code=500, detail=ready_result["error"])
 
-            issues = ready_result.get("data", [])
+            all_issues = ready_result.get("data", [])
+            # Filter to only open issues (bd ready includes in_progress)
+            issues = [i for i in all_issues if i.get("status") == "open"]
             if not issues:
                 # No issues available
                 return {"success": False, "message": "No issues available to claim", "issue": None}
 
-            # Get the first available issue
+            # Get the first available open issue
             issue = issues[0]
             issue_id = issue.get("id")
 
