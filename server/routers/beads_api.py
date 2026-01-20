@@ -233,7 +233,8 @@ async def claim_next_issue(project_name: str):
         # Use the manager's lock to make this atomic
         async with manager._lock:
             # Get list of ready issues (open, no blockers)
-            ready_result = await manager.run_read_command(["ready", "--json"])
+            # Use _run_bd directly to avoid deadlock (run_read_command also acquires lock)
+            ready_result = await manager._run_bd(["ready", "--json"])
             if "error" in ready_result:
                 raise HTTPException(status_code=500, detail=ready_result["error"])
 
