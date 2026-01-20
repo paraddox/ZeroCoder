@@ -103,6 +103,7 @@ class Container(Base):
     last_agent_was_overseer = Column(Boolean, default=False)
     is_milestone_overseer = Column(Boolean, default=False)
     last_activity_at = Column(DateTime, nullable=True)
+    last_closed_feature = Column(String(50), nullable=True)  # For reviewer agent
 
     __table_args__ = (
         UniqueConstraint('project_name', 'container_number', 'container_type', name='uq_container_identity'),
@@ -258,6 +259,7 @@ def _migrate_schema(engine) -> None:
             ('last_agent_was_overseer', 'BOOLEAN DEFAULT 0'),
             ('is_milestone_overseer', 'BOOLEAN DEFAULT 0'),
             ('last_activity_at', 'DATETIME'),
+            ('last_closed_feature', 'VARCHAR(50)'),
         ]
 
         with engine.connect() as conn:
@@ -890,7 +892,8 @@ def update_container_status(
         if docker_container_id is not None:
             container.docker_container_id = docker_container_id
         if current_feature is not None:
-            container.current_feature = current_feature
+            # Empty string clears the feature, any other value sets it
+            container.current_feature = current_feature if current_feature else None
 
     return True
 
@@ -1051,6 +1054,7 @@ def clear_session_state() -> None:
             Container.last_agent_was_overseer: False,
             Container.is_milestone_overseer: False,
             Container.last_activity_at: None,
+            Container.last_closed_feature: None,
         })
         # Clear verification state
         session.query(ProjectVerificationState).delete()
@@ -1312,6 +1316,65 @@ def get_last_activity(project_name: str, container_number: int, container_type: 
             Container.container_type == container_type
         ).first()
         return container.last_activity_at if container else None
+    finally:
+        session.close()
+
+
+def set_last_closed_feature(
+    project_name: str,
+    container_number: int,
+    feature_id: str | None,
+    container_type: str = 'coding'
+) -> bool:
+    """
+    Store the last feature closed by this container (for reviewer agent).
+
+    Args:
+        project_name: The project name.
+        container_number: The container number.
+        feature_id: The feature ID that was closed (or None to clear).
+        container_type: Container type ('init' or 'coding').
+
+    Returns:
+        True if updated, False if container not found.
+    """
+    with _get_session() as session:
+        container = session.query(Container).filter(
+            Container.project_name == project_name,
+            Container.container_number == container_number,
+            Container.container_type == container_type
+        ).first()
+        if not container:
+            return False
+        container.last_closed_feature = feature_id
+    return True
+
+
+def get_last_closed_feature(
+    project_name: str,
+    container_number: int,
+    container_type: str = 'coding'
+) -> str | None:
+    """
+    Get the last feature closed by this container.
+
+    Args:
+        project_name: The project name.
+        container_number: The container number.
+        container_type: Container type ('init' or 'coding').
+
+    Returns:
+        The feature ID, or None if not set or container not found.
+    """
+    _, SessionLocal = _get_engine()
+    session = SessionLocal()
+    try:
+        container = session.query(Container).filter(
+            Container.project_name == project_name,
+            Container.container_number == container_number,
+            Container.container_type == container_type
+        ).first()
+        return container.last_closed_feature if container else None
     finally:
         session.close()
 

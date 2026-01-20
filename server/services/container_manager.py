@@ -172,7 +172,7 @@ class ContainerManager:
         self._log_task: asyncio.Task | None = None
 
         # Track current agent type for OpenCode SDK routing
-        self._current_agent_type: Literal["coder", "overseer"] = "coder"
+        self._current_agent_type: Literal["coder", "reviewer", "overseer"] = "coder"
         # Force Claude SDK for initializer (regardless of project model)
         self._force_claude_sdk: bool = False
         # Track current feature being worked on (detected from logs)
@@ -313,6 +313,10 @@ class ContainerManager:
                     logger.info(f"Registered existing Docker container {self.container_name} in database")
                 except Exception as e:
                     logger.warning(f"Failed to register container in database: {e}")
+            else:
+                # Load current_feature from DB if not already set in memory
+                if self._current_feature is None and db_container.get("current_feature"):
+                    self._current_feature = db_container.get("current_feature")
 
             # Set status based on Docker state
             if docker_status == "running":
@@ -1000,16 +1004,16 @@ class ContainerManager:
                 self._update_activity()
                 await self._broadcast_output(sanitized)
 
-                # Detect feature claim from echo output: "Claimed beads-X, working on branch..."
-                # Or: "Working on feature: beads-X"
-                claim_match = re.search(r'Claimed (beads-\d+),', sanitized)
+                # Detect feature claim from echo output: "Claimed project-xxxx, working on branch..."
+                # Or: "Working on feature: project-xxxx"
+                claim_match = re.search(r'Claimed ([\w]+-[\w]+),', sanitized)
                 if not claim_match:
-                    claim_match = re.search(r'Working on feature: (beads-\d+)', sanitized)
+                    claim_match = re.search(r'Working on feature: ([\w]+-[\w]+)', sanitized)
                 if claim_match:
                     await self._set_current_feature(claim_match.group(1))
 
-                # Detect feature complete: bd close beads-X
-                close_match = re.search(r'bd close (beads-\d+)', sanitized)
+                # Detect feature complete: bd close project-xxxx
+                close_match = re.search(r'bd close ([\w]+-[\w]+)', sanitized)
                 if close_match and self._current_feature == close_match.group(1):
                     await self._set_current_feature(None)
 
@@ -1585,7 +1589,15 @@ class ContainerManager:
 
         if exit_code == 0:
             # Success - determine next action
-            logger.info(f"[EXIT] Agent exited successfully (code 0) in {self.container_name}, _user_started={self._user_started}")
+            logger.info(f"[EXIT] Agent exited successfully (code 0) in {self.container_name}, agent_type={self._current_agent_type}, _user_started={self._user_started}")
+
+            # Handle reviewer completion - clear tracked feature and switch back to coder
+            if self._current_agent_type == "reviewer":
+                from registry import set_last_closed_feature
+                set_last_closed_feature(self.project_name, self.container_number, None, self.container_type)
+                logger.info(f"[REVIEWER] Review complete in {self.container_name}, switching to coder")
+                self._current_agent_type = "coder"
+                # Continue to normal coder restart flow below
 
             # Post-agent cleanup: remove feature branches
             cleanup_ok, cleanup_msg = await self.post_agent_cleanup()
@@ -1593,8 +1605,20 @@ class ContainerManager:
                 logger.warning(f"Post-agent cleanup failed: {cleanup_msg}")
                 # Continue anyway - cleanup failure shouldn't block flow
 
-            if self._user_started and self.has_open_features():
-                # Features remain - check for milestone trigger, then restart coding agent
+            if self.has_open_features() and not self._graceful_stop_requested:
+                # Features remain - check if we need to run reviewer first
+                if self._current_agent_type == "coder":
+                    from registry import get_last_closed_feature
+                    closed_feature_id = get_last_closed_feature(
+                        self.project_name, self.container_number, self.container_type
+                    )
+                    if closed_feature_id:
+                        # Run reviewer before restarting coder
+                        logger.info(f"[EXIT] Running reviewer for {closed_feature_id} in {self.container_name}")
+                        await self._broadcast_output(f"[System] Running review for {closed_feature_id}...")
+                        return await self.restart_with_reviewer(closed_feature_id)
+
+                # No feature to review, or reviewer already ran - restart coding agent
                 logger.info(f"[EXIT] Features remain in {self.container_name}, restarting coding agent...")
                 await self._broadcast_output("[System] Session complete. Starting fresh context for next task...")
 
@@ -1603,7 +1627,7 @@ class ContainerManager:
 
                 self._last_agent_was_overseer = False
                 return await self.restart_agent()
-            elif self._user_started and not self.has_open_features():
+            elif not self.has_open_features() and not self._graceful_stop_requested:
                 # All features closed - determine verification flow
                 if self._last_agent_was_overseer:
                     # Overseer completed - check if it's a milestone overseer or final overseer
@@ -1630,7 +1654,6 @@ class ContainerManager:
                         await self._broadcast_output("[System] Verification complete! All features verified.")
                         await self.stop()
                         self.status = "completed"
-                        self._user_started = False  # Clear via DB-backed property
                         await self._stop_other_containers()
                         return True, "All features verified complete"
                 else:
@@ -1647,7 +1670,7 @@ class ContainerManager:
                         await self.stop()
                         return True, "Stopped - verification running elsewhere"
             else:
-                logger.info(f"[EXIT] Not restarting: _user_started={self._user_started}, has_open_features={self.has_open_features()}")
+                logger.info(f"[EXIT] Not restarting: graceful_stop={self._graceful_stop_requested}, has_open_features={self.has_open_features()}")
             return True, "Instruction completed"
 
         elif exit_code == 130:
@@ -1675,8 +1698,8 @@ class ContainerManager:
                 logger.error(f"Agent failed in {self.container_name}: {error_info}")
                 await self._broadcast_output(f"[System] Agent failed: {error_info}")
 
-            # Auto-restart if user started and features remain
-            if self._user_started and self.has_open_features():
+            # Auto-restart if features remain and graceful stop not requested
+            if self.has_open_features() and not self._graceful_stop_requested:
                 await self._broadcast_output("[System] Auto-restarting after error...")
                 await asyncio.sleep(5)  # Brief delay before restart
                 self._last_agent_was_overseer = False
@@ -1753,6 +1776,54 @@ class ContainerManager:
             self._force_claude_sdk = False
 
             # Start container with instruction
+            return await self.start(instruction)
+        finally:
+            self._restarting = False
+
+    async def restart_with_reviewer(self, feature_id: str) -> tuple[bool, str]:
+        """
+        Restart the agent with the reviewer prompt to verify a closed feature.
+
+        This is called after a coder session successfully closes a feature.
+        The reviewer checks the implementation and may reopen the issue if unsatisfied.
+
+        Args:
+            feature_id: The feature ID to review (e.g., "beads-42")
+
+        Returns:
+            Tuple of (success, message)
+        """
+        logger.info(f"Starting reviewer for feature {feature_id} in container {self.container_name}")
+
+        self._restarting = True
+        try:
+            # Stop the container
+            await self.stop()
+
+            # Get the reviewer prompt with feature ID injected
+            import sys
+            from pathlib import Path
+            root = Path(__file__).parent.parent.parent
+            if str(root) not in sys.path:
+                sys.path.insert(0, str(root))
+            from prompts import get_reviewer_prompt
+
+            try:
+                instruction = get_reviewer_prompt(self.project_dir, feature_id)
+            except FileNotFoundError:
+                # No reviewer template - skip review and restart coder
+                logger.warning(f"No reviewer_prompt.md found, skipping review for {feature_id}")
+                from registry import set_last_closed_feature
+                set_last_closed_feature(self.project_name, self.container_number, None, self.container_type)
+                return await self.restart_agent()
+
+            # Mark that we're running reviewer agent
+            self._current_agent_type = "reviewer"
+            self._last_agent_was_overseer = False
+            # Use project's configured model (not forced Claude SDK)
+            self._force_claude_sdk = False
+
+            # Start container with reviewer instruction
             return await self.start(instruction)
         finally:
             self._restarting = False

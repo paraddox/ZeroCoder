@@ -34,6 +34,7 @@ else
     HOST_API="${HOST_API_URL:-http://host.docker.internal:8000}"
 fi
 PROJECT="${PROJECT_NAME:-}"
+CONTAINER_NUM="${CONTAINER_NUMBER:-1}"
 
 if [ -z "$PROJECT" ]; then
     echo "Error: PROJECT_NAME environment variable not set" >&2
@@ -80,7 +81,8 @@ case "$CMD" in
     claim)
         # Atomically claim the next available issue
         # Returns the claimed issue or exits with error if none available
-        RESPONSE=$(curl -s -X POST "$BASE_URL/claim")
+        RESPONSE=$(curl -s -X POST "$BASE_URL/claim" \
+            -H "X-Container-Number: $CONTAINER_NUM")
 
         # Check if claim was successful
         SUCCESS=$(echo "$RESPONSE" | jq -r '.success // false')
@@ -284,9 +286,11 @@ case "$CMD" in
         if [ -n "$REASON" ]; then
             curl -s -X POST "$BASE_URL/close/$ISSUE_ID" \
                 -H "Content-Type: application/json" \
+                -H "X-Container-Number: $CONTAINER_NUM" \
                 -d "$(jq -n --arg reason "$REASON" '{reason: $reason}')"
         else
-            curl -s -X POST "$BASE_URL/close/$ISSUE_ID"
+            curl -s -X POST "$BASE_URL/close/$ISSUE_ID" \
+                -H "X-Container-Number: $CONTAINER_NUM"
         fi
         ;;
 

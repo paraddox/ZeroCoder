@@ -15,7 +15,7 @@ import logging
 import re
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from ..services.beads_manager import get_beads_manager
@@ -212,7 +212,10 @@ async def create_issue(project_name: str, issue: IssueCreate):
 
 
 @router.post("/claim")
-async def claim_next_issue(project_name: str):
+async def claim_next_issue(
+    project_name: str,
+    x_container_number: int | None = Header(None, alias="X-Container-Number")
+):
     """
     Atomically claim the next available issue for work.
 
@@ -260,6 +263,20 @@ async def claim_next_issue(project_name: str):
 
             if "error" in update_result:
                 raise HTTPException(status_code=500, detail=update_result["error"])
+
+            # Update container's current_feature in DB
+            if x_container_number is not None:
+                try:
+                    from registry import update_container_status
+                    update_container_status(
+                        project_name,
+                        x_container_number,
+                        current_feature=issue_id
+                    )
+                    logger.debug(f"Set current_feature={issue_id} for container {x_container_number}")
+                except Exception as e:
+                    logger.warning(f"Failed to update container current_feature: {e}")
+                    # Don't fail the claim for tracking errors
 
             # Return the full issue details
             return {
@@ -318,7 +335,12 @@ async def update_issue(project_name: str, issue_id: str, update: IssueUpdate):
 
 
 @router.post("/close/{issue_id}")
-async def close_issue(project_name: str, issue_id: str, body: IssueClose | None = None):
+async def close_issue(
+    project_name: str,
+    issue_id: str,
+    body: IssueClose | None = None,
+    x_container_number: int | None = Header(None, alias="X-Container-Number")
+):
     """
     Close an issue.
     """
@@ -336,6 +358,22 @@ async def close_issue(project_name: str, issue_id: str, body: IssueClose | None 
         if "not found" in result["error"].lower():
             raise HTTPException(status_code=404, detail=f"Issue {issue_id} not found")
         raise HTTPException(status_code=500, detail=result["error"])
+
+    # Track which container closed this feature (for reviewer agent)
+    if x_container_number is not None:
+        try:
+            from registry import set_last_closed_feature, get_container, update_container_status
+            set_last_closed_feature(project_name, x_container_number, issue_id)
+            logger.debug(f"Tracked closed feature {issue_id} for container {x_container_number}")
+
+            # Clear current_feature if it matches the closed issue
+            container = get_container(project_name, x_container_number)
+            if container and container.get("current_feature") == issue_id:
+                update_container_status(project_name, x_container_number, current_feature="")
+                logger.debug(f"Cleared current_feature for container {x_container_number}")
+        except Exception as e:
+            logger.warning(f"Failed to track closed feature: {e}")
+            # Don't fail the close operation for tracking errors
 
     return {"success": True, "message": f"Issue {issue_id} closed"}
 

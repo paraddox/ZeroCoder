@@ -182,6 +182,7 @@ class AgentStatus(BaseModel):
     idle_seconds: int = 0
     agent_running: bool = False  # True if agent process is running inside container
     graceful_stop_requested: bool = False  # True if graceful stop has been requested
+    current_feature: str | None = None  # Feature ID currently being worked on
     # Agent type and SDK info
     agent_type: Literal["coder", "overseer", "initializer"] | None = None
     sdk_type: Literal["claude", "opencode"] | None = None
