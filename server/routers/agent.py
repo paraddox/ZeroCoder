@@ -811,25 +811,23 @@ async def get_container_session(project_name: str, container_number: int):
 
     Called by agent inside container to check:
     - If graceful stop was requested
-    - If container was user-started
+    - If there are open features to work on
     - Configuration (model, etc.)
 
     Returns JSON with session state for container to use.
     """
     project_name = validate_project_name(project_name)
 
-    from registry import (
-        is_user_started,
-        is_graceful_stop_requested,
-    )
+    from registry import is_graceful_stop_requested
 
     container_type = "init" if container_number == 0 else "coding"
-
-    user_started = is_user_started(project_name, container_number, container_type)
     graceful_stop = is_graceful_stop_requested(project_name, container_number, container_type)
 
-    # Get model config from project directory
+    # Check if there are open features to work on
     project_dir = _get_project_path(project_name)
+    open_features = has_open_features(project_dir, project_name) if project_dir else False
+
+    # Get model config from project directory
     config = {}
     if project_dir:
         config_path = project_dir / "prompts" / ".agent_config.json"
@@ -841,9 +839,9 @@ async def get_container_session(project_name: str, container_number: int):
                 pass
 
     return {
-        "should_continue": user_started and not graceful_stop,
+        "should_continue": open_features and not graceful_stop,
         "graceful_stop_requested": graceful_stop,
-        "user_started": user_started,
+        "has_open_features": open_features,
         "config": config,
     }
 
@@ -905,24 +903,23 @@ async def container_exit_notification(project_name: str, container_number: int):
     """
     project_name = validate_project_name(project_name)
 
-    from registry import (
-        is_user_started,
-        is_graceful_stop_requested,
-    )
+    from registry import is_graceful_stop_requested
 
     container_type = "init" if container_number == 0 else "coding"
-
-    user_started = is_user_started(project_name, container_number, container_type)
     graceful_stop = is_graceful_stop_requested(project_name, container_number, container_type)
+
+    # Check if there are open features to work on
+    project_dir = _get_project_path(project_name)
+    open_features = has_open_features(project_dir, project_name) if project_dir else False
 
     # Determine if restart is needed
     # The actual restart logic happens in container_manager._handle_agent_exit()
     # This endpoint just provides state information back to the container
-    should_restart = user_started and not graceful_stop
+    should_restart = open_features and not graceful_stop
 
     return {
         "restart": should_restart,
         "prompt": "coding" if should_restart else None,
-        "user_started": user_started,
+        "has_open_features": open_features,
         "graceful_stop_requested": graceful_stop,
     }

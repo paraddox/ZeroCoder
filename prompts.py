@@ -88,6 +88,21 @@ def get_overseer_prompt(project_dir: Path | None = None) -> str:
     return load_prompt("overseer_prompt", project_dir)
 
 
+def get_reviewer_prompt(project_dir: Path | None, feature_id: str) -> str:
+    """
+    Load the reviewer agent prompt with feature ID injected.
+
+    Args:
+        project_dir: Optional project directory for project-specific prompts
+        feature_id: The feature ID to review (e.g., "beads-42")
+
+    Returns:
+        The reviewer prompt with {FEATURE_ID} replaced
+    """
+    prompt = load_prompt("reviewer_prompt", project_dir)
+    return prompt.replace("{FEATURE_ID}", feature_id)
+
+
 def get_app_spec(project_dir: Path) -> str:
     """
     Load the app spec from the project.
@@ -146,6 +161,7 @@ def scaffold_project_prompts(project_dir: Path) -> Path:
         ("coding_prompt.template.md", "coding_prompt.md"),
         ("initializer_prompt.template.md", "initializer_prompt.md"),
         ("overseer_prompt.template.md", "overseer_prompt.md"),
+        ("reviewer_prompt.template.md", "reviewer_prompt.md"),
     ]
 
     copied_files = []
@@ -331,6 +347,7 @@ def refresh_project_prompts(project_dir: Path) -> list[str]:
         templates = [
             ("coding_prompt.template.md", "coding_prompt.md"),
             ("overseer_prompt.template.md", "overseer_prompt.md"),
+            ("reviewer_prompt.template.md", "reviewer_prompt.md"),
         ]
     else:
         # New projects with app_spec
@@ -338,6 +355,7 @@ def refresh_project_prompts(project_dir: Path) -> list[str]:
             ("coding_prompt.template.md", "coding_prompt.md"),
             ("initializer_prompt.template.md", "initializer_prompt.md"),
             ("overseer_prompt.template.md", "overseer_prompt.md"),
+            ("reviewer_prompt.template.md", "reviewer_prompt.md"),
         ]
 
     updated_files = []
@@ -475,6 +493,7 @@ def scaffold_existing_repo(project_dir: Path) -> None:
     templates = [
         ("coding_prompt.template.md", "coding_prompt.md"),
         ("overseer_prompt.template.md", "overseer_prompt.md"),
+        ("reviewer_prompt.template.md", "reviewer_prompt.md"),
     ]
 
     for template_name, dest_name in templates:
