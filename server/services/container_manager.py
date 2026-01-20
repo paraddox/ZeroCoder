@@ -2406,49 +2406,27 @@ async def cleanup_idle_containers() -> list[str]:
 
 
 async def cleanup_all_containers() -> None:
-    """Stop containers on server shutdown.
+    """Force remove ALL containers on server shutdown.
 
-    User-started containers with open features are preserved - they'll keep
-    running and be restored when the server restarts. This prevents server
-    restarts from killing active agent work.
+    All containers are removed unconditionally when the server shuts down.
+    Users must explicitly restart containers after server restart.
     """
-    logger.info("Cleaning up containers on shutdown...")
+    logger.info("Force removing all containers on shutdown...")
 
-    # Collect all managers from nested dict
-    all_managers = []
-    with _managers_lock:
-        for project_managers in _managers.values():
-            all_managers.extend(project_managers.values())
-
-    for manager in all_managers:
-        try:
-            if manager.status == "running":
-                # Preserve user-started containers with work remaining
-                if manager.user_started and manager.has_open_features():
-                    logger.info(
-                        f"Preserving container {manager.container_name} "
-                        f"(user-started with open features)"
-                    )
-                    continue
-
-                logger.info(f"Stopping container: {manager.container_name}")
-                await manager.stop()
-        except Exception as e:
-            logger.warning(f"Error stopping container for {manager.project_name}-{manager.container_number}: {e}")
-
-    # Don't stop orphaned containers - they might be user-started from before restart
-    # The health monitor will handle them on next startup
+    # Force remove ALL zerocoder containers (both tracked and orphaned)
+    # This is more reliable than stopping them one by one via managers
+    await stop_orphaned_containers()
 
     with _managers_lock:
         _managers.clear()
 
 
 async def stop_orphaned_containers() -> None:
-    """Stop any zerocoder-* containers not tracked in our registry."""
+    """Force remove any zerocoder-* containers not tracked in our registry."""
     try:
-        # List all containers with zerocoder- prefix
+        # List all containers with zerocoder- prefix (including stopped)
         result = subprocess.run(
-            ["docker", "ps", "-q", "--filter", "name=zerocoder-"],
+            ["docker", "ps", "-aq", "--filter", "name=zerocoder-"],
             capture_output=True,
             text=True,
         )
@@ -2456,14 +2434,14 @@ async def stop_orphaned_containers() -> None:
             container_ids = result.stdout.strip().split("\n")
             for container_id in container_ids:
                 if container_id:
-                    logger.info(f"Stopping orphaned container: {container_id}")
+                    logger.info(f"Force removing container: {container_id}")
                     subprocess.run(
-                        ["docker", "stop", container_id],
+                        ["docker", "rm", "-f", container_id],
                         capture_output=True,
                         timeout=10,
                     )
     except Exception as e:
-        logger.warning(f"Error stopping orphaned containers: {e}")
+        logger.warning(f"Error removing orphaned containers: {e}")
 
 
 def check_docker_available() -> bool:
