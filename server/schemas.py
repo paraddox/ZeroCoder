@@ -116,7 +116,7 @@ class ContainerStatus(BaseModel):
     status: Literal["not_created", "created", "running", "stopping", "stopped", "completed"]
     current_feature: str | None = None
     docker_container_id: str | None = None
-    agent_type: Literal["coder", "overseer", "initializer"] | None = None
+    agent_type: Literal["coder", "overseer", "initializer", "reviewer"] | None = None
     sdk_type: Literal["claude", "opencode"] | None = None
 
 
@@ -184,7 +184,7 @@ class AgentStatus(BaseModel):
     graceful_stop_requested: bool = False  # True if graceful stop has been requested
     current_feature: str | None = None  # Feature ID currently being worked on
     # Agent type and SDK info
-    agent_type: Literal["coder", "overseer", "initializer"] | None = None
+    agent_type: Literal["coder", "overseer", "initializer", "reviewer"] | None = None
     sdk_type: Literal["claude", "opencode"] | None = None
     # Legacy fields for backwards compatibility
     pid: int | None = None
