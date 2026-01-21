@@ -211,7 +211,7 @@ class TestOutputSanitizationSecurity:
     @pytest.mark.security
     def test_redacts_common_sensitive_patterns(self):
         """Test that common sensitive patterns are redacted."""
-        from server.services.container_manager import sanitize_output
+        from server.services.e2b_sandbox_manager import sanitize_output
 
         # These patterns should definitely be redacted based on current implementation
         sensitive_patterns = [
@@ -234,7 +234,7 @@ class TestOutputSanitizationSecurity:
     @pytest.mark.security
     def test_preserves_safe_similar_looking_text(self):
         """Test that safe text similar to secrets is not over-redacted."""
-        from server.services.container_manager import sanitize_output
+        from server.services.e2b_sandbox_manager import sanitize_output
 
         safe_lines = [
             "Processing API endpoint: /api/users",
@@ -253,7 +253,7 @@ class TestOutputSanitizationSecurity:
     @pytest.mark.security
     def test_handles_key_value_patterns(self):
         """Test redaction of key=value sensitive patterns."""
-        from server.services.container_manager import sanitize_output
+        from server.services.e2b_sandbox_manager import sanitize_output
 
         input_with_secrets = """
         api_key=my_secret_key
@@ -319,30 +319,27 @@ class TestCommandInjectionPrevention:
 
     @pytest.mark.unit
     @pytest.mark.security
-    def test_container_name_uses_safe_characters(self, tmp_path):
-        """Test that container names use only safe characters."""
-        from server.services.container_manager import ContainerManager
-        from registry import get_projects_dir
+    def test_sandbox_name_uses_safe_characters(self, tmp_path):
+        """Test that sandbox names use only safe characters."""
+        from server.services.e2b_sandbox_manager import E2BSandboxManager
 
         project_dir = tmp_path / "test"
         project_dir.mkdir()
 
-        # Container names are generated from project names which are validated
+        # Sandbox names are generated from project names which are validated
         # The format is: zerocoder-{project_name}-{container_number}
         safe_chars_only = re.compile(r'^[a-zA-Z0-9_-]+$')
 
         with patch("registry.get_projects_dir", return_value=tmp_path):
-            with patch.object(ContainerManager, "_sync_status"):
+            with patch.object(E2BSandboxManager, "_sync_status"):
                 with patch("registry.is_user_started", return_value=False):
-                    manager = ContainerManager(
+                    manager = E2BSandboxManager(
                         project_name="safe-project",
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
-                        project_dir=project_dir,
-                        
                     )
 
-        # Container name should only contain safe characters
+        # Sandbox name should only contain safe characters
         assert safe_chars_only.match(manager.container_name)
 # =============================================================================
 # Path Traversal Prevention Tests

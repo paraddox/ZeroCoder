@@ -2,7 +2,7 @@
 Issue Creator MCP Server
 ========================
 
-Exposes a create_issue tool that routes through ContainerBeadsClient,
+Exposes a create_issue tool that routes through BeadsManager,
 using the same code path as the frontend feature creation.
 
 Environment Variables:
@@ -12,7 +12,6 @@ Environment Variables:
 """
 
 import asyncio
-import json
 import logging
 import os
 import sys
@@ -37,14 +36,14 @@ PROJECT_DIR = os.environ.get("PROJECT_DIR", "")
 server = Server("issue-creator")
 
 
-def _is_container_running(project_name: str) -> bool:
-    """Check if any container is running for this project."""
-    from server.services.container_manager import _managers, _managers_lock
+def _is_sandbox_running(project_name: str) -> bool:
+    """Check if any E2B sandbox is running for this project."""
+    from server.services.e2b_sandbox_manager import _managers, _managers_lock
 
     with _managers_lock:
         if project_name not in _managers:
             return False
-        # Check if any container for this project is running
+        # Check if any sandbox for this project is running
         for manager in _managers[project_name].values():
             if manager.status == "running":
                 return True
@@ -75,30 +74,33 @@ async def _trigger_feature_refresh(project_name: str) -> None:
         logger.warning(f"Failed to sync beads: {e}")
 
 
-async def ensure_container_running(project_name: str, project_dir: Path) -> tuple[bool, str]:
+async def ensure_sandbox_running(project_name: str) -> tuple[bool, str]:
     """
-    Ensure the container is running for write operations.
-    Auto-starts the container if it's stopped (without starting the agent).
+    Ensure an E2B sandbox is running for write operations.
+    Auto-starts the sandbox if it's stopped (without starting the agent).
     """
-    from server.services.container_manager import (
+    from server.services.e2b_sandbox_manager import (
         get_container_manager,
-        check_docker_available,
-        check_image_exists,
+        check_e2b_available,
     )
+    from registry import get_project_git_url
 
-    if _is_container_running(project_name):
-        return True, "Container already running"
+    if _is_sandbox_running(project_name):
+        return True, "Sandbox already running"
 
-    # Check Docker availability
-    if not check_docker_available():
-        return False, "Docker is not available. Please ensure Docker is installed and running."
+    # Check E2B availability
+    available, msg = check_e2b_available()
+    if not available:
+        return False, msg
 
-    if not check_image_exists():
-        return False, "Container image 'zerocoder-project' not found. Run: docker build -f Dockerfile.project -t zerocoder-project ."
+    # Get git URL for sandbox
+    git_url = get_project_git_url(project_name)
+    if not git_url:
+        return False, "No git URL found for project"
 
-    # Get manager and start container
-    manager = get_container_manager(project_name, project_dir)
-    success, message = await manager.start_container_only()
+    # Get manager and start sandbox
+    manager = get_container_manager(project_name, git_url)
+    success, message = await manager.start_sandbox_only()
 
     return success, message
 
@@ -112,7 +114,7 @@ async def list_tools():
             description="""Create a new issue/feature in the project's beads tracker.
 
 Use this when the user wants to create a new feature, task, or bug report.
-The issue will be created in the project's .beads/ directory via the container.
+The issue will be created in the project's .beads/ directory via the host BeadsManager.
 
 IMPORTANT: Always get user confirmation before creating an issue.
 Show them the draft and ask for approval.
@@ -163,24 +165,20 @@ async def call_tool(name: str, arguments: dict):
     if name != "create_issue":
         return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
-    if not PROJECT_NAME or not PROJECT_DIR:
+    if not PROJECT_NAME:
         return [TextContent(
             type="text",
-            text="Error: PROJECT_NAME and PROJECT_DIR environment variables not set"
+            text="Error: PROJECT_NAME environment variable not set"
         )]
 
-    project_dir = Path(PROJECT_DIR)
-
-    # Ensure container is running
-    success, msg = await ensure_container_running(PROJECT_NAME, project_dir)
+    # Ensure sandbox is running (for beads sync to work)
+    success, msg = await ensure_sandbox_running(PROJECT_NAME)
     if not success:
-        return [TextContent(type="text", text=f"Error starting container: {msg}")]
+        return [TextContent(type="text", text=f"Error starting sandbox: {msg}")]
 
     # Import here to avoid circular imports
-    from server.services.container_beads import ContainerBeadsClient
-
-    # Create issue via ContainerBeadsClient
-    client = ContainerBeadsClient(PROJECT_NAME)
+    from server.services.beads_manager import get_beads_manager
+    from registry import get_project_git_url
 
     try:
         title = arguments.get("title", "")
@@ -191,14 +189,37 @@ async def call_tool(name: str, arguments: dict):
 
         logger.info(f"Creating issue: {title}")
 
-        feature_id = await client.create(
-            name=title,
-            description=description,
-            category=category,
-            steps=steps,
-            priority=priority,
-        )
+        # Get git URL for beads manager
+        git_url = get_project_git_url(PROJECT_NAME)
+        if not git_url:
+            return [TextContent(type="text", text="Error: No git URL found for project")]
 
+        # Create issue via BeadsManager (host-based)
+        manager = await get_beads_manager(PROJECT_NAME, git_url)
+
+        # Build the bd create command
+        args = ["create", "--title", title, "--priority", str(priority)]
+        if category:
+            args.extend(["--labels", category])
+
+        # Build description with steps
+        full_description = description
+        if steps:
+            full_description += "\n\n## Implementation Steps\n"
+            for step in steps:
+                full_description += f"- [ ] {step}\n"
+
+        args.extend(["--body", full_description])
+
+        # Run the create command
+        result = await manager.run_write_command(args)
+
+        if result.get("error"):
+            logger.error(f"Failed to create issue: {result['error']}")
+            return [TextContent(type="text", text=f"Error: {result['error']}")]
+
+        # Extract issue ID from result
+        feature_id = result.get("id") or result.get("issue_id")
         if feature_id:
             result_msg = f"Created issue: {feature_id}\nTitle: {title}"
             if category:
@@ -206,7 +227,7 @@ async def call_tool(name: str, arguments: dict):
             result_msg += f"\nPriority: P{priority}"
             logger.info(f"Created issue: {feature_id}")
 
-            # Trigger immediate feature poll to sync to host
+            # Trigger immediate sync to push changes
             await _trigger_feature_refresh(PROJECT_NAME)
 
             return [TextContent(type="text", text=result_msg)]

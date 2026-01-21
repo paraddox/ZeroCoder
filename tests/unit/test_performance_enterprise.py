@@ -517,7 +517,7 @@ class TestSanitizationPerformance:
     @pytest.mark.unit
     def test_sanitize_output_performance(self):
         """Benchmark output sanitization."""
-        from server.services.container_manager import sanitize_output
+        from server.services.e2b_sandbox_manager import sanitize_output
 
         # Generate test lines
         test_lines = [
@@ -539,7 +539,7 @@ class TestSanitizationPerformance:
     @pytest.mark.unit
     def test_sanitize_long_line_performance(self):
         """Test sanitization performance with long lines."""
-        from server.services.container_manager import sanitize_output
+        from server.services.e2b_sandbox_manager import sanitize_output
 
         # Generate long line with multiple secrets
         long_line = " ".join([

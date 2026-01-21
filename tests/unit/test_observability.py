@@ -52,7 +52,7 @@ class TestLoggingPatterns:
     @pytest.mark.unit
     def test_sensitive_data_not_logged(self):
         """Test that sensitive data is not logged."""
-        from server.services.container_manager import sanitize_output
+        from server.services.e2b_sandbox_manager import sanitize_output
 
         sensitive_data = [
             "api_key=sk-ant-12345",

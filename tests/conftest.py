@@ -464,31 +464,37 @@ def mock_websocket_client():
 
 
 # =============================================================================
-# Container Manager Test Fixtures
+# E2B Sandbox Manager Test Fixtures
 # =============================================================================
 
 @pytest.fixture
-def container_manager_factory(tmp_path):
-    """Factory fixture to create ContainerManager instances."""
-    from server.services.container_manager import ContainerManager, _container_managers
+def sandbox_manager_factory(tmp_path):
+    """Factory fixture to create E2BSandboxManager instances."""
+    from server.services.e2b_sandbox_manager import E2BSandboxManager, _managers
 
-    _container_managers.clear()
+    _managers.clear()
 
     def _create(project_name: str, container_number: int = 1):
         project_dir = tmp_path / project_name
         project_dir.mkdir(parents=True, exist_ok=True)
 
-        with patch("server.services.container_manager.get_projects_dir") as mock_dir:
+        with patch("server.services.e2b_sandbox_manager.get_projects_dir") as mock_dir:
             mock_dir.return_value = tmp_path
-            with patch.object(ContainerManager, "_sync_status"):
+            with patch.object(E2BSandboxManager, "_sync_status"):
                 with patch("registry.is_user_started", return_value=False):
-                    return ContainerManager(
+                    return E2BSandboxManager(
                         project_name=project_name,
                         git_url=f"https://github.com/user/{project_name}.git",
                         container_number=container_number,
-                        project_dir=project_dir,
                     )
     return _create
+
+
+# Backwards compatibility alias
+@pytest.fixture
+def container_manager_factory(sandbox_manager_factory):
+    """Alias for sandbox_manager_factory for backwards compatibility."""
+    return sandbox_manager_factory
 
 
 # =============================================================================

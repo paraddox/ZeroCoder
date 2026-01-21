@@ -151,7 +151,7 @@ class TestLogMessages:
     @pytest.mark.unit
     def test_log_message_sanitization(self):
         """Test that sensitive data in logs is sanitized."""
-        from server.services.container_manager import sanitize_output
+        from server.services.e2b_sandbox_manager import sanitize_output
 
         # Use a pattern that matches the actual sanitize_output patterns
         # Pattern: sk-[a-zA-Z0-9]{20,}
@@ -163,7 +163,7 @@ class TestLogMessages:
     @pytest.mark.unit
     def test_log_message_preserves_regular_output(self):
         """Test that regular output is not modified."""
-        from server.services.container_manager import sanitize_output
+        from server.services.e2b_sandbox_manager import sanitize_output
 
         regular_line = "Building component: Button.tsx"
         result = sanitize_output(regular_line)

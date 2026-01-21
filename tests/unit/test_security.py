@@ -178,7 +178,7 @@ class TestAPIKeyRedaction:
     @pytest.mark.unit
     def test_redact_anthropic_api_key_with_assignment(self):
         """Test that Anthropic API keys in assignments are redacted."""
-        from server.services.container_manager import sanitize_output
+        from server.services.e2b_sandbox_manager import sanitize_output
 
         # The pattern matches ANTHROPIC_API_KEY=...
         line = "ANTHROPIC_API_KEY=sk-ant-api03-abcdefghij1234567890"
@@ -188,7 +188,7 @@ class TestAPIKeyRedaction:
     @pytest.mark.unit
     def test_redact_sk_pattern_api_key(self):
         """Test that sk- prefixed API keys are redacted."""
-        from server.services.container_manager import sanitize_output
+        from server.services.e2b_sandbox_manager import sanitize_output
 
         # The pattern matches sk-[a-zA-Z0-9]{20,}
         line = "Using key: sk-abcdefghij1234567890abcdefghij1234"
@@ -198,7 +198,7 @@ class TestAPIKeyRedaction:
     @pytest.mark.unit
     def test_redact_api_key_assignment(self):
         """Test that api_key= assignments are redacted."""
-        from server.services.container_manager import sanitize_output
+        from server.services.e2b_sandbox_manager import sanitize_output
 
         line = "api_key=secret123abc"
         result = sanitize_output(line)
@@ -207,7 +207,7 @@ class TestAPIKeyRedaction:
     @pytest.mark.unit
     def test_redact_token_assignment(self):
         """Test that token= assignments are redacted."""
-        from server.services.container_manager import sanitize_output
+        from server.services.e2b_sandbox_manager import sanitize_output
 
         line = "token=mysecrettoken123"
         result = sanitize_output(line)
@@ -216,7 +216,7 @@ class TestAPIKeyRedaction:
     @pytest.mark.unit
     def test_redact_password_assignment(self):
         """Test that password= assignments are redacted."""
-        from server.services.container_manager import sanitize_output
+        from server.services.e2b_sandbox_manager import sanitize_output
 
         line = "password=mypassword123"
         result = sanitize_output(line)
@@ -225,7 +225,7 @@ class TestAPIKeyRedaction:
     @pytest.mark.unit
     def test_redact_secret_assignment(self):
         """Test that secret= assignments are redacted."""
-        from server.services.container_manager import sanitize_output
+        from server.services.e2b_sandbox_manager import sanitize_output
 
         line = "secret=topsecretvalue"
         result = sanitize_output(line)
@@ -234,7 +234,7 @@ class TestAPIKeyRedaction:
     @pytest.mark.unit
     def test_preserve_non_sensitive_content(self):
         """Test that non-sensitive content is preserved."""
-        from server.services.container_manager import sanitize_output
+        from server.services.e2b_sandbox_manager import sanitize_output
 
         line = "Processing file: /path/to/feature.py - status: success"
         result = sanitize_output(line)

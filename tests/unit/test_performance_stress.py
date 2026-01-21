@@ -287,7 +287,7 @@ class TestSanitizationPerformance:
     @pytest.mark.performance
     def test_sanitize_large_output(self):
         """Test sanitization performance on large output."""
-        from server.services.container_manager import sanitize_output
+        from server.services.e2b_sandbox_manager import sanitize_output
 
         # Create large log output
         lines = []
@@ -305,7 +305,7 @@ class TestSanitizationPerformance:
     @pytest.mark.performance
     def test_sanitize_many_sensitive_values(self):
         """Test sanitization with many sensitive values."""
-        from server.services.container_manager import sanitize_output
+        from server.services.e2b_sandbox_manager import sanitize_output
 
         # Create output with many sensitive values
         lines = []
@@ -388,27 +388,24 @@ class TestMemoryUsage:
 # Container Manager Performance Tests
 # =============================================================================
 
-class TestContainerManagerPerformance:
-    """Performance tests for container manager."""
+class TestSandboxManagerPerformance:
+    """Performance tests for sandbox manager."""
 
     @pytest.mark.performance
     def test_callback_registration_performance(self, tmp_path):
         """Test callback registration performance."""
-        from server.services.container_manager import ContainerManager
-        from registry import get_projects_dir
+        from server.services.e2b_sandbox_manager import E2BSandboxManager
 
         project_dir = tmp_path / "callback-perf"
         project_dir.mkdir()
 
         with patch("registry.get_projects_dir", return_value=tmp_path):
-            with patch.object(ContainerManager, "_sync_status"):
+            with patch.object(E2BSandboxManager, "_sync_status"):
                 with patch("registry.is_user_started", return_value=False):
-                    manager = ContainerManager(
+                    manager = E2BSandboxManager(
                         project_name="callback-perf",
                         git_url="https://github.com/user/repo.git",
                         container_number=1,
-                        project_dir=project_dir,
-                        
                     )
 
         # Measure callback registration/removal performance
@@ -419,7 +416,7 @@ class TestContainerManagerPerformance:
         for _ in range(100):
             cb = MagicMock()
             callbacks.append(cb)
-            manager.add_status_callback(cb)
+            manager.register_status_callback(cb)
 
         add_duration = time.time() - start
 
@@ -429,7 +426,7 @@ class TestContainerManagerPerformance:
         # Remove all callbacks
         start = time.time()
         for cb in callbacks:
-            manager.remove_status_callback(cb)
+            manager.unregister_status_callback(cb)
 
         remove_duration = time.time() - start
 

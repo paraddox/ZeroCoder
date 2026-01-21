@@ -2,5 +2,5 @@
 API Package
 ============
 
-Legacy package - beads operations now routed through ContainerBeadsClient.
+Legacy package - beads operations now routed through BeadsManager on the host.
 """

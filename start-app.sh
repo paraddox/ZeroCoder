@@ -63,32 +63,31 @@ fi
 echo "Installing dependencies..."
 pip install -r requirements.txt --quiet
 
-# Always build Docker image to pick up any changes
-# Uses BuildKit with SSH key secret for git clone support
-DOCKER_IMAGE="zerocoder-project"
+# Check E2B configuration
+echo "Checking E2B configuration..."
+
+# Verify E2B API key is set
+if [ -z "$E2B_API_KEY" ]; then
+    echo "WARNING: E2B_API_KEY not set in environment"
+    echo "E2B sandboxes will not work without an API key"
+    echo "Set E2B_API_KEY in your .env file"
+fi
+
+# Check for SSH key (needed for git clone in sandboxes)
 SSH_KEY_PATH="${GIT_SSH_KEY_PATH:-$HOME/.ssh/id_ed25519}"
-
-echo "Building Docker image '$DOCKER_IMAGE' with BuildKit..."
-
-# Check if SSH key exists
 if [ ! -f "$SSH_KEY_PATH" ]; then
     echo "WARNING: SSH key not found at $SSH_KEY_PATH"
-    echo "Container will not be able to clone private repositories"
+    echo "Sandboxes will not be able to clone private repositories"
     echo "Set GIT_SSH_KEY_PATH environment variable to specify a different key"
-    # Build without SSH key secret
-    DOCKER_BUILDKIT=1 docker build -f Dockerfile.project -t "$DOCKER_IMAGE" .
 else
-    # Build with SSH key secret (key is copied securely, not stored in image layers)
-    DOCKER_BUILDKIT=1 docker build \
-        --secret id=ssh_key,src="$SSH_KEY_PATH" \
-        -f Dockerfile.project -t "$DOCKER_IMAGE" .
+    # Base64 encode SSH key for E2B if not already set
+    if [ -z "$SSH_PRIVATE_KEY_BASE64" ]; then
+        export SSH_PRIVATE_KEY_BASE64=$(base64 -w 0 "$SSH_KEY_PATH" 2>/dev/null || base64 "$SSH_KEY_PATH")
+        echo "SSH key loaded for E2B sandboxes"
+    fi
 fi
 
-if [ $? -ne 0 ]; then
-    echo "ERROR: Failed to build Docker image"
-    exit 1
-fi
-echo "Docker image built successfully"
+echo "E2B configuration ready"
 
 PID_FILE="/tmp/zerocoder-ui.pid"
 PYTHON_PID=""
@@ -110,12 +109,8 @@ cleanup() {
         fi
     fi
 
-    # Remove all zerocoder containers
-    echo "Removing zerocoder containers..."
-    ZEROCODER_CONTAINERS=$(docker ps -aq --filter "name=zerocoder-" 2>/dev/null)
-    if [ ! -z "$ZEROCODER_CONTAINERS" ]; then
-        docker rm -f $ZEROCODER_CONTAINERS 2>/dev/null && echo "Containers removed"
-    fi
+    # E2B sandboxes are cleaned up by the server's lifespan handler
+    # No local container cleanup needed
 
     # Stop any remaining uvicorn processes
     UVICORN_PIDS=$(pgrep -f "uvicorn server.main:app")
@@ -137,12 +132,8 @@ trap cleanup SIGINT SIGTERM
 if [[ " $* " == *" --stop "* ]] || [[ " $* " == *" -s "* ]]; then
     echo "Stopping ZeroCoder UI..."
 
-    # Remove all zerocoder containers FIRST (before killing server)
-    echo "Removing zerocoder containers..."
-    ZEROCODER_CONTAINERS=$(docker ps -aq --filter "name=zerocoder-" 2>/dev/null)
-    if [ ! -z "$ZEROCODER_CONTAINERS" ]; then
-        docker rm -f $ZEROCODER_CONTAINERS 2>/dev/null && echo "Containers removed"
-    fi
+    # E2B sandboxes are cleaned up by the server's lifespan handler
+    # No local container cleanup needed
 
     # Kill by PID file if exists
     if [ -f "$PID_FILE" ]; then
