@@ -37,6 +37,14 @@ const GRACEFUL_STOP_FLAG = path.join(PROJECT_DIR, ".graceful_stop");
 // Agent log file (shared with container entrypoint for docker logs visibility)
 const AGENT_LOG_FILE = "/var/log/agent.log";
 
+// Host API configuration (for graceful stop detection)
+const HOST_API_URL = process.env.HOST_API_URL || "http://host.docker.internal:8888";
+const PROJECT_NAME = process.env.PROJECT_NAME || "";
+const CONTAINER_NUMBER = parseInt(process.env.CONTAINER_NUMBER || "1", 10);
+
+// Track if we've already logged an API failure (avoid spam)
+let apiFailureLogged = false;
+
 // State file for crash recovery (in project dir so host can read it)
 const STATE_FILE = path.join(PROJECT_DIR, ".agent_state.json");
 
@@ -118,7 +126,43 @@ async function readStdin(): Promise<string> {
 }
 
 /**
- * Check if graceful stop was requested
+ * Check if graceful stop was requested via host API
+ */
+async function checkGracefulStopAsync(): Promise<boolean> {
+  // Fall back to file check if API not available (backwards compatibility)
+  try {
+    if (fs.existsSync(GRACEFUL_STOP_FLAG)) {
+      return true;
+    }
+  } catch {
+    // Ignore file check errors
+  }
+
+  // Query host API for graceful stop state
+  if (!PROJECT_NAME) {
+    return false;
+  }
+
+  try {
+    const url = `${HOST_API_URL}/api/projects/${PROJECT_NAME}/agent/containers/${CONTAINER_NUMBER}/session`;
+    const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (response.ok) {
+      const data = await response.json() as { graceful_stop_requested?: boolean };
+      return data.graceful_stop_requested === true;
+    }
+  } catch (e) {
+    // Only log the first API failure to avoid spamming logs
+    if (!apiFailureLogged) {
+      log("WARN", `Failed to check graceful stop via API: ${e}`);
+      apiFailureLogged = true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Check if graceful stop was requested (sync version, file-only)
  */
 function checkGracefulStop(): boolean {
   try {
@@ -333,16 +377,22 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
     const checkIntervalMs = 1000;
     let elapsedMs = 0;
     let lastContextCheck = 0;
+    let lastGracefulStopCheck = 0;
+    const gracefulStopCheckInterval = 10000; // Check API every 10 seconds
 
     while (!sessionComplete && elapsedMs < maxWaitMs) {
       await new Promise(resolve => setTimeout(resolve, checkIntervalMs));
       elapsedMs += checkIntervalMs;
 
-      // Check for graceful stop - don't abort, just flag to exit after completion
-      if (checkGracefulStop() && !gracefulStopRequested) {
-        log("AGENT", "Graceful stop requested, will exit after current session completes...");
-        gracefulStopRequested = true;
-        // Don't call session.abort() - let the current work finish naturally
+      // Check for graceful stop - rate-limited to every 10 seconds to avoid log spam
+      if (elapsedMs - lastGracefulStopCheck >= gracefulStopCheckInterval) {
+        lastGracefulStopCheck = elapsedMs;
+        const shouldStop = await checkGracefulStopAsync();
+        if (shouldStop && !gracefulStopRequested) {
+          log("AGENT", "Graceful stop requested, will exit after current session completes...");
+          gracefulStopRequested = true;
+          // Don't call session.abort() - let the current work finish naturally
+        }
       }
 
       // Periodic context usage check (every 30 seconds)
