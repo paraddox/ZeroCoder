@@ -268,8 +268,8 @@ async def list_projects():
         list_registered_projects, validate_project_path, _, _, _
     ) = _get_registry_functions()
 
-    # Import container manager functions for agent status
-    from ..services.container_manager import get_all_container_managers
+    # Import sandbox manager functions for agent status
+    from ..services.e2b_sandbox_manager import get_all_container_managers
 
     projects = list_registered_projects()
     result = []
@@ -455,8 +455,8 @@ async def delete_project(name: str, delete_files: bool = False):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to delete project files: {e}")
 
-    # Clear cached container manager to avoid stale state
-    from ..services.container_manager import clear_container_manager
+    # Clear cached sandbox manager to avoid stale state
+    from ..services.e2b_sandbox_manager import clear_container_manager
     clear_container_manager(name)
 
     # Unregister from registry
@@ -820,8 +820,8 @@ def _get_docker_container_status(container_name: str) -> str | None:
 
 @router.get("/{name}/containers", response_model=list[ContainerStatus])
 async def list_containers(name: str):
-    """List all containers for a project (from in-memory managers only)."""
-    from ..services.container_manager import get_all_container_managers
+    """List all sandboxes for a project (from in-memory managers only)."""
+    from ..services.e2b_sandbox_manager import get_all_container_managers
 
     (
         _, _, get_project_path, _, _, _,
@@ -859,7 +859,7 @@ async def list_containers(name: str):
             current_feature=cm._current_feature,
             docker_container_id=None,
             agent_type=cm._current_agent_type,
-            sdk_type="claude" if cm._force_claude_sdk or not cm._is_opencode_model() else "opencode",
+            sdk_type="e2b",  # E2B sandboxes always use Claude SDK
         ))
 
     return result

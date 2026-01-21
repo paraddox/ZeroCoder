@@ -1008,7 +1008,7 @@ async def pull_all_beads_sync() -> dict[str, bool]:
     Returns:
         Dict mapping project name to success status
     """
-    from .container_manager import get_projects_with_active_containers
+    from .e2b_sandbox_manager import get_projects_with_active_containers
 
     active_projects = get_projects_with_active_containers()
     if not active_projects:
@@ -1033,9 +1033,9 @@ POLL_INTERVAL_ACTIVE = 10  # seconds when containers are running
 def _has_running_containers() -> bool:
     """Check if any containers are running."""
     try:
-        from server.services.container_manager import get_all_managers
-        managers = get_all_managers()
-        return any(m.status == "running" for m in managers.values())
+        from server.services.e2b_sandbox_manager import get_projects_with_active_containers
+        active_projects = get_projects_with_active_containers()
+        return len(active_projects) > 0
     except Exception:
         return False
 

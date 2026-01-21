@@ -41,7 +41,7 @@ from .routers import (
 )
 from .schemas import SetupStatus
 from .services.assistant_chat_session import cleanup_all_sessions as cleanup_assistant_sessions
-from .services.container_manager import (
+from .services.e2b_sandbox_manager import (
     cleanup_all_containers,
     cleanup_idle_containers,
     cleanup_stale_containers,

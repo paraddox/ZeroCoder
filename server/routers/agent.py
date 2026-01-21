@@ -3,7 +3,7 @@ Agent Router
 ============
 
 API endpoints for agent/container control (start/stop/send instruction).
-Uses ContainerManager for per-project Docker containers.
+Uses E2BSandboxManager for per-project E2B cloud sandboxes.
 """
 
 import asyncio
@@ -18,11 +18,10 @@ logger = logging.getLogger(__name__)
 from fastapi import APIRouter, HTTPException
 
 from ..schemas import AgentActionResponse, AgentStartRequest, AgentStatus
-from ..services.container_manager import (
+from ..services.e2b_sandbox_manager import (
     get_container_manager,
     get_existing_container_manager,
-    check_docker_available,
-    check_image_exists,
+    check_e2b_available,
 )
 from ..websocket import manager as websocket_manager
 
@@ -264,22 +263,17 @@ async def start_agent(
     """
     Start the container for a project and send the appropriate instruction.
 
-    - Creates container if not exists
-    - Starts container if stopped
+    - Creates sandbox if not exists
+    - Starts sandbox if stopped
     - Automatically determines if this is initialization or continuation
     - Sends the appropriate prompt (initializer or coding)
     """
-    # Check Docker availability
-    if not check_docker_available():
+    # Check E2B availability
+    e2b_ok, e2b_msg = check_e2b_available()
+    if not e2b_ok:
         raise HTTPException(
             status_code=503,
-            detail="Docker is not available. Please ensure Docker is installed and running."
-        )
-
-    if not check_image_exists():
-        raise HTTPException(
-            status_code=503,
-            detail="Container image 'zerocoder-project' not found. Run: DOCKER_BUILDKIT=1 docker build --secret id=ssh_key,src=$HOME/.ssh/id_ed25519 -f Dockerfile.project -t zerocoder-project ."
+            detail=f"E2B is not available: {e2b_msg}"
         )
 
     manager = get_project_container(project_name)
@@ -347,19 +341,14 @@ async def start_all_containers(project_name: str):
 
     Phase 2: Spawn N coding containers (zerocoder-{project}-1..N)
     - N is determined by target_container_count in project registry
-    - All coding containers start in parallel with the coding prompt
+    - All coding sandboxes start in parallel with the coding prompt
     """
-    # Check Docker availability first
-    if not check_docker_available():
+    # Check E2B availability first
+    e2b_ok, e2b_msg = check_e2b_available()
+    if not e2b_ok:
         raise HTTPException(
             status_code=503,
-            detail="Docker is not available. Please ensure Docker is installed and running."
-        )
-
-    if not check_image_exists():
-        raise HTTPException(
-            status_code=503,
-            detail="Container image 'zerocoder-project' not found. Run: DOCKER_BUILDKIT=1 docker build --secret id=ssh_key,src=$HOME/.ssh/id_ed25519 -f Dockerfile.project -t zerocoder-project ."
+            detail=f"E2B is not available: {e2b_msg}"
         )
 
     # Validate project name
@@ -523,19 +512,18 @@ async def start_all_containers(project_name: str):
             detail=f"Could not load coding prompt: {e}"
         )
 
-    # Start coding containers with staggered delays to prevent race conditions
-    # Each container needs time to clone repo and claim a feature before next starts
+    # Start coding sandboxes with staggered delays to prevent race conditions
+    # Each sandbox needs time to clone repo and claim a feature before next starts
     # 60 seconds allows for git clone + agent startup
-    from server.services.container_manager import CONTAINER_STARTUP_DELAY
-    STAGGER_DELAY_SECONDS = CONTAINER_STARTUP_DELAY
+    STAGGER_DELAY_SECONDS = 60  # Stagger sandbox starts by 60 seconds
 
     async def start_container_and_agent(manager, container_num: int):
-        """Start container and then start agent as background task."""
+        """Start sandbox and then start agent as background task."""
         manager._current_agent_type = "coder"
         manager._force_claude_sdk = False
 
-        # First, ensure container is running (non-blocking)
-        container_ok, container_msg = await manager.start_container_only()
+        # First, ensure sandbox is running (non-blocking)
+        container_ok, container_msg = await manager.start_sandbox_only()
         if not container_ok:
             return False, f"Container failed: {container_msg}"
 
@@ -605,8 +593,8 @@ async def start_all_containers(project_name: str):
 
 @router.post("/stop", response_model=AgentActionResponse)
 async def stop_agent(project_name: str):
-    """Stop ALL containers for a project (does not remove them)."""
-    from ..services.container_manager import _managers
+    """Stop ALL sandboxes for a project (does not remove them)."""
+    from ..services.e2b_sandbox_manager import _managers
 
     project_name = validate_project_name(project_name)
 
@@ -648,9 +636,9 @@ async def graceful_stop_agent(project_name: str):
     Request graceful shutdown of ALL agents for a project.
 
     Each agent will complete its current work before stopping.
-    Falls back to force stop after 10 minutes.
+    Falls back to force stop after 20 minutes.
     """
-    from ..services.container_manager import _managers
+    from ..services.e2b_sandbox_manager import _managers
 
     project_name = validate_project_name(project_name)
 
@@ -747,24 +735,19 @@ async def start_container_only(project_name: str):
     Start the container without starting the agent.
 
     This is useful for editing tasks when you don't want to start
-    the agent consuming API credits. The container will stay running
-    until idle timeout (60 min).
+    the agent consuming API credits. The sandbox will stay running
+    until idle timeout (5 min for E2B).
     """
-    # Check Docker availability
-    if not check_docker_available():
+    # Check E2B availability
+    e2b_ok, e2b_msg = check_e2b_available()
+    if not e2b_ok:
         raise HTTPException(
             status_code=503,
-            detail="Docker is not available. Please ensure Docker is installed and running."
-        )
-
-    if not check_image_exists():
-        raise HTTPException(
-            status_code=503,
-            detail="Container image 'zerocoder-project' not found. Run: DOCKER_BUILDKIT=1 docker build --secret id=ssh_key,src=$HOME/.ssh/id_ed25519 -f Dockerfile.project -t zerocoder-project ."
+            detail=f"E2B is not available: {e2b_msg}"
         )
 
     manager = get_project_container(project_name)
-    success, message = await manager.start_container_only()
+    success, message = await manager.start_sandbox_only()
 
     return AgentActionResponse(
         success=success,

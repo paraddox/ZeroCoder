@@ -15,7 +15,7 @@ from typing import Set
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from .services.container_manager import get_all_container_managers
+from .services.e2b_sandbox_manager import E2BSandboxManager, get_all_container_managers
 
 # Lazy imports
 _count_passing_tests = None
@@ -68,7 +68,7 @@ async def _send_containers_list(websocket: WebSocket, project_name: str):
             "number": cm.container_number,
             "type": cm.container_type,
             "agent_type": cm._current_agent_type,
-            "sdk_type": "claude" if cm._force_claude_sdk or not cm._is_opencode_model() else "opencode",
+            "sdk_type": "e2b",  # E2B sandboxes always use Claude SDK
         }
         container_list.append(container_info)
 
@@ -224,7 +224,7 @@ async def project_websocket(websocket: WebSocket, project_name: str):
                 pass  # Connection may be closed
         return on_output
 
-    def make_status_callback(container_num: int, cm: "ContainerManager"):
+    def make_status_callback(container_num: int, cm: "E2BSandboxManager"):
         async def on_status_change(status: str):
             """Handle status change - broadcast to this WebSocket."""
             try:
@@ -233,7 +233,7 @@ async def project_websocket(websocket: WebSocket, project_name: str):
                     "status": status,
                     "container_number": container_num,
                     "agent_type": cm._current_agent_type,
-                    "sdk_type": "claude" if cm._force_claude_sdk or not cm._is_opencode_model() else "opencode",
+                    "sdk_type": "e2b",  # E2B sandboxes always use Claude SDK
                 })
             except Exception:
                 pass  # Connection may be closed
@@ -245,8 +245,8 @@ async def project_websocket(websocket: WebSocket, project_name: str):
     for cm in all_managers:
         output_cb = make_output_callback(cm.container_number)
         status_cb = make_status_callback(cm.container_number, cm)
-        cm.add_output_callback(output_cb)
-        cm.add_status_callback(status_cb)
+        cm.register_output_callback(output_cb)
+        cm.register_status_callback(status_cb)
         registered_callbacks.append((cm, output_cb, status_cb))
         registered_container_nums.add(cm.container_number)
 
@@ -266,8 +266,8 @@ async def project_websocket(websocket: WebSocket, project_name: str):
                         # New container found - register callbacks
                         output_cb = make_output_callback(cm.container_number)
                         status_cb = make_status_callback(cm.container_number, cm)
-                        cm.add_output_callback(output_cb)
-                        cm.add_status_callback(status_cb)
+                        cm.register_output_callback(output_cb)
+                        cm.register_status_callback(status_cb)
                         registered_callbacks.append((cm, output_cb, status_cb))
                         registered_container_nums.add(cm.container_number)
 
@@ -341,8 +341,8 @@ async def project_websocket(websocket: WebSocket, project_name: str):
 
         # Unregister callbacks from all containers
         for cm, output_cb, status_cb in registered_callbacks:
-            cm.remove_output_callback(output_cb)
-            cm.remove_status_callback(status_cb)
+            cm.unregister_output_callback(output_cb)
+            cm.unregister_status_callback(status_cb)
 
         # Disconnect from manager
         await manager.disconnect(websocket, project_name)

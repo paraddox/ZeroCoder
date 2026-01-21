@@ -1,0 +1,26 @@
+# =============================================================================
+# E2B Template Configuration
+# =============================================================================
+# Custom sandbox template for ZeroCoder agents.
+#
+# Build: e2b template build --name zerocoder-agent
+# Push:  e2b template push zerocoder-agent
+#
+# This template includes:
+# - Python 3.11 + claude-agent-sdk
+# - Node.js 22 + Claude Code CLI
+# - Git, curl, jq, and development tools
+# - Beads CLI wrapper for host API communication
+
+# Template name (must match when pushing)
+name = "zerocoder-agent"
+
+# Dockerfile to use for building the template
+dockerfile = "Dockerfile"
+
+# Start command - keep sandbox alive waiting for commands
+start_cmd = "/bin/bash -c 'echo Sandbox ready && sleep infinity'"
+
+# CPU and memory configuration
+cpu_count = 2
+memory_mb = 4096
