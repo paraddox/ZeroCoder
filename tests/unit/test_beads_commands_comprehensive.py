@@ -2,7 +2,7 @@
 Beads Commands Comprehensive Unit Tests
 ========================================
 
-Tests for container_scripts/beads_commands.py actions:
+Tests for e2b_template/beads_commands.py actions:
 - action_list - Stats calculation, empty project, malformed JSONL
 - action_get - Single feature, not found, list vs dict response
 - action_create - All fields, auto-init, name required, priority conversion
@@ -22,7 +22,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import sys
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "container_scripts"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "e2b_template"))
 
 
 class TestPriorityToBeads:

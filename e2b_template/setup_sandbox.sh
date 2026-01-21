@@ -55,16 +55,32 @@ if [ -d "$PROJECT_DIR/.git" ]; then
     log "Project already exists, pulling latest..."
     cd "$PROJECT_DIR"
     git fetch origin
-    git reset --hard origin/main
+    # Try to reset to default branch, handle empty repos
+    if git rev-parse origin/main >/dev/null 2>&1; then
+        git reset --hard origin/main
+    elif git rev-parse origin/master >/dev/null 2>&1; then
+        git reset --hard origin/master
+    else
+        log "Repository appears to be empty (no main/master branch)"
+    fi
 else
     log "Cloning fresh copy..."
     # Clone into temp dir first, then move (can't clone into non-empty dir)
     rm -rf /tmp/project-clone
-    git clone --branch main "$GIT_REMOTE_URL" /tmp/project-clone
 
-    # Move all files including hidden ones
-    mv /tmp/project-clone/* /tmp/project-clone/.[!.]* "$PROJECT_DIR/" 2>/dev/null || true
-    rm -rf /tmp/project-clone
+    # Clone without specifying branch (works for empty repos)
+    if git clone "$GIT_REMOTE_URL" /tmp/project-clone 2>&1; then
+        # Move all files including hidden ones
+        mv /tmp/project-clone/* /tmp/project-clone/.[!.]* "$PROJECT_DIR/" 2>/dev/null || true
+        rm -rf /tmp/project-clone
+    else
+        # Empty repo - initialize locally and add remote
+        log "Repository is empty, initializing fresh..."
+        cd "$PROJECT_DIR"
+        git init
+        git remote add origin "$GIT_REMOTE_URL"
+        git checkout -b main
+    fi
 fi
 
 if [ ! -e "$PROJECT_DIR/.git" ]; then

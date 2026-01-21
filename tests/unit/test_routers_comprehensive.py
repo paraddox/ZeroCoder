@@ -585,21 +585,19 @@ class TestAgentRouterControl:
             "graceful_stop_requested": False,
         }
 
-        with patch("server.routers.agent.check_docker_available") as mock_docker:
-            mock_docker.return_value = True
-            with patch("server.routers.agent.check_image_exists") as mock_image:
-                mock_image.return_value = True
-                with patch("server.routers.agent.get_project_container") as mock_get:
-                    mock_get.return_value = mock_manager
-                    with patch("server.routers.agent._get_agent_prompt") as mock_prompt:
-                        mock_prompt.return_value = "Test prompt"
-                        with patch("server.routers.agent._get_project_path") as mock_path:
-                            mock_path.return_value = Path("/tmp/project")
+        with patch("server.routers.agent.check_e2b_available") as mock_e2b:
+            mock_e2b.return_value = (True, "E2B available")
+            with patch("server.routers.agent.get_project_container") as mock_get:
+                mock_get.return_value = mock_manager
+                with patch("server.routers.agent._get_agent_prompt") as mock_prompt:
+                    mock_prompt.return_value = "Test prompt"
+                    with patch("server.routers.agent._get_project_path") as mock_path:
+                        mock_path.return_value = Path("/tmp/project")
 
-                            response = await start_agent(
-                                "test-project",
-                                AgentStartRequest()
-                            )
+                        response = await start_agent(
+                            "test-project",
+                            AgentStartRequest()
+                        )
 
         assert response.success is True
 
@@ -616,7 +614,7 @@ class TestAgentRouterControl:
         with patch("server.routers.agent.validate_project_name") as mock_validate:
             mock_validate.return_value = "test-project"
             # Mock _managers with an existing manager
-            with patch("server.services.container_manager._managers", {"test-project": {1: mock_manager}}):
+            with patch("server.services.e2b_sandbox_manager._managers", {"test-project": {1: mock_manager}}):
                 response = await stop_agent("test-project")
 
         assert response.success is True
@@ -636,7 +634,7 @@ class TestAgentRouterControl:
         with patch("server.routers.agent.validate_project_name") as mock_validate:
             mock_validate.return_value = "test-project"
             # Mock _managers with an existing manager
-            with patch("server.services.container_manager._managers", {"test-project": {1: mock_manager}}):
+            with patch("server.services.e2b_sandbox_manager._managers", {"test-project": {1: mock_manager}}):
                 with patch("server.routers.agent.websocket_manager") as mock_ws:
                     mock_ws.broadcast_to_project = AsyncMock()
 

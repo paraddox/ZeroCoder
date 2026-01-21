@@ -512,10 +512,10 @@ class TestCallbackRegistration:
         mock_manager._current_agent_type = "coding"
         mock_manager._force_claude_sdk = False
         mock_manager._is_opencode_model = MagicMock(return_value=False)
-        mock_manager.add_output_callback = MagicMock()
-        mock_manager.add_status_callback = MagicMock()
-        mock_manager.remove_output_callback = MagicMock()
-        mock_manager.remove_status_callback = MagicMock()
+        mock_manager.register_output_callback = MagicMock()
+        mock_manager.register_status_callback = MagicMock()
+        mock_manager.unregister_output_callback = MagicMock()
+        mock_manager.unregister_status_callback = MagicMock()
 
         mock_websocket.receive_text.side_effect = asyncio.CancelledError()
 
@@ -536,8 +536,8 @@ class TestCallbackRegistration:
                             pass
 
                         # Callbacks should have been registered
-                        mock_manager.add_output_callback.assert_called()
-                        mock_manager.add_status_callback.assert_called()
+                        mock_manager.register_output_callback.assert_called()
+                        mock_manager.register_status_callback.assert_called()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -549,10 +549,10 @@ class TestCallbackRegistration:
         mock_manager._current_agent_type = "coding"
         mock_manager._force_claude_sdk = False
         mock_manager._is_opencode_model = MagicMock(return_value=False)
-        mock_manager.add_output_callback = MagicMock()
-        mock_manager.add_status_callback = MagicMock()
-        mock_manager.remove_output_callback = MagicMock()
-        mock_manager.remove_status_callback = MagicMock()
+        mock_manager.register_output_callback = MagicMock()
+        mock_manager.register_status_callback = MagicMock()
+        mock_manager.unregister_output_callback = MagicMock()
+        mock_manager.unregister_status_callback = MagicMock()
 
         mock_websocket.receive_text.side_effect = asyncio.CancelledError()
 
@@ -576,8 +576,8 @@ class TestCallbackRegistration:
                                 pass
 
                             # Callbacks should have been unregistered
-                            mock_manager.remove_output_callback.assert_called()
-                            mock_manager.remove_status_callback.assert_called()
+                            mock_manager.unregister_output_callback.assert_called()
+                            mock_manager.unregister_status_callback.assert_called()
 
 
 # =============================================================================

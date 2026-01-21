@@ -226,10 +226,10 @@ class TestAgentAPIIntegration:
 
     @pytest.mark.integration
     @pytest.mark.skip(reason="Requires full application mocking")
-    def test_start_agent_no_docker(self, test_client):
-        """Test start agent fails without Docker."""
-        with patch("server.routers.agent.check_docker_available") as mock_docker:
-            mock_docker.return_value = False
+    def test_start_agent_no_e2b(self, test_client):
+        """Test start agent fails without E2B."""
+        with patch("server.routers.agent.check_e2b_available") as mock_e2b:
+            mock_e2b.return_value = (False, "E2B API key not configured")
 
             response = test_client.post(
                 "/api/projects/test-project/agent/start",
@@ -237,7 +237,7 @@ class TestAgentAPIIntegration:
             )
 
             assert response.status_code == 503
-            assert "docker" in response.json()["detail"].lower()
+            assert "e2b" in response.json()["detail"].lower()
 
 
 class TestWebSocketIntegration:

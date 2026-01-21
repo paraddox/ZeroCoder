@@ -27,8 +27,13 @@ from e2b import AsyncSandbox
 
 logger = logging.getLogger(__name__)
 
+# Path to e2b_template directory containing setup scripts
+E2B_TEMPLATE_DIR = Path(__file__).parent.parent.parent / "e2b_template"
+
 # E2B configuration
-E2B_TEMPLATE_ID = os.environ.get("E2B_TEMPLATE_ID", "zerocoder-agent")
+# Use code-interpreter-v1 template by default (has 2GB RAM)
+# Set E2B_TEMPLATE_ID env var to override
+E2B_TEMPLATE_ID = os.environ.get("E2B_TEMPLATE_ID") or "code-interpreter-v1"
 E2B_SANDBOX_TIMEOUT = int(os.environ.get("E2B_SANDBOX_TIMEOUT", "300"))  # 5 minutes default
 E2B_API_KEY = os.environ.get("E2B_API_KEY", "")
 
@@ -38,11 +43,18 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ZHIPU_API_KEY = os.environ.get("ZHIPU_API_KEY", "")
 SSH_PRIVATE_KEY_BASE64 = os.environ.get("SSH_PRIVATE_KEY_BASE64", "")
 
-# If SSH_PRIVATE_KEY_BASE64 not set, try to read from ~/.ssh/id_ed25519 and encode
+# If SSH_PRIVATE_KEY_BASE64 not set, try to read from GIT_SSH_KEY_PATH or default
 if not SSH_PRIVATE_KEY_BASE64:
-    ssh_key_path = Path.home() / ".ssh" / "id_ed25519"
+    # First check GIT_SSH_KEY_PATH env var, then default to ~/.ssh/id_ed25519
+    git_ssh_key_path = os.environ.get("GIT_SSH_KEY_PATH", "")
+    if git_ssh_key_path:
+        ssh_key_path = Path(git_ssh_key_path).expanduser()
+    else:
+        ssh_key_path = Path.home() / ".ssh" / "id_ed25519"
+
     if ssh_key_path.exists():
         SSH_PRIVATE_KEY_BASE64 = base64.b64encode(ssh_key_path.read_bytes()).decode()
+        logger.info(f"Loaded SSH key from {ssh_key_path}")
 
 
 def sanitize_output(line: str) -> str:
@@ -50,9 +62,14 @@ def sanitize_output(line: str) -> str:
     # Remove ANSI escape sequences
     ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
     line = ansi_escape.sub('', line)
-    # Remove potential API keys
+    # Remove potential API keys (Anthropic, OpenAI)
     line = re.sub(r'sk-ant-[a-zA-Z0-9-]+', '[REDACTED]', line)
     line = re.sub(r'sk-[a-zA-Z0-9]+', '[REDACTED]', line)
+    # Remove common sensitive patterns (password, token, secret, key)
+    line = re.sub(r'(password|token|secret|api_key|apikey|auth)=\S+', r'\1=[REDACTED]', line, flags=re.IGNORECASE)
+    # Remove GitHub tokens
+    line = re.sub(r'ghp_[a-zA-Z0-9]+', '[REDACTED]', line)
+    line = re.sub(r'github_pat_[a-zA-Z0-9_]+', '[REDACTED]', line)
     return line
 
 
@@ -105,6 +122,11 @@ class E2BSandboxManager:
         self._sandbox: AsyncSandbox | None = None
         self._sandbox_id: str | None = None
         self._agent_pid: int | None = None
+
+        # Sandbox paths (set during environment preparation)
+        self._sandbox_home: str = "/home/user"
+        self._sandbox_app_dir: str = "/home/user/app"
+        self._sandbox_project_dir: str = "/home/user/project"
 
         # Status tracking
         self._status = "not_created"
@@ -309,6 +331,146 @@ class E2BSandboxManager:
 
         return envs
 
+    async def _prepare_sandbox_environment(self) -> tuple[bool, str]:
+        """
+        Prepare the sandbox environment by uploading necessary files.
+
+        This is needed when using the default E2B template instead of
+        a custom template with pre-installed files.
+
+        Creates:
+        - ~/app/setup_sandbox.sh - Sandbox setup script
+        - ~/app/agent_app.py - Claude Agent SDK application
+        - ~/project/ - Working directory for the project
+        - ~/.ssh/ - SSH directory for git operations
+        """
+        if not self._sandbox:
+            return False, "Sandbox not created"
+
+        try:
+            await self._broadcast_output("[System] Preparing sandbox environment...")
+
+            # Get user home directory
+            home_result = await self._sandbox.commands.run("echo $HOME")
+            home_dir = home_result.stdout.strip() or "/home/user"
+
+            app_dir = f"{home_dir}/app"
+            project_dir = f"{home_dir}/project"
+            ssh_dir = f"{home_dir}/.ssh"
+
+            # Create directories
+            mkdir_cmd = f"mkdir -p {app_dir} {project_dir} {ssh_dir}"
+            logger.info(f"Running mkdir command: {mkdir_cmd}")
+            await self._sandbox.commands.run(mkdir_cmd)
+
+            # Configure SSH for github.com
+            ssh_config = f"""Host github.com
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    IdentityFile {ssh_dir}/id_ed25519
+"""
+            await self._sandbox.files.write(f"{ssh_dir}/config", ssh_config)
+            await self._sandbox.commands.run(f"chmod 600 {ssh_dir}/config")
+
+            # Upload setup script (modify paths for user home)
+            setup_script_path = E2B_TEMPLATE_DIR / "setup_sandbox.sh"
+            if setup_script_path.exists():
+                setup_content = setup_script_path.read_text()
+                # Replace hardcoded paths with user home paths
+                setup_content = setup_content.replace("/root/.ssh", f"{ssh_dir}")
+                setup_content = setup_content.replace('PROJECT_DIR="/project"', f'PROJECT_DIR="{project_dir}"')
+                await self._sandbox.files.write(f"{app_dir}/setup_sandbox.sh", setup_content)
+                await self._sandbox.commands.run(f"chmod +x {app_dir}/setup_sandbox.sh")
+            else:
+                return False, f"Setup script not found: {setup_script_path}"
+
+            # Upload agent app (modify paths for user home)
+            agent_app_path = E2B_TEMPLATE_DIR / "agent_app.py"
+            if agent_app_path.exists():
+                agent_content = agent_app_path.read_text()
+                # Replace hardcoded paths
+                agent_content = agent_content.replace('"/project"', f'"{project_dir}"')
+                agent_content = agent_content.replace('Path("/project', f'Path("{project_dir}')
+                await self._sandbox.files.write(f"{app_dir}/agent_app.py", agent_content)
+            else:
+                return False, f"Agent app not found: {agent_app_path}"
+
+            # Store paths for later use
+            self._sandbox_home = home_dir
+            self._sandbox_app_dir = app_dir
+            self._sandbox_project_dir = project_dir
+
+            # Install required Python packages
+            await self._broadcast_output("[System] Installing Python dependencies...")
+            install_result = await self._sandbox.commands.run(
+                "pip install requests claude-agent-sdk --quiet",
+                timeout=120,
+            )
+
+            if install_result.exit_code != 0:
+                logger.warning(f"pip install warning: {install_result.stderr}")
+
+            # Install Claude Code CLI (requires Node.js)
+            await self._broadcast_output("[System] Installing Claude Code CLI...")
+            # Check if Node.js is available
+            node_check = await self._sandbox.commands.run("which node || echo 'not found'")
+            if "not found" in node_check.stdout:
+                logger.warning("Node.js not available in sandbox - trying to install")
+                await self._sandbox.commands.run(
+                    "curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs",
+                    timeout=180,
+                )
+
+            # Install Claude Code CLI to user's local npm directory (avoids permission issues)
+            npm_prefix = f"{home_dir}/.npm-global"
+            await self._sandbox.commands.run(f"mkdir -p {npm_prefix}")
+            await self._sandbox.commands.run(f"npm config set prefix {npm_prefix}")
+
+            claude_install = await self._sandbox.commands.run(
+                f"PATH={npm_prefix}/bin:$PATH npm install -g @anthropic-ai/claude-code",
+                timeout=180,
+            )
+            if claude_install.exit_code != 0:
+                logger.warning(f"Claude Code CLI install warning: {claude_install.stderr}")
+            else:
+                logger.info("Claude Code CLI installed successfully")
+
+            # Verify claude is accessible
+            verify_result = await self._sandbox.commands.run(
+                f"PATH={npm_prefix}/bin:$PATH claude --version",
+                timeout=30,
+            )
+            if verify_result.exit_code != 0:
+                logger.warning(f"Claude CLI verification failed: {verify_result.stderr}")
+            else:
+                logger.info(f"Claude CLI version: {verify_result.stdout.strip()}")
+
+            # Test claude authentication
+            oauth_token = os.getenv("CLAUDE_CODE_OAUTH_TOKEN", "")
+            if oauth_token:
+                auth_test = await self._sandbox.commands.run(
+                    f"PATH={npm_prefix}/bin:$PATH CLAUDE_CODE_OAUTH_TOKEN={oauth_token} claude -p 'Say hello' --max-turns 1 2>&1 || echo 'AUTH_FAILED'",
+                    timeout=60,
+                )
+                logger.info(f"Claude auth test result (exit={auth_test.exit_code}): {auth_test.stdout[:200] if auth_test.stdout else 'no output'}...")
+
+            # Create symlink for claude in a standard location
+            await self._sandbox.commands.run(
+                f"ln -sf {npm_prefix}/bin/claude /usr/local/bin/claude 2>/dev/null || sudo ln -sf {npm_prefix}/bin/claude /usr/local/bin/claude 2>/dev/null || true"
+            )
+
+            # Add npm-global/bin to PATH for future commands
+            await self._sandbox.commands.run(
+                f"echo 'export PATH={npm_prefix}/bin:$PATH' >> {home_dir}/.bashrc"
+            )
+
+            await self._broadcast_output("[System] Environment prepared")
+            return True, "Environment prepared"
+
+        except Exception as e:
+            logger.exception("Failed to prepare sandbox environment")
+            return False, f"Failed to prepare environment: {e}"
+
     async def _sync_status(self) -> None:
         """Sync status with actual sandbox state."""
         if self._sandbox_id:
@@ -436,13 +598,22 @@ class E2BSandboxManager:
             self.status = "running"
             self._user_started = True
 
+            # Prepare sandbox environment (upload scripts, install dependencies)
+            # This is needed when using the default E2B template
+            prep_ok, prep_msg = await self._prepare_sandbox_environment()
+            if not prep_ok:
+                logger.error(f"Environment preparation failed: {prep_msg}")
+                await self._broadcast_output(f"[System] Environment setup failed: {prep_msg}")
+                return False, prep_msg
+
             # Run setup script to clone repo and configure SSH
             await self._broadcast_output("[System] Setting up repository...")
+            app_dir = getattr(self, '_sandbox_app_dir', '/home/user/app')
             setup_result = await self._sandbox.commands.run(
-                "/app/setup_sandbox.sh",
+                f"{app_dir}/setup_sandbox.sh",
                 timeout=120,
-                on_stdout=lambda out: asyncio.create_task(self._broadcast_output(out.data)),
-                on_stderr=lambda err: asyncio.create_task(self._broadcast_output(f"[stderr] {err.data}")),
+                on_stdout=lambda out: asyncio.create_task(self._broadcast_output(out)),
+                on_stderr=lambda err: asyncio.create_task(self._broadcast_output(f"[stderr] {err}")),
             )
 
             if setup_result.exit_code != 0:
@@ -537,10 +708,17 @@ class E2BSandboxManager:
             self.status = "running"
             # Don't set _user_started - this is just for editing
 
+            # Prepare sandbox environment (upload scripts, install dependencies)
+            prep_ok, prep_msg = await self._prepare_sandbox_environment()
+            if not prep_ok:
+                logger.error(f"Environment preparation failed: {prep_msg}")
+                return False, prep_msg
+
             # Run setup script to clone repo
             await self._broadcast_output("[System] Setting up repository...")
+            app_dir = getattr(self, '_sandbox_app_dir', '/home/user/app')
             setup_result = await self._sandbox.commands.run(
-                "/app/setup_sandbox.sh",
+                f"{app_dir}/setup_sandbox.sh",
                 timeout=120,
             )
 
@@ -719,20 +897,54 @@ class E2BSandboxManager:
         try:
             self._update_activity()
 
+            # Get sandbox paths
+            home_dir = getattr(self, '_sandbox_home', '/home/user')
+            app_dir = getattr(self, '_sandbox_app_dir', f'{home_dir}/app')
+            project_dir = getattr(self, '_sandbox_project_dir', f'{home_dir}/project')
+
             # Write prompt to temp file in sandbox
-            prompt_path = "/tmp/prompt.txt"
+            prompt_path = f"{home_dir}/prompt.txt"
             await self._sandbox.files.write(prompt_path, instruction)
 
             logger.info(f"Starting agent in {self.container_name}")
             await self._broadcast_output("[System] Starting agent...")
 
-            # Start agent in background
+            # Start agent in background with PATH including npm-global bin
+            npm_bin = f"{home_dir}/.npm-global/bin"
+
+            # Build environment with PATH and credentials
+            agent_envs = {
+                "PATH": f"{npm_bin}:/usr/local/bin:/usr/bin:/bin",
+            }
+            if ANTHROPIC_API_KEY:
+                agent_envs["ANTHROPIC_API_KEY"] = ANTHROPIC_API_KEY
+                logger.info(f"Passing ANTHROPIC_API_KEY to agent (length: {len(ANTHROPIC_API_KEY)})")
+            oauth_token = os.getenv("CLAUDE_CODE_OAUTH_TOKEN")
+            if oauth_token:
+                agent_envs["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
+                logger.info(f"Passing CLAUDE_CODE_OAUTH_TOKEN to agent (length: {len(oauth_token)}, starts with: {oauth_token[:15]}...)")
+
+            # Create a wrapper script to ensure PATH and env vars are properly set
+            wrapper_script = f"""#!/bin/bash
+export PATH={npm_bin}:$PATH
+export CLAUDE_CODE_OAUTH_TOKEN="${{CLAUDE_CODE_OAUTH_TOKEN}}"
+export ANTHROPIC_API_KEY="${{ANTHROPIC_API_KEY}}"
+export HOME={home_dir}
+cd {project_dir}
+python {app_dir}/agent_app.py
+"""
+            wrapper_path = f"{home_dir}/run_agent.sh"
+            await self._sandbox.files.write(wrapper_path, wrapper_script)
+            await self._sandbox.commands.run(f"chmod +x {wrapper_path}")
+
             handle = await self._sandbox.commands.run(
-                f"python /app/agent_app.py < {prompt_path}",
+                f"{wrapper_path} < {prompt_path}",
                 background=True,
-                cwd="/project",
-                on_stdout=lambda out: asyncio.create_task(self._handle_stdout(out.data)),
-                on_stderr=lambda err: asyncio.create_task(self._handle_stderr(err.data)),
+                cwd=project_dir,
+                envs=agent_envs,
+                timeout=0,  # Disable timeout for long-running agent
+                on_stdout=lambda out: asyncio.create_task(self._handle_stdout(out)),
+                on_stderr=lambda err: asyncio.create_task(self._handle_stderr(err)),
             )
 
             self._agent_pid = handle.pid

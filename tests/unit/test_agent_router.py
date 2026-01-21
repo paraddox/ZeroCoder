@@ -304,40 +304,20 @@ class TestAgentStartEndpoint:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_start_docker_not_available(self):
-        """Test start fails when Docker not available."""
+    async def test_start_e2b_not_available(self):
+        """Test start fails when E2B not available."""
         from fastapi import HTTPException
         from server.routers.agent import start_agent
         from server.schemas import AgentStartRequest
 
-        with patch("server.routers.agent.check_docker_available") as mock_docker:
-            mock_docker.return_value = False
+        with patch("server.routers.agent.check_e2b_available") as mock_e2b:
+            mock_e2b.return_value = (False, "E2B API key not configured")
 
             with pytest.raises(HTTPException) as exc_info:
                 await start_agent("test-project", AgentStartRequest())
 
             assert exc_info.value.status_code == 503
-            assert "docker" in exc_info.value.detail.lower()
-
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_start_image_not_found(self):
-        """Test start fails when container image not found."""
-        from fastapi import HTTPException
-        from server.routers.agent import start_agent
-        from server.schemas import AgentStartRequest
-
-        with patch("server.routers.agent.check_docker_available") as mock_docker:
-            mock_docker.return_value = True
-
-            with patch("server.routers.agent.check_image_exists") as mock_image:
-                mock_image.return_value = False
-
-                with pytest.raises(HTTPException) as exc_info:
-                    await start_agent("test-project", AgentStartRequest())
-
-                assert exc_info.value.status_code == 503
-                assert "image" in exc_info.value.detail.lower()
+            assert "e2b" in exc_info.value.detail.lower()
 
 
 class TestAgentStopEndpoint:
@@ -345,19 +325,19 @@ class TestAgentStopEndpoint:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_stop_no_container(self):
-        """Test stop when no container exists."""
+    async def test_stop_no_sandbox(self):
+        """Test stop when no sandbox exists."""
         from server.routers.agent import stop_agent
 
         mock_manager = MagicMock()
         mock_manager.status = "stopped"
-        mock_manager.stop = AsyncMock(return_value=(True, "Container stopped"))
+        mock_manager.stop = AsyncMock(return_value=(True, "Sandbox stopped"))
 
         with patch("server.routers.agent.validate_project_name") as mock_validate:
             mock_validate.return_value = "test-project"
 
             # Mock _managers to be empty, triggering the fallback path
-            with patch("server.services.container_manager._managers", {}):
+            with patch("server.services.e2b_sandbox_manager._managers", {}):
                 with patch("server.routers.agent.get_project_container") as mock_get_container:
                     mock_get_container.return_value = mock_manager
 
@@ -368,19 +348,19 @@ class TestAgentStopEndpoint:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_stop_container_success(self):
-        """Test successful container stop."""
+    async def test_stop_sandbox_success(self):
+        """Test successful sandbox stop."""
         from server.routers.agent import stop_agent
 
         mock_manager = MagicMock()
         mock_manager.status = "stopped"
-        mock_manager.stop = AsyncMock(return_value=(True, "Container stopped"))
+        mock_manager.stop = AsyncMock(return_value=(True, "Sandbox stopped"))
 
         with patch("server.routers.agent.validate_project_name") as mock_validate:
             mock_validate.return_value = "test-project"
 
             # Mock _managers with an existing manager
-            with patch("server.services.container_manager._managers", {"test-project": {1: mock_manager}}):
+            with patch("server.services.e2b_sandbox_manager._managers", {"test-project": {1: mock_manager}}):
                 result = await stop_agent("test-project")
 
                 assert result.success is True
@@ -392,8 +372,8 @@ class TestGracefulStopEndpoint:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_graceful_stop_no_container(self):
-        """Test graceful stop when no container exists (fallback path)."""
+    async def test_graceful_stop_no_sandbox(self):
+        """Test graceful stop when no sandbox exists (fallback path)."""
         from server.routers.agent import graceful_stop_agent
 
         mock_manager = MagicMock()
@@ -404,7 +384,7 @@ class TestGracefulStopEndpoint:
             mock_validate.return_value = "test-project"
 
             # Mock _managers to be empty, triggering the fallback path
-            with patch("server.services.container_manager._managers", {}):
+            with patch("server.services.e2b_sandbox_manager._managers", {}):
                 with patch("server.routers.agent.get_project_container") as mock_get_container:
                     mock_get_container.return_value = mock_manager
 
@@ -430,7 +410,7 @@ class TestGracefulStopEndpoint:
             mock_validate.return_value = "test-project"
 
             # Mock _managers with an existing manager
-            with patch("server.services.container_manager._managers", {"test-project": {1: mock_manager}}):
+            with patch("server.services.e2b_sandbox_manager._managers", {"test-project": {1: mock_manager}}):
                 with patch("server.routers.agent.websocket_manager") as mock_ws:
                     mock_ws.broadcast_to_project = AsyncMock()
 

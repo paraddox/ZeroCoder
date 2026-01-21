@@ -1,9 +1,9 @@
 """
-Agent SDK Application
-=====================
+Agent Application (Direct CLI Version)
+======================================
 
-Claude Agent SDK-based orchestrator for running Claude in Docker containers.
-Replaces the CLI-based `claude --print` approach with proper SDK integration.
+Claude CLI-based orchestrator for running Claude in E2B sandboxes.
+Uses subprocess to call claude directly, bypassing the SDK.
 
 Features:
 - Retry logic with exponential backoff
@@ -19,19 +19,12 @@ import asyncio
 import json
 import os
 import sys
+import subprocess
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
-
-from claude_agent_sdk import (
-    query,
-    ClaudeAgentOptions,
-    AssistantMessage,
-    TextBlock,
-    ToolUseBlock,
-)
 
 # Host API configuration (set by container environment)
 HOST_API_URL = os.environ.get("HOST_API_URL", "http://host.docker.internal:8888")
@@ -39,7 +32,7 @@ PROJECT_NAME = os.environ.get("PROJECT_NAME", "")
 CONTAINER_NUMBER = int(os.environ.get("CONTAINER_NUMBER", "1"))
 
 # Default model for coder/overseer agents
-DEFAULT_AGENT_MODEL = "glm-4-7"
+DEFAULT_AGENT_MODEL = "sonnet"
 
 # Config file path (relative to project directory)
 AGENT_CONFIG_FILE = "prompts/.agent_config.json"
@@ -51,7 +44,7 @@ AGENT_LOG_FILE = Path("/var/log/agent.log")
 def log_to_file(message: str) -> None:
     """Append message to agent log file for docker logs visibility."""
     try:
-        timestamp = datetime.utcnow().isoformat()
+        timestamp = datetime.now(timezone.utc).isoformat()
         with open(AGENT_LOG_FILE, "a") as f:
             f.write(f"[{timestamp}] {message}\n")
     except Exception:
@@ -73,12 +66,6 @@ def get_agent_model(project_dir: str) -> str:
     1. AGENT_MODEL environment variable (for initializer override)
     2. Project config file (prompts/.agent_config.json)
     3. DEFAULT_AGENT_MODEL fallback
-
-    Args:
-        project_dir: Path to project directory
-
-    Returns:
-        Model ID string (defaults to DEFAULT_AGENT_MODEL if not configured)
     """
     # Check for environment variable override (used by initializer)
     env_model = os.environ.get("AGENT_MODEL")
@@ -90,7 +77,7 @@ def get_agent_model(project_dir: str) -> str:
     if config_path.exists():
         try:
             config = json.loads(config_path.read_text())
-            model = config.get("agent_model", DEFAULT_AGENT_MODEL)
+            model = config.get("model", config.get("agent_model", DEFAULT_AGENT_MODEL))
             log(f"[CONFIG] Using model from config: {model}")
             return model
         except Exception as e:
@@ -99,18 +86,19 @@ def get_agent_model(project_dir: str) -> str:
         log(f"[CONFIG] No config file, using default model: {DEFAULT_AGENT_MODEL}")
     return DEFAULT_AGENT_MODEL
 
+
 # Set permissive umask so all files created are world-readable/writable
-# This ensures host user can access files created by container user
 os.umask(0o000)
 
 # State file for crash recovery (in project dir so host can read it)
-# Previous location (/home/coder/.agent_state.json) was inaccessible from host
-STATE_FILE = Path("/project/.agent_state.json")
+# Use environment variable for project dir or default to /home/user/project for E2B
+PROJECT_DIR = os.environ.get("PROJECT_DIR", "/home/user/project")
+STATE_FILE = Path(f"{PROJECT_DIR}/.agent_state.json")
 
 
 def save_state(state: dict) -> None:
     """Persist state for crash recovery."""
-    state["updated_at"] = datetime.utcnow().isoformat()
+    state["updated_at"] = datetime.now(timezone.utc).isoformat()
     STATE_FILE.write_text(json.dumps(state, indent=2))
 
 
@@ -185,6 +173,60 @@ def get_session_config() -> dict:
     return {}
 
 
+def run_claude_cli(prompt: str, project_dir: str, model: str) -> tuple[int, str]:
+    """
+    Run claude CLI directly via subprocess.
+
+    Args:
+        prompt: The instruction/prompt to send to Claude
+        project_dir: Working directory for the agent
+        model: Model to use (e.g., 'sonnet', 'opus')
+
+    Returns:
+        Tuple of (exit_code, output)
+    """
+    # Build the claude command
+    cmd = [
+        "claude",
+        "-p", prompt,
+        "--model", model,
+        "--allowedTools", "Bash,Read,Write,Edit,Glob,Grep,LS",
+        "--max-turns", "100",
+    ]
+
+    log(f"[CLI] Running claude with model: {model}")
+
+    try:
+        # Run claude and capture output
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            cwd=project_dir,
+            text=True,
+            bufsize=1,  # Line buffered
+        )
+
+        output_lines = []
+        if process.stdout:
+            for line in process.stdout:
+                log(line.rstrip())
+                output_lines.append(line)
+
+                # Check for graceful stop periodically
+                if check_graceful_stop(project_dir):
+                    log("[AGENT] Graceful stop requested, terminating...")
+                    process.terminate()
+                    return 129, "\n".join(output_lines)
+
+        process.wait()
+        return process.returncode, "\n".join(output_lines)
+
+    except Exception as e:
+        log(f"[ERROR] Failed to run claude CLI: {e}")
+        return 1, str(e)
+
+
 async def run_agent(prompt: str, project_dir: str, max_retries: int = 3) -> int:
     """
     Run agent with retry logic and error recovery.
@@ -214,13 +256,6 @@ async def run_agent(prompt: str, project_dir: str, max_retries: int = 3) -> int:
     # Get model from project config (can be changed at runtime)
     model = get_agent_model(project_dir)
 
-    options = ClaudeAgentOptions(
-        model=model,
-        cwd=project_dir,
-        permission_mode="bypassPermissions",
-        setting_sources=["project"],  # Load CLAUDE.md from project directory
-    )
-
     # Check for previous incomplete run
     prev_state = load_state()
     if prev_state and prev_state.get("status") == "in_progress":
@@ -229,8 +264,6 @@ async def run_agent(prompt: str, project_dir: str, max_retries: int = 3) -> int:
 
     attempt = 0
     last_error = None
-    message_count = 0
-    heartbeat_interval = 10  # Send heartbeat every 10 messages
 
     while attempt < max_retries:
         attempt += 1
@@ -239,50 +272,32 @@ async def run_agent(prompt: str, project_dir: str, max_retries: int = 3) -> int:
                 "status": "in_progress",
                 "attempt": attempt,
                 "prompt_length": len(prompt),
-                "started_at": datetime.utcnow().isoformat(),
+                "started_at": datetime.now(timezone.utc).isoformat(),
             })
 
             log(f"[AGENT] Starting attempt {attempt}/{max_retries}")
 
-            async for message in query(prompt=prompt, options=options):
-                message_count += 1
+            # Run claude CLI directly
+            exit_code, output = run_claude_cli(prompt, project_dir, model)
 
-                # Stream output to stdout (captured by docker logs)
-                # Use typed checks per SDK documentation
-                if isinstance(message, AssistantMessage):
-                    # Text content from assistant
-                    for block in message.content:
-                        if isinstance(block, TextBlock):
-                            log(block.text)
-                        elif isinstance(block, ToolUseBlock):
-                            # Tool use events - log for debugging
-                            log(f"[TOOL] Using: {block.name}")
-
-                # Periodic heartbeat to keep host updated
-                if message_count % heartbeat_interval == 0:
-                    heartbeat_response = send_heartbeat()
-                    if heartbeat_response.get("graceful_stop_requested"):
-                        log("[AGENT] Graceful stop requested via heartbeat")
-                        clear_state()
-                        return 129
-
-                # Check for graceful stop after processing each message
-                if check_graceful_stop(project_dir):
-                    log("[AGENT] Graceful stop requested, completing current session...")
-                    clear_state()
-                    return 129
-
-            # Success - clear state and exit
-            clear_state()
-            log("[AGENT] Completed successfully")
-            return 0
+            if exit_code == 0:
+                # Success - clear state and exit
+                clear_state()
+                log("[AGENT] Completed successfully")
+                return 0
+            elif exit_code == 129:
+                # Graceful stop
+                clear_state()
+                return 129
+            else:
+                raise RuntimeError(f"Claude CLI exited with code {exit_code}")
 
         except KeyboardInterrupt:
             log("[AGENT] Interrupted by user")
             save_state({
                 "status": "interrupted",
                 "attempt": attempt,
-                "interrupted_at": datetime.utcnow().isoformat(),
+                "interrupted_at": datetime.now(timezone.utc).isoformat(),
             })
             return 130
 
@@ -302,7 +317,7 @@ async def run_agent(prompt: str, project_dir: str, max_retries: int = 3) -> int:
                     "error": str(e),
                     "error_type": type(e).__name__,
                     "traceback": traceback.format_exc(),
-                    "failed_at": datetime.utcnow().isoformat(),
+                    "failed_at": datetime.now(timezone.utc).isoformat(),
                 })
 
     log(f"[AGENT] All {max_retries} attempts failed. Last error: {last_error}")
@@ -321,7 +336,7 @@ def main() -> int:
     log(f"[AGENT] Received prompt ({len(prompt)} chars)")
 
     # Run the agent
-    return asyncio.run(run_agent(prompt, "/project"))
+    return asyncio.run(run_agent(prompt, PROJECT_DIR))
 
 
 if __name__ == "__main__":
