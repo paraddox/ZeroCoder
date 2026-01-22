@@ -821,8 +821,16 @@ async def get_container_session(project_name: str, container_number: int):
             except Exception:
                 pass
 
+    # Init containers should only run if NO features exist yet (new project)
+    # Coding containers only continue if there are open features
+    if container_type == "init":
+        any_features = has_features(project_dir, project_name) if project_dir else False
+        should_continue = not any_features and not graceful_stop
+    else:
+        should_continue = open_features and not graceful_stop
+
     return {
-        "should_continue": open_features and not graceful_stop,
+        "should_continue": should_continue,
         "graceful_stop_requested": graceful_stop,
         "has_open_features": open_features,
         "config": config,

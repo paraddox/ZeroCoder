@@ -295,6 +295,7 @@ function App() {
           <div className="flex items-center justify-between">
             {/* Logo and Theme */}
             <div className="flex items-center gap-3">
+              <img src="/favicon.svg" alt="" className="w-7 h-7" />
               <h1 className="font-display text-xl font-medium tracking-tight text-[var(--color-text)]">
                 ZeroCoder
               </h1>
@@ -329,11 +330,13 @@ function App() {
       <main className="max-w-7xl mx-auto px-6 py-8">
         {!selectedProject ? (
           <div className="empty-state mt-12">
-            <h2 className="font-display text-2xl font-medium mb-3 text-[var(--color-text)]">
-              Welcome to ZeroCoder
-            </h2>
-            <p className="text-[var(--color-text-secondary)]">
-              Select a project from the dropdown above or create a new one to get started.
+            <img
+              src="/banner.png"
+              alt="ZeroCoder"
+              className="max-w-md mx-auto mb-8 rounded-lg"
+            />
+            <p className="text-[var(--color-text-secondary)] text-lg">
+              Select a project from the tabs above or create a new one to get started.
             </p>
           </div>
         ) : (
