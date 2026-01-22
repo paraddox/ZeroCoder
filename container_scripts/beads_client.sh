@@ -15,7 +15,7 @@
 #   ./beads_client.sh close <issue_id> [--reason "..."]
 #   ./beads_client.sh reopen <issue_id>
 #   ./beads_client.sh sync
-#   ./beads_client.sh comments <issue_id> --add "comment text"
+#   ./beads_client.sh comments add <issue_id> "comment text"
 #   ./beads_client.sh dep add <issue_id> <depends_on>
 #
 # Environment:
@@ -309,6 +309,13 @@ case "$CMD" in
         ;;
 
     comments)
+        SUBCMD="${1:-}"
+        if [ "$SUBCMD" != "add" ]; then
+            echo "Error: usage: beads_client comments add <issue_id> \"comment text\"" >&2
+            exit 1
+        fi
+        shift
+
         ISSUE_ID="${1:-}"
         if [ -z "$ISSUE_ID" ]; then
             echo "Error: issue_id required" >&2
@@ -316,23 +323,9 @@ case "$CMD" in
         fi
         shift
 
-        # Parse --add flag
-        COMMENT=""
-        while [[ $# -gt 0 ]]; do
-            case "$1" in
-                --add=*)
-                    COMMENT="${1#*=}"
-                    ;;
-                --add)
-                    COMMENT="$2"
-                    shift
-                    ;;
-            esac
-            shift
-        done
-
+        COMMENT="${1:-}"
         if [ -z "$COMMENT" ]; then
-            echo "Error: --add \"comment text\" required" >&2
+            echo "Error: comment text required" >&2
             exit 1
         fi
 
@@ -382,7 +375,7 @@ issues to different agents. No need for ready/update/sync.
   beads_client.sh update <issue_id> [--status in_progress] [--title "..."]
   beads_client.sh reopen <issue_id>
   beads_client.sh sync
-  beads_client.sh comments <issue_id> --add "comment text"
+  beads_client.sh comments add <issue_id> "comment text"
   beads_client.sh dep add <issue_id> <depends_on>
 
 Environment:

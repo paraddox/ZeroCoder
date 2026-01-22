@@ -34,7 +34,7 @@ Read the full description and implementation steps.
 
 **If implementation is unsatisfactory:**
 1. Add a comment explaining the issues found:
-   `beads_client comments {FEATURE_ID} --add "REVIEWER: [Your detailed reasons]"`
+   `beads_client comments add {FEATURE_ID} "REVIEWER: [Your detailed reasons]"`
 2. Reopen the issue:
    `beads_client reopen {FEATURE_ID}`
 3. Then exit

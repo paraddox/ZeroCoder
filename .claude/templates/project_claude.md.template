@@ -173,7 +173,7 @@ exit 0
 If you encounter a blocker:
 ```bash
 beads_client update "$FEATURE_ID" --status=blocked
-beads_client comments "$FEATURE_ID" --add "Blocked because: <reason>"
+beads_client comments add "$FEATURE_ID" "Blocked because: <reason>"
 ```
 
 Commit partial work and exit. agent_app will start a new session.
@@ -190,7 +190,7 @@ All commands route through the host API for coordination and atomic operations.
 | `beads_client list --status=in_progress` | List features being worked on |
 | `beads_client close <id>` | Mark feature as complete |
 | `beads_client stats` | Show progress statistics |
-| `beads_client comments <id> --add "..."` | Add a comment to a feature |
+| `beads_client comments add <id> "..."` | Add a comment to a feature |
 
 ## Project Guidelines
 

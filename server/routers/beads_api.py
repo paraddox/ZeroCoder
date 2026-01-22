@@ -448,7 +448,7 @@ async def add_comment(project_name: str, issue_id: str, body: CommentAdd):
     issue_id = validate_issue_id(issue_id)
 
     result = await run_beads_write_command(
-        project_name, ["comments", issue_id, "--add", body.comment]
+        project_name, ["comments", "add", issue_id, body.comment]
     )
 
     if "error" in result:

@@ -542,7 +542,7 @@ class BeadsManager:
         Returns:
             Result dict with success or error
         """
-        return await self.run_write_command(["comments", issue_id, "--add", comment])
+        return await self.run_write_command(["comments", "add", issue_id, comment])
 
     async def delete_issue(self, issue_id: str) -> dict[str, Any]:
         """

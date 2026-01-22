@@ -688,10 +688,7 @@ class TestAddCommentEndpoint:
 
         call_args = mock_cmd.call_args[0]
         args = call_args[1]
-        assert "comments" in args
-        assert "feat-1" in args
-        assert "--add" in args
-        assert "Test comment" in args
+        assert args == ["comments", "add", "feat-1", "Test comment"]
 
     @pytest.mark.asyncio
     @pytest.mark.unit

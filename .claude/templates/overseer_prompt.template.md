@@ -214,7 +214,7 @@ Implementation Required:
 beads_client reopen <bead_id>
 
 # Then add a comment with details
-beads_client comments <bead_id> --add "OVERSEER VERIFICATION FAILED
+beads_client comments add <bead_id> "OVERSEER VERIFICATION FAILED
 
 Issue: Implementation is incomplete/placeholder
 
