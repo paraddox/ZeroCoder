@@ -33,7 +33,7 @@ interface WebSocketState {
   containerUpdateCounter: number // Increments when container_update received
 }
 
-const MAX_LOGS = 500 // Keep last 500 log lines (full-screen viewer needs more capacity)
+const MAX_LOGS = 1000 // Keep last 1000 log lines (full-screen viewer needs more capacity)
 
 export function useWebSocket(projectName: string | null) {
   const [state, setState] = useState<WebSocketState>({

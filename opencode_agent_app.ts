@@ -339,7 +339,7 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
                 // Only log if we have substantial complete content (over 100 chars)
                 if (!props?.delta && part?.text && part.text.length > 100) {
                   // Extract first line as summary
-                  const firstLine = part.text.split('\n')[0].slice(0, 150);
+                  const firstLine = part.text.split('\n')[0].slice(0, 500);
                   log("THINKING", firstLine);
                 }
               }
@@ -348,7 +348,7 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
                 // Skip deltas - too noisy
                 // Only log complete text blocks
                 if (!props?.delta && part?.text && part.text.length > 20) {
-                  const firstLine = part.text.split('\n')[0].slice(0, 200);
+                  const firstLine = part.text.split('\n')[0].slice(0, 500);
                   log("TEXT", firstLine);
                 }
               }
@@ -370,7 +370,7 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
                 logTrace("tool.end", {
                   toolName,
                   toolId: part?.id,
-                  result: typeof result === "string" ? result.slice(0, 500) : result,
+                  result: typeof result === "string" ? result.slice(0, 2000) : result,
                 });
               }
               break;
@@ -405,7 +405,7 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
               logTrace("tool.end", {
                 toolName: props?.name || props?.toolName || "unknown",
                 toolId: props?.id || props?.toolCallId,
-                result: typeof props?.result === "string" ? props.result.slice(0, 500) : props?.result,
+                result: typeof props?.result === "string" ? props.result.slice(0, 2000) : props?.result,
               });
               break;
           }
