@@ -23,13 +23,23 @@ const EXIT_GRACEFUL_STOP = 129;
 const EXIT_INTERRUPTED = 130;
 const EXIT_CONTEXT_LIMIT = 131;  // Context limit reached - restart with fresh context
 
-// Context monitoring constants
-const CONTEXT_LIMIT_TOKENS = 200000;  // GLM-4.7 context window (200K)
-const EXIT_THRESHOLD = 0.70;          // Exit at 70% (~140K tokens)
+// Context monitoring constants (defaults, overridden by model config)
+let CONTEXT_LIMIT_TOKENS = 200000;  // Default: GLM-4.7 context window (200K)
+const EXIT_THRESHOLD = 0.70;          // Exit at 70%
 const CONTEXT_CHECK_INTERVAL_MS = 30000;  // Check every 30 seconds
 
 // Project directory (mounted in container)
 const PROJECT_DIR = "/project";
+
+// Agent config file (contains model selection)
+const AGENT_CONFIG_FILE = path.join(PROJECT_DIR, "prompts", ".agent_config.json");
+
+// Model configuration mapping: internal ID -> OpenCode provider/model string
+const MODEL_MAPPING: Record<string, { provider: string; contextLimit: number }> = {
+  "glm-4-7": { provider: "zai-coding-plan/glm-4.7", contextLimit: 200000 },
+  "minimax-m2-1": { provider: "minimax-coding-plan/MiniMax-M2.1", contextLimit: 1000000 },
+};
+const DEFAULT_MODEL = "glm-4-7";
 
 // Graceful stop flag file
 const GRACEFUL_STOP_FLAG = path.join(PROJECT_DIR, ".graceful_stop");
@@ -47,6 +57,49 @@ let apiFailureLogged = false;
 
 // State file for crash recovery (in project dir so host can read it)
 const STATE_FILE = path.join(PROJECT_DIR, ".agent_state.json");
+
+/**
+ * Read agent config to get the selected model
+ */
+function getAgentModel(): string {
+  try {
+    if (fs.existsSync(AGENT_CONFIG_FILE)) {
+      const config = JSON.parse(fs.readFileSync(AGENT_CONFIG_FILE, "utf8"));
+      return config.agent_model || DEFAULT_MODEL;
+    }
+  } catch (e) {
+    log("WARN", `Failed to read agent config: ${e}`);
+  }
+  return DEFAULT_MODEL;
+}
+
+/**
+ * Get model configuration (provider string and context limit)
+ */
+function getModelConfig(): { provider: string; contextLimit: number } {
+  const modelId = getAgentModel();
+  const config = MODEL_MAPPING[modelId] || MODEL_MAPPING[DEFAULT_MODEL];
+  log("CONFIG", `Using model: ${modelId} (${config.provider})`);
+  return config;
+}
+
+/**
+ * Update the OpenCode config file with the selected model
+ */
+function updateOpencodeConfig(provider: string): void {
+  const configPath = "/home/coder/.config/opencode/config.json";
+  try {
+    if (fs.existsSync(configPath)) {
+      const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      const oldModel = config.model;
+      config.model = provider;
+      fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+      log("CONFIG", `Updated OpenCode model: ${oldModel} -> ${provider}`);
+    }
+  } catch (e) {
+    log("WARN", `Failed to update OpenCode config: ${e}`);
+  }
+}
 
 /**
  * Save state for crash recovery (mirrors agent_app.py behavior)
@@ -207,6 +260,14 @@ function logTrace(
 async function runAgent(prompt: string, agentType: string): Promise<number> {
   log("AGENT", `Starting OpenCode agent: ${agentType}`);
   log("AGENT", `Prompt length: ${prompt.length} chars`);
+
+  // Get model configuration and update context limit
+  const modelConfig = getModelConfig();
+  CONTEXT_LIMIT_TOKENS = modelConfig.contextLimit;
+  log("AGENT", `Context limit: ${(CONTEXT_LIMIT_TOKENS / 1000).toFixed(0)}K tokens`);
+
+  // Update OpenCode config with the selected model
+  updateOpencodeConfig(modelConfig.provider);
 
   let opencode: { client: any; server: { url: string; close(): void } } | null = null;
   let eventStream: { cancel: () => void } | null = null;

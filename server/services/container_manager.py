@@ -394,7 +394,7 @@ class ContainerManager:
     def _is_opencode_model(self) -> bool:
         """Check if the current model requires OpenCode SDK."""
         model = self._get_agent_model()
-        return model == "glm-4-7"
+        return model in ("glm-4-7", "minimax-m2-1")
 
     @property
     def status(self) -> Literal["not_created", "running", "stopped", "completed"]:
@@ -1087,6 +1087,10 @@ class ContainerManager:
                 zhipu_key = os.getenv("ZHIPU_API_KEY")
                 if zhipu_key:
                     cmd.extend(["-e", f"ZHIPU_API_KEY={zhipu_key}"])
+                # Pass MiniMax API key for OpenCode SDK (MiniMax-M2.1 model)
+                minimax_key = os.getenv("MINIMAX_API_KEY")
+                if minimax_key:
+                    cmd.extend(["-e", f"MINIMAX_API_KEY={minimax_key}"])
                 # Pass project name and host API URL for beads_client.sh
                 cmd.extend(["-e", f"PROJECT_NAME={self.project_name}"])
                 cmd.extend(["-e", f"CONTAINER_NUMBER={self.container_number}"])
@@ -2068,6 +2072,10 @@ class ContainerManager:
                 zhipu_key = os.getenv("ZHIPU_API_KEY")
                 if zhipu_key:
                     cmd.extend(["-e", f"ZHIPU_API_KEY={zhipu_key}"])
+                # Pass MiniMax API key for OpenCode SDK (MiniMax-M2.1 model)
+                minimax_key = os.getenv("MINIMAX_API_KEY")
+                if minimax_key:
+                    cmd.extend(["-e", f"MINIMAX_API_KEY={minimax_key}"])
                 # Pass project name and host API URL for beads_client.sh
                 cmd.extend(["-e", f"PROJECT_NAME={self.project_name}"])
                 cmd.extend(["-e", f"CONTAINER_NUMBER={self.container_number}"])

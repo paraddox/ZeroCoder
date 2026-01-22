@@ -656,7 +656,7 @@ async def update_project_settings(name: str, settings: ProjectSettingsUpdate):
         raise HTTPException(status_code=404, detail="Project directory not found")
 
     # Validate the model ID
-    valid_models = ["claude-opus-4-5-20251101", "claude-sonnet-4-5-20250514", "glm-4-7"]
+    valid_models = ["claude-opus-4-5-20251101", "claude-sonnet-4-5-20250514", "glm-4-7", "minimax-m2-1"]
     if settings.agent_model not in valid_models:
         raise HTTPException(
             status_code=400,

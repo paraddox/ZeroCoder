@@ -13,6 +13,19 @@
           }
         }
       }
+    },
+    "minimax-coding-plan": {
+      "models": {
+        "MiniMax-M2.1": {
+          "options": {
+            "thinking": {
+              "type": "enabled",
+              "budget_tokens": 32000,
+              "clear_thinking": false
+            }
+          }
+        }
+      }
     }
   },
   "permission": {
@@ -42,6 +55,18 @@
       "oauth": false,
       "headers": {
         "Authorization": "Bearer {env:ZHIPU_API_KEY}"
+      },
+      "enabled": true,
+      "timeout": 30000
+    },
+    "minimax": {
+      "type": "local",
+      "command": ["uvx", "minimax-coding-plan-mcp"],
+      "environment": {
+        "MINIMAX_API_KEY": "{env:MINIMAX_API_KEY}",
+        "MINIMAX_MCP_BASE_PATH": "/tmp/minimax-output",
+        "MINIMAX_API_HOST": "https://api.minimax.io",
+        "MINIMAX_API_RESOURCE_MODE": "url"
       },
       "enabled": true,
       "timeout": 30000

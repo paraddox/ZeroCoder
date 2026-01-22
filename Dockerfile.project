@@ -64,6 +64,9 @@ RUN npm install -g @anthropic-ai/claude-code
 # Install Claude Agent SDK and dependencies
 RUN pip install --no-cache-dir claude-agent-sdk requests
 
+# Install uv for uvx command (needed for MiniMax MCP server)
+RUN pip install --no-cache-dir uv
+
 # =============================================================================
 # SSH Key Setup (BuildKit secret)
 # =============================================================================
