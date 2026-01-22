@@ -215,6 +215,31 @@ This is your main job. Work through the tasks in IMPLEMENTATION_PLAN.md:
 - Document the blocker in IMPLEMENTATION_PLAN.md
 - Commit WIP, keep feature `in_progress`, exit (see Step 8 error path)
 
+#### Using Context7 for Package Documentation
+
+When working with external packages or libraries, use the Context7 MCP to get accurate, up-to-date documentation:
+
+1. **Resolve the library first:**
+   ```
+   mcp__context7__resolve-library-id(libraryName: "react", query: "how to use hooks")
+   ```
+
+2. **Then query the docs:**
+   ```
+   mcp__context7__query-docs(libraryId: "/facebook/react", query: "useEffect cleanup")
+   ```
+
+**When to use Context7:**
+- Implementing features with unfamiliar libraries
+- Checking correct API usage patterns
+- Finding configuration options
+- Looking up best practices
+
+**Benefits over web search:**
+- Faster (no browser needed)
+- More accurate (curated documentation)
+- Stays in your context window
+
 ---
 
 ### STEP 6: VALIDATION GATE (MANDATORY - BLOCKS CLOSE)

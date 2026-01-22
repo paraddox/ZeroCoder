@@ -58,8 +58,9 @@ The system uses per-project Docker containers for isolated development:
 
 ```bash
 # Build the project container image (with SSH key for git clone)
+# SSH key path can be configured via GIT_SSH_KEY_PATH in .env file
 DOCKER_BUILDKIT=1 docker build \
-  --secret id=ssh_key,src=$HOME/.ssh/id_ed25519 \
+  --secret id=ssh_key,src=${GIT_SSH_KEY_PATH:-$HOME/.ssh/id_ed25519} \
   -f Dockerfile.project -t zerocoder-project .
 
 # Run the test suite (builds, tests containers, cleans up)
@@ -70,7 +71,7 @@ DOCKER_BUILDKIT=1 docker build \
 - Host runs FastAPI server + React UI (project management, progress monitoring)
 - Each project gets its own Docker container with Claude Code + beads CLI
 - Containers are fully standalone - they clone the repo at runtime (no volume mounts)
-- SSH key is baked into the image at build time using BuildKit secrets
+- SSH key is baked into the image at build time using BuildKit secrets (configure path via `GIT_SSH_KEY_PATH` in `.env`)
 - Multiple containers can run simultaneously for different projects
 - 60-second staggered startup between containers to allow git clone
 

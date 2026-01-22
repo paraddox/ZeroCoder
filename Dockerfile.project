@@ -61,6 +61,9 @@ RUN useradd --uid 1001 -m coder \
 # Install Claude Code CLI globally (required by Agent SDK)
 RUN npm install -g @anthropic-ai/claude-code
 
+# Add Context7 MCP for documentation lookup (available to Claude agents)
+RUN claude mcp add context7 -- npx -y @upstash/context7-mcp
+
 # Install Claude Agent SDK and dependencies
 RUN pip install --no-cache-dir claude-agent-sdk requests
 
