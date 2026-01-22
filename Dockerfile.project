@@ -61,8 +61,8 @@ RUN useradd --uid 1001 -m coder \
 # Install Claude Code CLI globally (required by Agent SDK)
 RUN npm install -g @anthropic-ai/claude-code
 
-# Install Claude Agent SDK
-RUN pip install --no-cache-dir claude-agent-sdk
+# Install Claude Agent SDK and dependencies
+RUN pip install --no-cache-dir claude-agent-sdk requests
 
 # =============================================================================
 # SSH Key Setup (BuildKit secret)
@@ -182,6 +182,10 @@ if [ -f /etc/timezone ]; then
     export TZ=\$(cat /etc/timezone)
 fi
 
+# Limit Bun/Node heap to prevent OOM crashes (container has 4GB limit)
+export NODE_OPTIONS="--max-old-space-size=3072"
+export BUN_JSC_forceRAMSize="3221225472"  # 3GB in bytes
+
 # Set fully permissive umask so ALL new files are world readable/writable
 # This ensures both host user and container user can access files
 # 000 = files 666, dirs 777
@@ -211,6 +215,14 @@ echo "[$(date -Iseconds)] Cloning \$GIT_REMOTE_URL (branch: main)..." >> /var/lo
 # Clone as coder user (always clone main branch)
 if [ -d "/project/.git" ] || [ -f "/project/.git" ]; then
     echo "[$(date -Iseconds)] Project already exists, pulling latest..." >> /var/log/agent.log
+    # Clean up stale git lock files (from crashed git operations)
+    if [ -f "/project/.git/index.lock" ] || [ -f "/project/.git/HEAD.lock" ] || [ -f "/project/.git/config.lock" ]; then
+        echo "[$(date -Iseconds)] Cleaning stale git locks..." >> /var/log/agent.log
+        rm -f /project/.git/index.lock
+        rm -f /project/.git/HEAD.lock
+        rm -f /project/.git/config.lock
+        find /project/.git/refs -name "*.lock" -delete 2>/dev/null || true
+    fi
     su - coder -c "cd /project && git fetch origin && git reset --hard origin/main"
 else
     # Clone into temp dir first, then move contents (can't clone into non-empty /project)

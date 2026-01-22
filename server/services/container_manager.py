@@ -1066,6 +1066,9 @@ class ContainerManager:
                     "--name", self.container_name,
                     # Enable host.docker.internal on Linux (works natively on Mac/Windows)
                     "--add-host", "host.docker.internal:host-gateway",
+                    # Memory limits to prevent OOM crashes (agents can use 1GB+ RSS)
+                    "--memory", "4g",
+                    "--memory-swap", "4g",
                 ]
                 # Pass git URL for container to clone (always clones main branch)
                 cmd.extend(["-e", f"GIT_REMOTE_URL={self.git_url}"])
@@ -1724,7 +1727,8 @@ class ContainerManager:
         Restart the agent inside the container.
 
         This stops and restarts the container, then sends the coding prompt
-        to restart Claude Code.
+        to restart Claude Code. If restart fails (e.g., due to git issues),
+        falls back to removing and recreating the container.
 
         Returns:
             Tuple of (success, message)
@@ -1758,8 +1762,26 @@ class ContainerManager:
             # Use project's configured model (not forced Claude SDK)
             self._force_claude_sdk = False
 
-            # Start container with instruction
-            return await self.start(instruction)
+            # First attempt: normal restart (stop + start)
+            success, message = await self.start(instruction)
+
+            if success:
+                return success, message
+
+            # Fallback: if start failed (likely git issues), remove and recreate container
+            logger.warning(
+                f"{self.container_name}: Restart failed ({message}), "
+                "attempting full container recreation"
+            )
+            await self.remove()
+            success, message = await self.start(instruction)
+
+            if not success:
+                logger.error(
+                    f"{self.container_name}: Container recreation also failed: {message}"
+                )
+
+            return success, message
         finally:
             self._restarting = False
 
@@ -2025,6 +2047,9 @@ class ContainerManager:
                     "--name", self.container_name,
                     # Enable host.docker.internal on Linux (works natively on Mac/Windows)
                     "--add-host", "host.docker.internal:host-gateway",
+                    # Memory limits to prevent OOM crashes (agents can use 1GB+ RSS)
+                    "--memory", "4g",
+                    "--memory-swap", "4g",
                 ]
                 # Pass git URL for container to clone (always clones main branch)
                 cmd.extend(["-e", f"GIT_REMOTE_URL={self.git_url}"])

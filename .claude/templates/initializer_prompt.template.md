@@ -13,11 +13,13 @@ Read `prompts/app_spec.txt` carefully before proceeding.
 
 ---
 
-## REQUIRED FEATURE COUNT
+## FEATURE COUNT GUIDANCE
 
-**CRITICAL:** Create exactly **[FEATURE_COUNT]** features using `beads_client create`.
+Create as many features as needed to **fully cover** the specification document.
 
-This number was determined during spec creation. Do not create more or fewer.
+- Cover all functionality described in the spec
+- Don't exaggerate or pad with unnecessary features
+- Quality over quantity - each feature should be meaningful and testable
 
 ---
 

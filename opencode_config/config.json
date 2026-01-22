@@ -33,7 +33,8 @@
         "Z_AI_API_KEY": "{env:ZHIPU_API_KEY}",
         "Z_AI_MODE": "ZAI"
       },
-      "enabled": true
+      "enabled": true,
+      "timeout": 30000
     },
     "zread": {
       "type": "remote",
@@ -42,7 +43,8 @@
       "headers": {
         "Authorization": "Bearer {env:ZHIPU_API_KEY}"
       },
-      "enabled": true
+      "enabled": true,
+      "timeout": 30000
     }
   }
 }
