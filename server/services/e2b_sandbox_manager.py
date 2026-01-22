@@ -247,6 +247,35 @@ class E2BSandboxManager:
         # Check if idle time exceeds stuck timeout (10 minutes)
         return self.get_idle_seconds() > 600  # AGENT_STUCK_TIMEOUT_SECONDS
 
+    def _get_agent_model(self) -> str:
+        """
+        Get the agent model from forced setting or project config.
+
+        Returns:
+            Model ID string (e.g., 'sonnet', 'opus', 'glm-4-7')
+        """
+        # Check for forced model (set via API or overseer)
+        if self._forced_model:
+            return self._forced_model
+
+        # Read from project config file
+        config_path = self.project_dir / "prompts" / ".agent_config.json"
+        if config_path.exists():
+            try:
+                import json
+                config = json.loads(config_path.read_text())
+                return config.get("model", config.get("agent_model", "sonnet"))
+            except Exception as e:
+                logger.warning(f"Failed to read agent config: {e}")
+
+        return "sonnet"  # Default
+
+    def _is_opencode_model(self) -> bool:
+        """Check if the configured model requires OpenCode SDK."""
+        model = self._get_agent_model()
+        # GLM-4.7 and other non-Claude models use OpenCode
+        return model in ("glm-4-7", "glm-4.7", "glm4")
+
     def register_output_callback(self, callback: Callable[[str], Awaitable[None]]) -> None:
         """Register callback for output streaming."""
         with self._callbacks_lock:
@@ -463,6 +492,60 @@ class E2BSandboxManager:
             await self._sandbox.commands.run(
                 f"echo 'export PATH={npm_prefix}/bin:$PATH' >> {home_dir}/.bashrc"
             )
+
+            # Upload and compile OpenCode agent if using OpenCode model
+            if self._is_opencode_model() and not self._force_claude_sdk:
+                await self._broadcast_output("[System] Setting up OpenCode agent...")
+
+                # Upload OpenCode agent TypeScript file
+                opencode_ts_path = E2B_TEMPLATE_DIR / "opencode_agent_app.ts"
+                if opencode_ts_path.exists():
+                    opencode_content = opencode_ts_path.read_text()
+                    await self._sandbox.files.write(f"{app_dir}/opencode_agent_app.ts", opencode_content)
+
+                # Upload package.json and tsconfig.json
+                package_json_path = E2B_TEMPLATE_DIR / "package.json"
+                tsconfig_path = E2B_TEMPLATE_DIR / "tsconfig.json"
+                if package_json_path.exists():
+                    await self._sandbox.files.write(f"{app_dir}/package.json", package_json_path.read_text())
+                if tsconfig_path.exists():
+                    await self._sandbox.files.write(f"{app_dir}/tsconfig.json", tsconfig_path.read_text())
+
+                # Upload OpenCode config
+                opencode_config_dir = E2B_TEMPLATE_DIR / "opencode_config"
+                if opencode_config_dir.exists():
+                    await self._sandbox.commands.run(f"mkdir -p {app_dir}/opencode_config/agent")
+                    config_json_path = opencode_config_dir / "config.json"
+                    if config_json_path.exists():
+                        await self._sandbox.files.write(
+                            f"{app_dir}/opencode_config/config.json",
+                            config_json_path.read_text()
+                        )
+                    agent_dir = opencode_config_dir / "agent"
+                    if agent_dir.exists():
+                        for f in agent_dir.iterdir():
+                            if f.is_file():
+                                await self._sandbox.files.write(
+                                    f"{app_dir}/opencode_config/agent/{f.name}",
+                                    f.read_text()
+                                )
+
+                # Install npm dependencies and compile TypeScript
+                install_opencode = await self._sandbox.commands.run(
+                    f"cd {app_dir} && npm install --quiet",
+                    timeout=120,
+                )
+                if install_opencode.exit_code != 0:
+                    logger.warning(f"OpenCode npm install warning: {install_opencode.stderr}")
+
+                compile_result = await self._sandbox.commands.run(
+                    f"cd {app_dir} && npx tsc",
+                    timeout=60,
+                )
+                if compile_result.exit_code != 0:
+                    logger.warning(f"TypeScript compile warning: {compile_result.stderr}")
+                else:
+                    logger.info("OpenCode agent compiled successfully")
 
             await self._broadcast_output("[System] Environment prepared")
             return True, "Environment prepared"
@@ -912,9 +995,18 @@ class E2BSandboxManager:
             # Start agent in background with PATH including npm-global bin
             npm_bin = f"{home_dir}/.npm-global/bin"
 
+            # Determine which agent to use
+            use_opencode = self._is_opencode_model() and not self._force_claude_sdk
+            sdk_name = "OpenCode SDK" if use_opencode else "Claude CLI"
+            logger.info(f"Using {sdk_name} for agent (model: {self._get_agent_model()})")
+
             # Build environment with PATH and credentials
             agent_envs = {
                 "PATH": f"{npm_bin}:/usr/local/bin:/usr/bin:/bin",
+                "PROJECT_DIR": project_dir,
+                "PROJECT_NAME": self.project_name,
+                "CONTAINER_NUMBER": str(self.container_number),
+                "HOST_API_URL": HOST_API_URL,
             }
             if ANTHROPIC_API_KEY:
                 agent_envs["ANTHROPIC_API_KEY"] = ANTHROPIC_API_KEY
@@ -923,13 +1015,38 @@ class E2BSandboxManager:
             if oauth_token:
                 agent_envs["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
                 logger.info(f"Passing CLAUDE_CODE_OAUTH_TOKEN to agent (length: {len(oauth_token)}, starts with: {oauth_token[:15]}...)")
+            if ZHIPU_API_KEY:
+                agent_envs["ZHIPU_API_KEY"] = ZHIPU_API_KEY
+                logger.info(f"Passing ZHIPU_API_KEY to agent (length: {len(ZHIPU_API_KEY)})")
 
             # Create a wrapper script to ensure PATH and env vars are properly set
-            wrapper_script = f"""#!/bin/bash
+            if use_opencode:
+                # OpenCode agent (Node.js)
+                agent_type = "init" if self._is_init_container else self._current_agent_type
+                wrapper_script = f"""#!/bin/bash
+export PATH={npm_bin}:$PATH
+export ZHIPU_API_KEY="${{ZHIPU_API_KEY}}"
+export HOME={home_dir}
+export PROJECT_DIR={project_dir}
+export PROJECT_NAME={self.project_name}
+export CONTAINER_NUMBER={self.container_number}
+export HOST_API_URL={HOST_API_URL}
+export OPENCODE_AGENT_TYPE={agent_type}
+export OPENCODE_CONFIG_PATH={app_dir}/opencode_config
+cd {project_dir}
+node {app_dir}/dist/opencode_agent_app.js
+"""
+            else:
+                # Claude agent (Python)
+                wrapper_script = f"""#!/bin/bash
 export PATH={npm_bin}:$PATH
 export CLAUDE_CODE_OAUTH_TOKEN="${{CLAUDE_CODE_OAUTH_TOKEN}}"
 export ANTHROPIC_API_KEY="${{ANTHROPIC_API_KEY}}"
 export HOME={home_dir}
+export PROJECT_DIR={project_dir}
+export PROJECT_NAME={self.project_name}
+export CONTAINER_NUMBER={self.container_number}
+export HOST_API_URL={HOST_API_URL}
 cd {project_dir}
 python {app_dir}/agent_app.py
 """
