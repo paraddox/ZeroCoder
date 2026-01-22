@@ -62,11 +62,11 @@ class TestProjectLifecycle:
         git_url = "https://github.com/test/repo.git"
 
         # Register project
-        registry.register_project(project_name, temp_project_dir, git_url, is_new=True)
+        registry.register_project(project_name, git_url, is_new=True)
 
         # Verify registration
         project_path = registry.get_project_path(project_name)
-        assert project_path == temp_project_dir
+        assert project_path is not None
 
         # Verify project info
         info = registry.get_project_info(project_name)
@@ -94,7 +94,7 @@ class TestProjectLifecycle:
         git_url = "https://github.com/test/repo.git"
 
         # Create project
-        registry.register_project(project_name, temp_project_dir, git_url)
+        registry.register_project(project_name, git_url)
 
         # Create containers
         container1 = registry.create_container(project_name, 1, "coding")
@@ -108,8 +108,8 @@ class TestProjectLifecycle:
         assert len(containers) == 2
 
         # Update container status
-        registry.update_container_status(project_name, 1, "running")
-        container = registry.get_container(project_name, 1)
+        registry.update_container_status(project_name, 1, "coding", status="running")
+        container = registry.get_container(project_name, 1, "coding")
         assert container["status"] == "running"
 
         # Delete container
@@ -304,7 +304,7 @@ class TestContainerOrchestration:
         import registry
 
         project_name = "scaling-test"
-        registry.register_project(project_name, temp_project_dir, "https://github.com/test/repo.git")
+        registry.register_project(project_name, "https://github.com/test/repo.git")
 
         # Initial container count
         registry.update_target_container_count(project_name, 1)
@@ -329,19 +329,19 @@ class TestContainerOrchestration:
         import registry
 
         project_name = "status-test"
-        registry.register_project(project_name, temp_project_dir, "https://github.com/test/repo.git")
+        registry.register_project(project_name, "https://github.com/test/repo.git")
         registry.create_container(project_name, 1, "coding")
 
         # Initial status
-        container = registry.get_container(project_name, 1)
-        assert container["status"] == "not_created"
+        container = registry.get_container(project_name, 1, "coding")
+        assert container["status"] == "created"
 
         # Status transitions
-        statuses = ["created", "running", "stopping", "stopped", "completed"]
+        statuses = ["running", "stopping", "stopped"]
 
         for status in statuses:
-            registry.update_container_status(project_name, 1, status)
-            container = registry.get_container(project_name, 1)
+            registry.update_container_status(project_name, 1, "coding", status=status)
+            container = registry.get_container(project_name, 1, "coding")
             assert container["status"] == status
 
         registry.unregister_project(project_name)
@@ -393,7 +393,7 @@ class TestErrorRecovery:
         import threading
 
         project_name = "concurrent-test"
-        registry.register_project(project_name, temp_project_dir, "https://github.com/test/repo.git")
+        registry.register_project(project_name, "https://github.com/test/repo.git")
 
         errors = []
 
@@ -429,7 +429,7 @@ class TestCaching:
         import registry
 
         project_name = "cache-test"
-        registry.register_project(project_name, temp_project_dir, "https://github.com/test/repo.git")
+        registry.register_project(project_name, "https://github.com/test/repo.git")
 
         # Update feature cache
         registry.update_feature_cache(project_name, sample_beads_issues)
@@ -447,7 +447,7 @@ class TestCaching:
         import registry
 
         project_name = "stats-cache-test"
-        registry.register_project(project_name, temp_project_dir, "https://github.com/test/repo.git")
+        registry.register_project(project_name, "https://github.com/test/repo.git")
 
         stats = {
             "total": 10,

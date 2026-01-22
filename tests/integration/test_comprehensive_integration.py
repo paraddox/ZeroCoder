@@ -168,6 +168,10 @@ class TestContainerManagementIntegration:
 
                     # Notify status
                     manager._notify_status_change("running")
+
+                    # Give event loop time to process async tasks
+                    await asyncio.sleep(0.05)
+
                     status_callback.assert_called_with("running")
 
                     # Clear manager
@@ -621,6 +625,9 @@ class TestErrorRecoveryIntegration:
 
         # Should not raise and success callback should be called
         manager._notify_status_change("running")
+
+        # Give event loop time to process async tasks
+        await asyncio.sleep(0.05)
 
         fail_callback.assert_called_once()
         success_callback.assert_called_once()

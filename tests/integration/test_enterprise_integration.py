@@ -323,6 +323,9 @@ class TestContainerManagerIntegration:
         manager._notify_status_change("running")
         manager._notify_status_change("stopped")
 
+        # Give event loop time to process async tasks
+        await asyncio.sleep(0.05)
+
         # Simulate output
         await manager._broadcast_output("Line 1")
         await manager._broadcast_output("Line 2")

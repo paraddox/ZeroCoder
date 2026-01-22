@@ -223,6 +223,9 @@ class TestMultiContainerOrchestration:
                     for manager in managers:
                         manager._notify_status_change("running")
 
+                    # Give event loop time to process async tasks
+                    await asyncio.sleep(0.05)
+
                     # Verify each callback was called
                     for callback in callbacks:
                         callback.assert_called_once_with("running")
@@ -456,6 +459,9 @@ class TestErrorRecovery:
 
         # Should not raise and successful should be called
         manager._notify_status_change("running")
+
+        # Give event loop time to process async tasks
+        await asyncio.sleep(0.05)
 
         successful.assert_called_once_with("running")
 

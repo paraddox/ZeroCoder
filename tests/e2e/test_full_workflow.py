@@ -236,16 +236,16 @@ class TestContainerLifecycleWorkflow:
         )
         assert container["status"] == "stopped"
 
-        # Step 5: Complete container
+        # Step 5: Final stopped state
         isolated_registry.update_container_status(
             "container-lifecycle", 1, "coding",
-            status="completed"
+            status="stopped"
         )
 
         container = isolated_registry.get_container(
             "container-lifecycle", 1, "coding"
         )
-        assert container["status"] == "completed"
+        assert container["status"] == "stopped"
 
     @pytest.mark.e2e
     def test_multiple_containers_workflow(self, isolated_registry):

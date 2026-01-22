@@ -646,7 +646,6 @@ class TestParallelContainersE2E:
     def test_parallel_container_execution(self, parallel_setup):
         """Test parallel container execution simulation."""
         registry, project_dir = parallel_setup
-        from progress import count_passing_tests
 
         beads_dir = project_dir / ".beads"
         beads_dir.mkdir()
@@ -698,8 +697,12 @@ class TestParallelContainersE2E:
                 features[feat_idx + 1]["status"] = "closed"
                 update_features()
 
-        # All features should be done
-        passing, _, total = count_passing_tests(project_dir)
+        # All features should be done - verify directly from file
+        # (count_passing_tests requires DB cache which isn't set up in tests)
+        issues_file = beads_dir / "issues.jsonl"
+        with open(issues_file) as f:
+            all_features = [json.loads(line) for line in f if line.strip()]
+        passing = sum(1 for feat in all_features if feat.get("status") == "closed")
         assert passing == 10
 
 
