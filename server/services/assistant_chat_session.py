@@ -8,6 +8,7 @@ The assistant can:
 - Manage issues/features via the issue-manager MCP server
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -153,6 +154,47 @@ class AssistantChatSession:
                 self._client_entered = False
                 self.client = None
 
+        # Sync beads issues to git after session ends
+        try:
+            # Export DB to JSONL
+            proc = await asyncio.create_subprocess_exec(
+                "bd", "--no-daemon", "sync",
+                cwd=str(self.project_dir),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await asyncio.wait_for(proc.communicate(), timeout=30)
+
+            # Check if issues.jsonl has changes
+            proc = await asyncio.create_subprocess_exec(
+                "git", "diff", "--quiet", ".beads/issues.jsonl",
+                cwd=str(self.project_dir),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await asyncio.wait_for(proc.communicate(), timeout=10)
+
+            if proc.returncode != 0:  # has changes
+                for cmd in [
+                    ["git", "add", ".beads/issues.jsonl"],
+                    ["git", "commit", "-m", "chore: sync beads issues from assistant"],
+                    ["git", "push"],
+                ]:
+                    proc = await asyncio.create_subprocess_exec(
+                        *cmd,
+                        cwd=str(self.project_dir),
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    await asyncio.wait_for(proc.communicate(), timeout=30)
+                    if proc.returncode != 0:
+                        break
+                logger.info(f"Beads issues synced and pushed for {self.project_name}")
+            else:
+                logger.debug(f"No beads changes to sync for {self.project_name}")
+        except Exception as e:
+            logger.warning(f"Beads sync error for {self.project_name}: {e}")
+
     async def start(self) -> AsyncGenerator[dict, None]:
         """
         Initialize session with the Claude client.
@@ -165,6 +207,22 @@ class AssistantChatSession:
             conv = create_conversation(self.project_dir, self.project_name)
             self.conversation_id = conv.id
             yield {"type": "conversation_created", "conversation_id": self.conversation_id}
+
+        # Pull latest changes before starting assistant
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "pull", "--ff-only",
+                cwd=str(self.project_dir),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+            if proc.returncode == 0:
+                logger.info(f"Git pull succeeded for {self.project_name}")
+            else:
+                logger.warning(f"Git pull failed for {self.project_name}: {stderr.decode()}")
+        except Exception as e:
+            logger.warning(f"Git pull error for {self.project_name}: {e}")
 
         # Build permissions list for read-only access + issue management
         permissions_list = [
