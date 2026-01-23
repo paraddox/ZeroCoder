@@ -447,8 +447,15 @@ class TestConstantsAndConfiguration:
         assert "Bash" not in READONLY_BUILTIN_TOOLS
 
     @pytest.mark.unit
-    def test_issue_creator_mcp_tool(self):
-        """Test issue creator MCP tool name is correct."""
-        from server.services.assistant_chat_session import ISSUE_CREATOR_MCP_TOOL
+    def test_issue_manager_mcp_tools(self):
+        """Test issue manager MCP tool names are correct."""
+        from server.services.assistant_chat_session import ISSUE_MANAGER_MCP_TOOLS
 
-        assert ISSUE_CREATOR_MCP_TOOL == "mcp__issue-creator__create_issue"
+        assert "mcp__issue-manager__list_issues" in ISSUE_MANAGER_MCP_TOOLS
+        assert "mcp__issue-manager__create_issue" in ISSUE_MANAGER_MCP_TOOLS
+        assert "mcp__issue-manager__update_issue" in ISSUE_MANAGER_MCP_TOOLS
+        assert "mcp__issue-manager__close_issue" in ISSUE_MANAGER_MCP_TOOLS
+        assert "mcp__issue-manager__reopen_issue" in ISSUE_MANAGER_MCP_TOOLS
+        assert "mcp__issue-manager__delete_issue" in ISSUE_MANAGER_MCP_TOOLS
+        assert "mcp__issue-manager__add_dependency" in ISSUE_MANAGER_MCP_TOOLS
+        assert len(ISSUE_MANAGER_MCP_TOOLS) == 7

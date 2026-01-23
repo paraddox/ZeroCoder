@@ -5,7 +5,7 @@ Assistant Chat Session
 Manages conversational assistant sessions for projects.
 The assistant can:
 - Answer questions about the codebase and features (read-only)
-- Create new issues/features via the issue-creator MCP server
+- Manage issues/features via the issue-manager MCP server
 """
 
 import json
@@ -45,8 +45,16 @@ READONLY_BUILTIN_TOOLS = [
     "WebSearch",
 ]
 
-# Issue creation MCP tool - routes through container like frontend
-ISSUE_CREATOR_MCP_TOOL = "mcp__issue-creator__create_issue"
+# Issue management MCP tools - uses BeadsManager for local project directory
+ISSUE_MANAGER_MCP_TOOLS = [
+    "mcp__issue-manager__list_issues",
+    "mcp__issue-manager__create_issue",
+    "mcp__issue-manager__update_issue",
+    "mcp__issue-manager__close_issue",
+    "mcp__issue-manager__reopen_issue",
+    "mcp__issue-manager__delete_issue",
+    "mcp__issue-manager__add_dependency",
+]
 
 
 def _get_app_spec_context(project_dir: Path) -> str:
@@ -158,14 +166,14 @@ class AssistantChatSession:
             self.conversation_id = conv.id
             yield {"type": "conversation_created", "conversation_id": self.conversation_id}
 
-        # Build permissions list for read-only access + issue creation
+        # Build permissions list for read-only access + issue management
         permissions_list = [
             "Read(./**)",
             "Glob(./**)",
             "Grep(./**)",
             "WebFetch",
             "WebSearch",
-            ISSUE_CREATOR_MCP_TOOL,
+            *ISSUE_MANAGER_MCP_TOOLS,
         ]
 
         # Create security settings file
@@ -180,15 +188,14 @@ class AssistantChatSession:
         with open(settings_file, "w") as f:
             json.dump(security_settings, f, indent=2)
 
-        # Build MCP servers config - issue creator for feature creation
+        # Build MCP servers config - issue manager for feature management
         mcp_servers = {
-            "issue-creator": {
+            "issue-manager": {
                 "command": sys.executable,
                 "args": ["-m", "mcp_server.issue_creator_mcp"],
                 "env": {
                     **os.environ,
                     "PROJECT_NAME": self.project_name,
-                    "PROJECT_DIR": str(self.project_dir.resolve()),
                     "PYTHONPATH": str(ROOT_DIR.resolve()),
                 },
             },
@@ -200,10 +207,10 @@ class AssistantChatSession:
         # Use system Claude CLI
         system_cli = shutil.which("claude")
 
-        # Build allowed tools list - read-only only, plus issue creation
+        # Build allowed tools list - read-only plus issue management
         allowed_tools = [
             *READONLY_BUILTIN_TOOLS,
-            ISSUE_CREATOR_MCP_TOOL,
+            *ISSUE_MANAGER_MCP_TOOLS,
         ]
 
         # Define stderr callback for logging CLI output
@@ -335,23 +342,18 @@ class AssistantChatSession:
                         tool_input = getattr(block, "input", {})
                         tool_id = getattr(block, "id", "")
 
-                        # Track issue creation calls
-                        if tool_name == ISSUE_CREATOR_MCP_TOOL or tool_name == "create_issue":
+                        # Track issue creation calls for result correlation
+                        if tool_name in ("mcp__issue-manager__create_issue", "create_issue"):
                             pending_issue_create = {
                                 "tool_id": tool_id,
                                 "title": tool_input.get("title", ""),
                             }
-                            yield {
-                                "type": "tool_call",
-                                "tool": "create_issue",
-                                "input": {"title": tool_input.get("title", "")},
-                            }
-                        else:
-                            yield {
-                                "type": "tool_call",
-                                "tool": tool_name,
-                                "input": tool_input,
-                            }
+
+                        yield {
+                            "type": "tool_call",
+                            "tool": tool_name,
+                            "input": tool_input,
+                        }
 
             elif msg_type == "UserMessage" and hasattr(msg, "content"):
                 # Tool results - check for issue creation success
