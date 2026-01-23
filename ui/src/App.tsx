@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useProjects, useFeatures, useAgentStatus, useReopenFeature } from './hooks/useProjects'
 import { useProjectWebSocket } from './hooks/useWebSocket'
 import { useFeatureSound } from './hooks/useFeatureSound'
@@ -60,6 +61,7 @@ function App() {
   // Edit feature modal state
   const [editingFeature, setEditingFeature] = useState<Feature | null>(null)
 
+  const queryClient = useQueryClient()
   const { data: projects, isLoading: projectsLoading, refetch: refetchProjects } = useProjects()
   const { data: features } = useFeatures(selectedProject)
   const { data: agentStatusData } = useAgentStatus(selectedProject)
@@ -91,6 +93,11 @@ function App() {
   const handleSelectProject = useCallback((project: string | null) => {
     setSelectedProject(project)
     setLogContainerFilter(null) // Reset container filter when switching projects
+    // Reset queries to prevent stale cached data from showing during project switch
+    if (project) {
+      queryClient.resetQueries({ queryKey: ['agent-status', project] })
+      queryClient.resetQueries({ queryKey: ['containers', project] })
+    }
     try {
       if (project) {
         localStorage.setItem(STORAGE_KEY, project)
@@ -100,7 +107,7 @@ function App() {
     } catch {
       // localStorage not available
     }
-  }, [])
+  }, [queryClient])
 
   // Handle click on incomplete project in selector
   const handleIncompleteProjectClick = useCallback((project: ProjectSummary) => {
@@ -343,6 +350,7 @@ function App() {
           <div className="space-y-6">
             {/* Unified Toolbar - control buttons and actions */}
             <ContainerControl
+              key={selectedProject}
               projectName={selectedProject}
               agentRunning={agentStatusData?.agent_running ?? false}
               gracefulStopRequested={wsState.gracefulStopRequested}
