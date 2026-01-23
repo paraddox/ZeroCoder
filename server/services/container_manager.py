@@ -179,6 +179,8 @@ class ContainerManager:
         self._current_feature: str | None = None
         # Model to use when forcing Claude SDK (defaults to Opus 4.5)
         self._forced_model: str = "claude-opus-4-5-20251101"
+        # Guard against dispatching multiple agents in the same container
+        self._agent_dispatched: bool = False
 
         # Note: Session state (user_started, graceful_stop_requested, restarting,
         # last_agent_was_overseer, is_milestone_overseer, last_activity) is now
@@ -1029,8 +1031,12 @@ class ContainerManager:
         if self._status == "running":
             # Container already running, just send instruction if provided
             if instruction:
+                if self._agent_dispatched:
+                    logger.warning(f"Agent already dispatched for {self.container_name}, skipping duplicate start")
+                    return True, "Agent already running"
                 self._user_started = True  # Mark as user-started for auto-restart
                 # user_started set via DB-backed property
+                self._agent_dispatched = True
                 return await self.send_instruction(instruction)
             return True, "Container already running"
 
@@ -1244,6 +1250,10 @@ class ContainerManager:
 
                 # Start agent in background task (non-blocking)
                 # This allows the API to return immediately while agent runs
+                if self._agent_dispatched:
+                    logger.warning(f"Agent already dispatched for {self.container_name}, skipping duplicate")
+                    return True, "Agent already dispatched"
+                self._agent_dispatched = True
                 asyncio.create_task(self._run_agent_with_monitoring(instruction))
                 return True, f"Container started and agent spawned"
 
@@ -1309,6 +1319,7 @@ class ContainerManager:
                 return False, f"Failed to stop container: {result.stderr}"
 
             logger.info(f"[STOP] Successfully stopped {self.container_name}")
+            self._agent_dispatched = False
             self.status = "stopped"
             # Update registry status
             try:
@@ -1554,6 +1565,12 @@ class ContainerManager:
         Returns:
             Tuple of (success, message)
         """
+        # If container already stopped (another exit handler or monitor already ran),
+        # don't process this exit — prevents spurious restart after graceful stop
+        if self._status == "stopped" or self._status == "not_created":
+            logger.info(f"[EXIT] Ignoring exit code {exit_code} for {self.container_name} (status={self._status})")
+            return True, f"Container already {self._status}, ignoring exit"
+
         # Init containers never restart - they complete their task and stop
         if self._is_init_container:
             logger.info(f"Init container {self.container_name} completed with exit code {exit_code}")
