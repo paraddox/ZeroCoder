@@ -49,6 +49,13 @@ class TestProtectedBranches:
 
         assert "master" in PROTECTED_BRANCHES
 
+    @pytest.mark.unit
+    def test_feature_branch_prefix_constant(self):
+        """Test FEATURE_BRANCH_PREFIX is correctly defined."""
+        from server.services.branch_cleanup import FEATURE_BRANCH_PREFIX
+
+        assert FEATURE_BRANCH_PREFIX == "feature/"
+
 # =============================================================================
 # Single Project Cleanup Tests
 # =============================================================================
@@ -110,9 +117,9 @@ class TestCleanupRemoteBranchesForProject:
             # Calls: fetch, list branches, delete branch1, delete branch2
             mock_run.side_effect = [
                 MagicMock(returncode=0),  # fetch
-                MagicMock(returncode=0, stdout="origin/main\norigin/feature-1\norigin/feature-2\n"),  # list
-                MagicMock(returncode=0),  # delete feature-1
-                MagicMock(returncode=0),  # delete feature-2
+                MagicMock(returncode=0, stdout="origin/main\norigin/feature/1\norigin/feature/2\n"),  # list
+                MagicMock(returncode=0),  # delete feature/1
+                MagicMock(returncode=0),  # delete feature/2
             ]
 
             result = await cleanup_remote_branches_for_project(
@@ -135,7 +142,7 @@ class TestCleanupRemoteBranchesForProject:
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = [
                 MagicMock(returncode=0),  # fetch
-                MagicMock(returncode=0, stdout="origin/main\norigin/feature-1\n"),  # list
+                MagicMock(returncode=0, stdout="origin/main\norigin/feature/1\n"),  # list
                 MagicMock(returncode=1),  # delete fails
             ]
 
@@ -301,9 +308,9 @@ class TestBranchFiltering:
                 MagicMock(returncode=0),  # fetch
                 MagicMock(
                     returncode=0,
-                    stdout="origin/main\norigin/master\norigin/HEAD\norigin/feature-1\n"
+                    stdout="origin/main\norigin/master\norigin/HEAD\norigin/feature/1\n"
                 ),  # list
-                MagicMock(returncode=0),  # delete feature-1 only
+                MagicMock(returncode=0),  # delete feature/1 only
             ]
 
             result = await cleanup_remote_branches_for_project(
@@ -312,8 +319,38 @@ class TestBranchFiltering:
                 project_dir
             )
 
-        # Only feature-1 should be deleted
+        # Only feature/1 should be deleted
         assert result == 1
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_skips_non_feature_branches(self, tmp_path):
+        """Test non-feature branches are not deleted."""
+        from server.services.branch_cleanup import cleanup_remote_branches_for_project
+
+        project_dir = tmp_path / "test-project"
+        project_dir.mkdir()
+
+        with patch("subprocess.run") as mock_run:
+            # Return branches that don't start with feature/
+            mock_run.side_effect = [
+                MagicMock(returncode=0),  # fetch
+                MagicMock(
+                    returncode=0,
+                    stdout="origin/main\norigin/develop\norigin/bugfix/xyz\norigin/experiment\norigin/feature-old-style\n"
+                ),  # list
+            ]
+
+            result = await cleanup_remote_branches_for_project(
+                "test-project",
+                "https://github.com/user/repo.git",
+                project_dir
+            )
+
+        # None should be deleted - no feature/ prefix branches
+        assert result == 0
+        # Only fetch + list calls, no delete calls
+        assert mock_run.call_count == 2
 
     @pytest.mark.unit
     @pytest.mark.asyncio

@@ -12,6 +12,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 PROTECTED_BRANCHES = {"main", "master", "HEAD"}
+FEATURE_BRANCH_PREFIX = "feature/"
 
 
 async def cleanup_remote_branches_for_project(project_name: str, git_url: str, local_path: Path) -> int:
@@ -47,7 +48,7 @@ async def cleanup_remote_branches_for_project(project_name: str, git_url: str, l
             if not line:
                 continue
             branch = line.replace("origin/", "").strip()
-            if branch and branch not in PROTECTED_BRANCHES:
+            if branch and branch.startswith(FEATURE_BRANCH_PREFIX):
                 branches_to_delete.append(branch)
 
         if not branches_to_delete:

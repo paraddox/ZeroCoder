@@ -36,7 +36,7 @@ git clean -fd 2>&1 || true
 
 # 3. Delete feature branches (keep main)
 log "Cleaning up local branches..."
-for branch in $(git branch --list | grep -v '^\*' | grep -v 'main'); do
+for branch in $(git branch --list 'feature/*' | grep -v '^\*'); do
     branch=$(echo "$branch" | tr -d ' ')
     if [ -n "$branch" ]; then
         git branch -D "$branch" 2>&1 || true
