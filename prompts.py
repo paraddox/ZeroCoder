@@ -381,6 +381,19 @@ def refresh_project_prompts(project_dir: Path) -> list[str]:
         except (OSError, PermissionError) as e:
             print(f"  Warning: Could not update {dest_name}: {e}")
 
+    # Ensure prompts/.gitignore exists (keeps .agent_config.json local-only)
+    gitignore_template = TEMPLATES_DIR / "prompts_gitignore.template"
+    gitignore_dest = project_prompts / ".gitignore"
+    if gitignore_template.exists():
+        try:
+            template_content = gitignore_template.read_text(encoding="utf-8")
+            # Only write if missing or content differs
+            if not gitignore_dest.exists() or gitignore_dest.read_text(encoding="utf-8") != template_content:
+                gitignore_dest.write_text(template_content, encoding="utf-8")
+                updated_files.append(".gitignore")
+        except (OSError, PermissionError) as e:
+            print(f"  Warning: Could not update prompts/.gitignore: {e}")
+
     # Also refresh CLAUDE.md beads workflow section
     # This ensures agents always get the latest beads instructions
     claude_md = project_dir / "CLAUDE.md"

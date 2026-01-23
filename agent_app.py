@@ -39,7 +39,7 @@ PROJECT_NAME = os.environ.get("PROJECT_NAME", "")
 CONTAINER_NUMBER = int(os.environ.get("CONTAINER_NUMBER", "1"))
 
 # Default model for coder/overseer agents
-DEFAULT_AGENT_MODEL = "glm-4-7"
+DEFAULT_AGENT_MODEL = "claude-sonnet-4-5-20250514"
 
 # Config file path (relative to project directory)
 AGENT_CONFIG_FILE = "prompts/.agent_config.json"

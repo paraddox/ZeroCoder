@@ -440,10 +440,18 @@ class ContainerManager:
         get the latest templates when they clone/pull the repo.
         """
         try:
-            # Stage prompts and CLAUDE.md
+            # Untrack .agent_config.json if it was previously committed
             await asyncio.to_thread(
                 subprocess.run,
-                ["git", "add", "prompts/", "CLAUDE.md"],
+                ["git", "rm", "--cached", "prompts/.agent_config.json"],
+                cwd=self.project_dir,
+                capture_output=True,
+            )
+
+            # Stage template .md files, prompts/.gitignore, and CLAUDE.md
+            await asyncio.to_thread(
+                subprocess.run,
+                ["git", "add", "prompts/*.md", "prompts/.gitignore", "CLAUDE.md"],
                 cwd=self.project_dir,
                 capture_output=True,
             )
@@ -1458,14 +1466,16 @@ class ContainerManager:
 
                 if use_opencode:
                     # OpenCode SDK agent (GLM-4.7)
-                    # Pass agent type via environment variable
+                    # Pass agent type and model via environment variables
                     agent_type = self._current_agent_type
-                    logger.info(f"Using OpenCode agent ({agent_type}) for {self.container_name}")
+                    model = self._get_agent_model()
+                    logger.info(f"Using OpenCode agent ({agent_type}, model={model}) for {self.container_name}")
 
                     with open(prompt_file, "r", encoding="utf-8") as stdin_file:
                         process = await asyncio.create_subprocess_exec(
                             "docker", "exec", "-i", "-u", "coder",
                             "-e", f"OPENCODE_AGENT_TYPE={agent_type}",
+                            "-e", f"AGENT_MODEL={model}",
                             self.container_name,
                             "node", "/app/dist/opencode_agent_app.js",
                             stdin=stdin_file,
@@ -1488,10 +1498,13 @@ class ContainerManager:
                                 stderr=asyncio.subprocess.STDOUT,
                             )
                     else:
-                        logger.info(f"Using Claude agent for {self.container_name}")
+                        model = self._get_agent_model()
+                        logger.info(f"Using Claude agent (model={model}) for {self.container_name}")
                         with open(prompt_file, "r", encoding="utf-8") as stdin_file:
                             process = await asyncio.create_subprocess_exec(
-                                "docker", "exec", "-i", "-u", "coder", self.container_name,
+                                "docker", "exec", "-i", "-u", "coder",
+                                "-e", f"AGENT_MODEL={model}",
+                                self.container_name,
                                 "python", "/app/agent_app.py",
                                 stdin=stdin_file,
                                 stdout=asyncio.subprocess.PIPE,

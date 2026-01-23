@@ -62,6 +62,13 @@ const STATE_FILE = path.join(PROJECT_DIR, ".agent_state.json");
  * Read agent config to get the selected model
  */
 function getAgentModel(): string {
+  // Environment variable takes priority (passed by host container_manager)
+  const envModel = process.env.AGENT_MODEL;
+  if (envModel) {
+    log("CONFIG", `Using model from environment: ${envModel}`);
+    return envModel;
+  }
+  // Fall back to config file
   try {
     if (fs.existsSync(AGENT_CONFIG_FILE)) {
       const config = JSON.parse(fs.readFileSync(AGENT_CONFIG_FILE, "utf8"));

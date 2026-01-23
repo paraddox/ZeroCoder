@@ -663,7 +663,7 @@ async def update_project_settings(name: str, settings: ProjectSettingsUpdate):
             detail=f"Invalid model. Must be one of: {', '.join(valid_models)}"
         )
 
-    # Write the config
+    # Write the config (local-only, not committed to git)
     write_agent_config(project_dir, settings.agent_model)
 
     return {
