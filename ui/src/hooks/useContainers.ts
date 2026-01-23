@@ -4,7 +4,7 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { listContainers, updateContainerCount, startAgent, stopAgent, gracefulStopAgent } from '../lib/api'
-import type { ContainerInfo } from '../lib/types'
+import type { ContainerInfo, AgentStatusResponse } from '../lib/types'
 
 /**
  * Hook to fetch containers for a project
@@ -43,7 +43,7 @@ export function useStartAgent(projectName: string) {
     mutationFn: (yoloMode: boolean = false) => startAgent(projectName, yoloMode),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['containers', projectName] })
-      queryClient.invalidateQueries({ queryKey: ['agentStatus', projectName] })
+      queryClient.invalidateQueries({ queryKey: ['agent-status', projectName] })
       queryClient.invalidateQueries({ queryKey: ['projects'] })
     },
   })
@@ -59,7 +59,7 @@ export function useStopAgent(projectName: string) {
     mutationFn: () => stopAgent(projectName),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['containers', projectName] })
-      queryClient.invalidateQueries({ queryKey: ['agentStatus', projectName] })
+      queryClient.invalidateQueries({ queryKey: ['agent-status', projectName] })
       queryClient.invalidateQueries({ queryKey: ['projects'] })
     },
   })
@@ -73,8 +73,24 @@ export function useGracefulStopAgent(projectName: string) {
 
   return useMutation({
     mutationFn: () => gracefulStopAgent(projectName),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['agentStatus', projectName] })
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: ['agent-status', projectName] })
+      const previousStatus = queryClient.getQueryData<AgentStatusResponse>(['agent-status', projectName])
+      queryClient.setQueryData<AgentStatusResponse>(
+        ['agent-status', projectName],
+        (old) => old ? { ...old, graceful_stop_requested: true } : old
+      )
+      return { previousStatus }
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previousStatus) {
+        queryClient.setQueryData(['agent-status', projectName], context.previousStatus)
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['agent-status', projectName] })
+      queryClient.invalidateQueries({ queryKey: ['containers', projectName] })
+      queryClient.invalidateQueries({ queryKey: ['projects'] })
     },
   })
 }
