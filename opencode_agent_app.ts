@@ -86,13 +86,22 @@ function getModelConfig(): { provider: string; contextLimit: number } {
 /**
  * Update the OpenCode config file with the selected model
  */
-function updateOpencodeConfig(provider: string): void {
+function updateOpencodeConfig(provider: string, agentType: string): void {
   const configPath = "/home/coder/.config/opencode/config.json";
   try {
     if (fs.existsSync(configPath)) {
       const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
       const oldModel = config.model;
       config.model = provider;
+
+      // Enable MCP servers for all agent types
+      if (config.mcp) {
+        for (const key of Object.keys(config.mcp)) {
+          config.mcp[key].enabled = true;
+        }
+        log("CONFIG", "Enabled MCP servers for container session");
+      }
+
       fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
       log("CONFIG", `Updated OpenCode model: ${oldModel} -> ${provider}`);
     }
@@ -266,8 +275,8 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
   CONTEXT_LIMIT_TOKENS = modelConfig.contextLimit;
   log("AGENT", `Context limit: ${(CONTEXT_LIMIT_TOKENS / 1000).toFixed(0)}K tokens`);
 
-  // Update OpenCode config with the selected model
-  updateOpencodeConfig(modelConfig.provider);
+  // Update OpenCode config with the selected model (and toggle MCP for reviewer)
+  updateOpencodeConfig(modelConfig.provider, agentType);
 
   let opencode: { client: any; server: { url: string; close(): void } } | null = null;
   let eventStream: { cancel: () => void } | null = null;

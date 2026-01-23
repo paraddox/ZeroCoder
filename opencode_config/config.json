@@ -16,15 +16,7 @@
     },
     "minimax-coding-plan": {
       "models": {
-        "MiniMax-M2.1": {
-          "options": {
-            "thinking": {
-              "type": "enabled",
-              "budget_tokens": 32000,
-              "clear_thinking": false
-            }
-          }
-        }
+        "MiniMax-M2.1": {}
       }
     }
   },

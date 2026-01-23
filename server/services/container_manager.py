@@ -512,6 +512,7 @@ class ContainerManager:
             update_container_status(
                 project_name=self.project_name,
                 container_number=self.container_number,
+                container_type=self.container_type,
                 current_feature=feature_id if feature_id else ""
             )
         except Exception as e:
@@ -1049,6 +1050,7 @@ class ContainerManager:
                     update_container_status(
                         project_name=self.project_name,
                         container_number=self.container_number,
+                        container_type=self.container_type,
                         status='running'
                     )
                 except Exception as e:
@@ -1066,9 +1068,8 @@ class ContainerManager:
                     "--name", self.container_name,
                     # Enable host.docker.internal on Linux (works natively on Mac/Windows)
                     "--add-host", "host.docker.internal:host-gateway",
-                    # Memory limits to prevent OOM crashes (agents can use 1GB+ RSS)
-                    "--memory", "4g",
-                    "--memory-swap", "4g",
+                    "--memory", "64g",
+                    "--memory-swap", "64g",
                 ]
                 # Pass git URL for container to clone (always clones main branch)
                 cmd.extend(["-e", f"GIT_REMOTE_URL={self.git_url}"])
@@ -1123,6 +1124,7 @@ class ContainerManager:
                     update_container_status(
                         project_name=self.project_name,
                         container_number=self.container_number,
+                        container_type=self.container_type,
                         docker_container_id=docker_id,
                         status='running'
                     )
@@ -1314,6 +1316,7 @@ class ContainerManager:
                 update_container_status(
                     project_name=self.project_name,
                     container_number=self.container_number,
+                    container_type=self.container_type,
                     status='stopped'
                 )
             except Exception as e:
@@ -1333,6 +1336,7 @@ class ContainerManager:
                 update_container_status(
                     project_name=self.project_name,
                     container_number=self.container_number,
+                    container_type=self.container_type,
                     status='stopped'
                 )
             except Exception as e:
@@ -2051,9 +2055,8 @@ class ContainerManager:
                     "--name", self.container_name,
                     # Enable host.docker.internal on Linux (works natively on Mac/Windows)
                     "--add-host", "host.docker.internal:host-gateway",
-                    # Memory limits to prevent OOM crashes (agents can use 1GB+ RSS)
-                    "--memory", "4g",
-                    "--memory-swap", "4g",
+                    "--memory", "64g",
+                    "--memory-swap", "64g",
                 ]
                 # Pass git URL for container to clone (always clones main branch)
                 cmd.extend(["-e", f"GIT_REMOTE_URL={self.git_url}"])

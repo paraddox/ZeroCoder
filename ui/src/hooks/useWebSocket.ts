@@ -52,6 +52,7 @@ export function useWebSocket(projectName: string | null) {
   const hasConnectedRef = useRef(false) // Track if we've ever successfully connected
   const shouldReconnectRef = useRef(true) // Whether to auto-reconnect
   const logCacheRef = useRef<Record<string, Array<{ line: string; timestamp: string }>>>({}) // Cache logs per project
+  const currentProjectRef = useRef<string | null>(null) // Track current project to ignore stale messages
 
   const connect = useCallback(() => {
     if (!projectName || !shouldReconnectRef.current) return
@@ -72,6 +73,11 @@ export function useWebSocket(projectName: string | null) {
       }
 
       ws.onmessage = (event) => {
+        // Ignore messages if project has changed (stale WebSocket)
+        if (currentProjectRef.current !== projectName) {
+          return
+        }
+
         try {
           const message: WSMessage = JSON.parse(event.data)
 
@@ -198,14 +204,25 @@ export function useWebSocket(projectName: string | null) {
 
   // Connect when project changes
   useEffect(() => {
+    // Track current project to ignore stale WebSocket messages
+    currentProjectRef.current = projectName
+
     // Reset refs for new project
     hasConnectedRef.current = false
     shouldReconnectRef.current = true
     reconnectAttempts.current = 0
 
     if (!projectName) {
-      // No project selected - clear logs
-      setState(prev => ({ ...prev, logs: [] }))
+      // No project selected - reset all state
+      setState({
+        progress: { passing: 0, in_progress: 0, total: 0, percentage: 0 },
+        agentStatus: 'stopped',
+        logs: [],
+        containers: [],
+        isConnected: false,
+        gracefulStopRequested: false,
+        containerUpdateCounter: 0,
+      })
       if (wsRef.current) {
         wsRef.current.close()
         wsRef.current = null
@@ -213,11 +230,16 @@ export function useWebSocket(projectName: string | null) {
       return
     }
 
-    // Restore cached logs for this project (or empty array)
-    setState(prev => ({
-      ...prev,
+    // Reset ALL state for new project, restoring only cached logs
+    setState({
+      progress: { passing: 0, in_progress: 0, total: 0, percentage: 0 },
+      agentStatus: 'stopped',
       logs: logCacheRef.current[projectName] || [],
-    }))
+      containers: [],
+      isConnected: false,
+      gracefulStopRequested: false,
+      containerUpdateCounter: 0,
+    })
 
     connect()
 
