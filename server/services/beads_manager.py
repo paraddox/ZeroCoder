@@ -190,8 +190,31 @@ class BeadsManager:
                 timeout=30,
             )
             if result.returncode != 0:
-                logger.debug(f"bd list failed for {self.project_name}: {result.stderr}")
-                return []
+                # Auto-recover from JSONL/DB sync mismatch (e.g., after git pull)
+                if "out of sync" in (result.stderr or "").lower():
+                    logger.info(f"Beads DB out of sync for {self.project_name}, importing JSONL...")
+                    sync_result = subprocess.run(
+                        ["bd", "--no-daemon", "sync", "--import-only"],
+                        cwd=self.local_path,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                    if sync_result.returncode == 0:
+                        result = subprocess.run(
+                            ["bd", "--no-daemon", "list", "--json", "--all", "--limit", "0"],
+                            cwd=self.local_path,
+                            capture_output=True,
+                            text=True,
+                            timeout=30,
+                        )
+                    else:
+                        logger.warning(f"bd sync --import-only failed for {self.project_name}: {sync_result.stderr}")
+                        return []
+
+                if result.returncode != 0:
+                    logger.debug(f"bd list failed for {self.project_name}: {result.stderr}")
+                    return []
 
             stdout = result.stdout.strip()
             if not stdout:
