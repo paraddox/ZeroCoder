@@ -18,6 +18,9 @@ import type {
   WizardStatus,
   AgentModel,
   ContainerInfo,
+  RemoteMachine,
+  RemoteMachineCreate,
+  RemoteAgentInfo,
 } from './types'
 
 const API_BASE = '/api'
@@ -317,4 +320,67 @@ export async function deleteAssistantConversation(
     `/assistant/conversations/${encodeURIComponent(projectName)}/${conversationId}`,
     { method: 'DELETE' }
   )
+}
+
+// ============================================================================
+// Remote Machines API
+// ============================================================================
+
+export async function listRemoteMachines(): Promise<RemoteMachine[]> {
+  return fetchJSON('/remote-machines')
+}
+
+export async function addRemoteMachine(machine: RemoteMachineCreate): Promise<RemoteMachine> {
+  return fetchJSON('/remote-machines', {
+    method: 'POST',
+    body: JSON.stringify(machine),
+  })
+}
+
+export async function removeRemoteMachine(machineId: number): Promise<void> {
+  await fetchJSON(`/remote-machines/${machineId}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function testRemoteMachine(machineId: number): Promise<{
+  connected: boolean
+  user: string | null
+  git_installed: boolean
+  claude_installed: boolean
+  error: string | null
+}> {
+  return fetchJSON(`/remote-machines/${machineId}/test`, {
+    method: 'POST',
+  })
+}
+
+// ============================================================================
+// Remote Agent API
+// ============================================================================
+
+export async function startRemoteAgent(
+  projectName: string,
+  machineId: number
+): Promise<{ success: boolean; message: string; agent_id: number }> {
+  return fetchJSON(`/projects/${encodeURIComponent(projectName)}/remote-agent/start`, {
+    method: 'POST',
+    body: JSON.stringify({ machine_id: machineId }),
+  })
+}
+
+export async function stopRemoteAgent(projectName: string): Promise<AgentActionResponse> {
+  return fetchJSON(`/projects/${encodeURIComponent(projectName)}/remote-agent/stop`, {
+    method: 'POST',
+  })
+}
+
+export async function gracefulStopRemoteAgent(projectName: string): Promise<AgentActionResponse> {
+  return fetchJSON(`/projects/${encodeURIComponent(projectName)}/remote-agent/graceful-stop`, {
+    method: 'POST',
+  })
+}
+
+export async function getRemoteAgentStatus(projectName: string): Promise<RemoteAgentInfo[]> {
+  return fetchJSON(`/projects/${encodeURIComponent(projectName)}/remote-agent/status`)
 }

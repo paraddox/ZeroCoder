@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Play, Square, PauseCircle, Edit3, Loader2, Plus, Trash2, Settings } from 'lucide-react'
+import { Play, Square, PauseCircle, Edit3, Loader2, Plus, Trash2, Settings, Server } from 'lucide-react'
 import { CompactProgress } from './CompactProgress'
 
 interface ContainerControlProps {
@@ -19,6 +19,7 @@ interface ContainerControlProps {
   onAddFeature: () => void
   onSettings: () => void
   onDelete: () => void
+  onRemote?: () => void
 }
 
 export function ContainerControl({
@@ -34,6 +35,7 @@ export function ContainerControl({
   onAddFeature,
   onSettings,
   onDelete,
+  onRemote,
 }: ContainerControlProps) {
   const [isStarting, setIsStarting] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
@@ -101,6 +103,18 @@ export function ContainerControl({
           <PauseCircle size={16} />
           <span>{gracefulStopRequested ? 'Stopping...' : 'Complete & Stop'}</span>
         </button>
+
+        {/* Remote Button */}
+        {onRemote && (
+          <button
+            onClick={onRemote}
+            className="btn btn-secondary"
+            title="Start on remote machine"
+          >
+            <Server size={16} />
+            <span>Remote</span>
+          </button>
+        )}
 
         {/* Divider */}
         <div className="w-px h-8 bg-[var(--color-border)]" />

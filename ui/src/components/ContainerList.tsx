@@ -1,4 +1,4 @@
-import { FileText, Loader2, Settings2 } from 'lucide-react'
+import { FileText, Loader2, Settings2, Server } from 'lucide-react'
 import type { ContainerInfo, ContainerStatusType, AgentStatus } from '../lib/types'
 
 interface ContainerListProps {
@@ -160,6 +160,14 @@ export function ContainerList({
                     <span className="font-display font-medium text-[var(--color-text)]">
                       {container.container_number === -1 ? 'Hound' : `Agent ${container.container_number}`}
                     </span>
+
+                    {/* Remote indicator */}
+                    {container.source === 'remote' && (
+                      <span className="badge text-xs bg-purple-500/10 text-purple-400 border border-purple-500/30 flex items-center gap-1">
+                        <Server size={10} />
+                        {container.machine_name || 'remote'}
+                      </span>
+                    )}
 
                     {/* Agent Type Badge */}
                     <span className="badge text-xs bg-[var(--color-bg-subtle)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">

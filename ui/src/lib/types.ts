@@ -57,6 +57,8 @@ export interface ContainerInfo {
   docker_container_id: string | null
   agent_type?: AgentType
   sdk_type?: SdkType
+  source?: 'docker' | 'remote'
+  machine_name?: string
 }
 
 export interface ProjectPrompts {
@@ -128,6 +130,41 @@ export interface AgentActionResponse {
   message: string
 }
 
+// Remote Machine types
+export interface RemoteMachine {
+  id: number
+  name: string
+  host: string
+  port: number
+  username: string
+  ssh_key_path: string | null
+  status: 'online' | 'offline' | 'unknown'
+  last_checked_at: string | null
+  created_at: string | null
+}
+
+export interface RemoteMachineCreate {
+  name: string
+  host: string
+  port?: number
+  username?: string
+  ssh_key_path?: string | null
+}
+
+export interface RemoteAgentInfo {
+  id: number
+  project_name: string
+  machine_id: number
+  machine_name: string
+  agent_number: number
+  status: string
+  current_feature: string | null
+  pid: number | null
+  graceful_stop_requested: boolean
+  restarting: boolean
+  last_activity_at: string | null
+}
+
 // Setup types
 export interface SetupStatus {
   claude_cli: boolean
@@ -184,6 +221,8 @@ export interface WSContainersMessage {
     type: 'init' | 'coding'
     agent_type?: AgentType
     sdk_type?: SdkType
+    source?: 'docker' | 'remote'
+    machine_name?: string
   }>
 }
 

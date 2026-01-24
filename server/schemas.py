@@ -324,3 +324,49 @@ class TaskUpdate(BaseModel):
     status: str | None = Field(default=None, pattern=r'^(open|in_progress|closed)$')
     priority: int | None = Field(default=None, ge=0, le=4)
     title: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+# ============================================================================
+# Remote Machine Schemas
+# ============================================================================
+
+class RemoteMachineCreate(BaseModel):
+    """Request schema for adding a remote machine."""
+    name: str = Field(..., min_length=1, max_length=100)
+    host: str = Field(..., min_length=1, max_length=255)
+    port: int = Field(default=22, ge=1, le=65535)
+    username: str = Field(default="root", min_length=1, max_length=100)
+    ssh_key_path: str | None = Field(default=None, max_length=500)
+
+
+class RemoteMachineResponse(BaseModel):
+    """Response schema for a remote machine."""
+    id: int
+    name: str
+    host: str
+    port: int
+    username: str
+    ssh_key_path: str | None
+    status: str
+    last_checked_at: str | None
+    created_at: str | None
+
+
+class RemoteAgentStartRequest(BaseModel):
+    """Request schema for starting a remote agent."""
+    machine_id: int
+
+
+class RemoteAgentStatusResponse(BaseModel):
+    """Response schema for remote agent status."""
+    id: int
+    project_name: str
+    machine_id: int
+    machine_name: str
+    agent_number: int
+    status: str
+    current_feature: str | None
+    pid: int | None
+    graceful_stop_requested: bool
+    restarting: bool
+    last_activity_at: str | None

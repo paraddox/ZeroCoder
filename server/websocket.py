@@ -16,6 +16,7 @@ from typing import Set
 from fastapi import WebSocket, WebSocketDisconnect
 
 from .services.container_manager import get_all_container_managers
+from .services.remote_machine_manager import get_all_remote_managers
 
 # Lazy imports
 _count_passing_tests = None
@@ -69,6 +70,20 @@ async def _send_containers_list(websocket: WebSocket, project_name: str):
             "type": cm.container_type,
             "agent_type": cm._current_agent_type,
             "sdk_type": "claude" if cm._force_claude_sdk or not cm._is_opencode_model() else "opencode",
+            "source": "docker",
+        }
+        container_list.append(container_info)
+
+    # Include remote agents
+    remote_managers = get_all_remote_managers(project_name)
+    for rm in remote_managers:
+        container_info = {
+            "number": rm.agent_number,
+            "type": "coding",
+            "agent_type": "coder",
+            "sdk_type": "claude",
+            "source": "remote",
+            "machine_name": rm.machine_name,
         }
         container_list.append(container_info)
 
@@ -224,17 +239,30 @@ async def project_websocket(websocket: WebSocket, project_name: str):
                 pass  # Connection may be closed
         return on_output
 
-    def make_status_callback(container_num: int, cm: "ContainerManager"):
+    def make_status_callback(container_num: int, cm):
         async def on_status_change(status: str):
             """Handle status change - broadcast to this WebSocket."""
             try:
-                await websocket.send_json({
+                # Handle both ContainerManager and RemoteMachineManager
+                agent_type = getattr(cm, '_current_agent_type', 'coder')
+                if hasattr(cm, '_force_claude_sdk'):
+                    sdk_type = "claude" if cm._force_claude_sdk or not cm._is_opencode_model() else "opencode"
+                else:
+                    sdk_type = "claude"
+                source = "remote" if hasattr(cm, 'machine_id') else "docker"
+
+                msg = {
                     "type": "agent_status",
                     "status": status,
                     "container_number": container_num,
-                    "agent_type": cm._current_agent_type,
-                    "sdk_type": "claude" if cm._force_claude_sdk or not cm._is_opencode_model() else "opencode",
-                })
+                    "agent_type": agent_type,
+                    "sdk_type": sdk_type,
+                    "source": source,
+                }
+                if source == "remote":
+                    msg["machine_name"] = getattr(cm, 'machine_name', 'unknown')
+
+                await websocket.send_json(msg)
             except Exception:
                 pass  # Connection may be closed
         return on_status_change
@@ -250,9 +278,22 @@ async def project_websocket(websocket: WebSocket, project_name: str):
         registered_callbacks.append((cm, output_cb, status_cb))
         registered_container_nums.add(cm.container_number)
 
+    # Register callbacks for remote managers
+    registered_remote_ids: set[int] = set()
+    remote_managers = get_all_remote_managers(project_name)
+    for rm in remote_managers:
+        # Use negative agent_number offset to avoid collision with docker containers
+        remote_num = 100 + rm.agent_number
+        output_cb = make_output_callback(remote_num)
+        status_cb = make_status_callback(remote_num, rm)
+        rm.add_output_callback(output_cb)
+        rm.add_status_callback(status_cb)
+        registered_callbacks.append((rm, output_cb, status_cb))
+        registered_remote_ids.add(rm.agent_id)
+
     # Background task to register callbacks for newly created containers
     async def register_new_container_callbacks():
-        """Periodically check for new containers and register callbacks."""
+        """Periodically check for new containers/remote managers and register callbacks."""
         logger.info(f"[WS] Started callback registration task for {project_name}")
         while True:
             try:
@@ -274,6 +315,21 @@ async def project_websocket(websocket: WebSocket, project_name: str):
                         logger.info(f"Registered callbacks for new container {cm.container_number}")
 
                         # Send updated containers list to UI with agent info
+                        await _send_containers_list(websocket, project_name)
+
+                # Check for new remote managers
+                current_remote = get_all_remote_managers(project_name)
+                for rm in current_remote:
+                    if rm.agent_id not in registered_remote_ids:
+                        remote_num = 100 + rm.agent_number
+                        output_cb = make_output_callback(remote_num)
+                        status_cb = make_status_callback(remote_num, rm)
+                        rm.add_output_callback(output_cb)
+                        rm.add_status_callback(status_cb)
+                        registered_callbacks.append((rm, output_cb, status_cb))
+                        registered_remote_ids.add(rm.agent_id)
+
+                        logger.info(f"Registered callbacks for new remote agent {rm.agent_id}")
                         await _send_containers_list(websocket, project_name)
             except asyncio.CancelledError:
                 break

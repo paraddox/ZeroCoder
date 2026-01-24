@@ -24,7 +24,9 @@ import { NewProjectModal } from './components/NewProjectModal'
 import { DeleteProjectModal } from './components/DeleteProjectModal'
 import { ContainerControl } from './components/ContainerControl'
 import { ContainerList } from './components/ContainerList'
-import { Loader2, Sun, Moon } from 'lucide-react'
+import { AppSettingsModal } from './components/AppSettingsModal'
+import { RemoteMachineModal } from './components/RemoteMachineModal'
+import { Loader2, Sun, Moon, Settings } from 'lucide-react'
 import type { Feature, ProjectSummary, WizardStatus } from './lib/types'
 
 function App() {
@@ -60,6 +62,10 @@ function App() {
 
   // Edit feature modal state
   const [editingFeature, setEditingFeature] = useState<Feature | null>(null)
+
+  // App settings and remote machine modals
+  const [showAppSettings, setShowAppSettings] = useState(false)
+  const [showRemoteMachineModal, setShowRemoteMachineModal] = useState(false)
 
   const queryClient = useQueryClient()
   const { data: projects, isLoading: projectsLoading, refetch: refetchProjects } = useProjects()
@@ -101,6 +107,7 @@ function App() {
     setShowDeleteModal(false)
     setShowFullScreenLogs(false)
     setAssistantOpen(false)
+    setShowRemoteMachineModal(false)
     // Reset queries to prevent stale cached data from showing during project switch
     if (project) {
       queryClient.resetQueries({ queryKey: ['agent-status', project] })
@@ -267,6 +274,10 @@ function App() {
       if (e.key === 'Escape') {
         if (showFullScreenLogs) {
           setShowFullScreenLogs(false)
+        } else if (showAppSettings) {
+          setShowAppSettings(false)
+        } else if (showRemoteMachineModal) {
+          setShowRemoteMachineModal(false)
         } else if (assistantOpen) {
           setAssistantOpen(false)
         } else if (showSettingsModal) {
@@ -285,7 +296,7 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [selectedProject, showAddFeature, selectedFeature, editingFeature, logViewerExpanded, assistantOpen, showSettingsModal, showFullScreenLogs])
+  }, [selectedProject, showAddFeature, selectedFeature, editingFeature, logViewerExpanded, assistantOpen, showSettingsModal, showFullScreenLogs, showAppSettings, showRemoteMachineModal])
 
   // Combine WebSocket progress with feature data
   const progress = wsState.progress.total > 0 ? wsState.progress : {
@@ -324,6 +335,13 @@ function App() {
                 ) : (
                   <Moon size={18} className="text-[var(--color-text-secondary)]" />
                 )}
+              </button>
+              <button
+                onClick={() => setShowAppSettings(true)}
+                className="btn btn-ghost p-2"
+                title="App settings"
+              >
+                <Settings size={18} className="text-[var(--color-text-secondary)]" />
               </button>
             </div>
 
@@ -371,6 +389,7 @@ function App() {
               onAddFeature={() => setShowAddFeature(true)}
               onSettings={() => setShowSettingsModal(true)}
               onDelete={() => setShowDeleteModal(true)}
+              onRemote={() => setShowRemoteMachineModal(true)}
             />
 
             {/* Container List - show running containers with status and controls */}
@@ -505,6 +524,21 @@ function App() {
         onClose={() => setShowDeleteModal(false)}
         onDeleted={handleProjectDeleted}
       />
+
+      {/* App Settings Modal */}
+      <AppSettingsModal
+        isOpen={showAppSettings}
+        onClose={() => setShowAppSettings(false)}
+      />
+
+      {/* Remote Machine Modal */}
+      {selectedProject && (
+        <RemoteMachineModal
+          isOpen={showRemoteMachineModal}
+          onClose={() => setShowRemoteMachineModal(false)}
+          projectName={selectedProject}
+        />
+      )}
 
       {/* Full Screen Log Viewer */}
       <FullScreenLogViewer

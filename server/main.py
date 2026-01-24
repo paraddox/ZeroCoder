@@ -37,6 +37,8 @@ from .routers import (
     beads_api_router,
     features_router,
     projects_router,
+    remote_agent_router,
+    remote_machines_router,
     spec_creation_router,
 )
 from .schemas import SetupStatus
@@ -202,6 +204,10 @@ async def lifespan(app: FastAPI):
     await cleanup_all_containers()
     await cleanup_assistant_sessions()
 
+    # Clean up remote SSH connections
+    from .services.remote_machine_manager import cleanup_all_remote_managers
+    await cleanup_all_remote_managers()
+
     logger.info("Shutdown complete.")
 
 
@@ -273,6 +279,8 @@ app.include_router(agent_router)
 app.include_router(spec_creation_router)
 app.include_router(assistant_chat_router)
 app.include_router(beads_api_router)
+app.include_router(remote_machines_router)
+app.include_router(remote_agent_router)
 
 
 # ============================================================================

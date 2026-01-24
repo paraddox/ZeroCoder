@@ -156,6 +156,48 @@ class FeatureStatsCache(Base):
     last_overseer_milestone = Column(Integer, default=0)
 
 
+class RemoteMachine(Base):
+    """SQLAlchemy model for registered remote machines."""
+    __tablename__ = "remote_machines"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), unique=True, nullable=False)
+    host = Column(String(255), nullable=False)
+    port = Column(Integer, default=22)
+    username = Column(String(100), default="root")
+    ssh_key_path = Column(String(500), nullable=True)
+    status = Column(String(20), default="unknown")  # online, offline, unknown
+    last_checked_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+
+    __table_args__ = (
+        CheckConstraint("status IN ('online', 'offline', 'unknown')", name='valid_machine_status'),
+    )
+
+
+class RemoteAgent(Base):
+    """SQLAlchemy model for remote agent instances."""
+    __tablename__ = "remote_agents"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    project_name = Column(String(50), ForeignKey("projects.name", ondelete="CASCADE"), nullable=False, index=True)
+    machine_id = Column(Integer, ForeignKey("remote_machines.id", ondelete="CASCADE"), nullable=False)
+    agent_number = Column(Integer, default=1)
+    status = Column(String(20), default='created')  # created, running, stopping, stopped
+    current_feature = Column(String(50), nullable=True)
+    pid = Column(Integer, nullable=True)
+    user_started_at = Column(DateTime, nullable=True)
+    graceful_stop_requested = Column(Boolean, default=False)
+    restarting = Column(Boolean, default=False)
+    last_activity_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint('project_name', 'machine_id', 'agent_number', name='uq_remote_agent_identity'),
+        CheckConstraint("status IN ('created', 'running', 'stopping', 'stopped')", name='valid_remote_agent_status'),
+    )
+
+
 class ProjectVerificationState(Base):
     """Session-scoped verification state (cleared on server restart)."""
     __tablename__ = "project_verification_state"
@@ -288,10 +330,16 @@ def _migrate_schema(engine) -> None:
                     except Exception as e:
                         logger.debug(f"Column {col_name} may already exist: {e}")
 
-    # Create project_verification_state table if it doesn't exist
+    # Create new tables if they don't exist
     # (Base.metadata.create_all handles this, but we log for visibility)
     if 'project_verification_state' not in inspector.get_table_names():
         logger.info("Creating project_verification_state table")
+
+    if 'remote_machines' not in inspector.get_table_names():
+        logger.info("Creating remote_machines table")
+
+    if 'remote_agents' not in inspector.get_table_names():
+        logger.info("Creating remote_agents table")
 
 
 def _get_engine():
@@ -1054,6 +1102,7 @@ def clear_session_state() -> None:
     with _get_session() as session:
         # Clear all non-permanent tables (rebuilt from live state at runtime)
         session.query(Container).delete()
+        session.query(RemoteAgent).delete()
         session.query(FeatureCache).delete()
         session.query(FeatureStatsCache).delete()
         session.query(ProjectVerificationState).delete()
@@ -1446,5 +1495,243 @@ def clear_verification_state(project_name: str) -> None:
     """
     with _get_session() as session:
         session.query(ProjectVerificationState).filter_by(project_name=project_name).delete()
+
+
+# =============================================================================
+# Remote Machine CRUD Functions
+# =============================================================================
+
+def add_remote_machine(name: str, host: str, port: int = 22, username: str = "root", ssh_key_path: str | None = None) -> int:
+    """
+    Add a remote machine to the registry.
+
+    Returns:
+        The machine's ID.
+
+    Raises:
+        RegistryError: If a machine with that name already exists.
+    """
+    with _get_session() as session:
+        existing = session.query(RemoteMachine).filter(RemoteMachine.name == name).first()
+        if existing:
+            raise RegistryError(f"Remote machine '{name}' already exists")
+
+        machine = RemoteMachine(
+            name=name,
+            host=host,
+            port=port,
+            username=username,
+            ssh_key_path=ssh_key_path,
+            status="unknown",
+            created_at=datetime.now()
+        )
+        session.add(machine)
+        session.flush()
+        return machine.id
+
+
+def remove_remote_machine(machine_id: int) -> bool:
+    """
+    Remove a remote machine from the registry.
+
+    Returns:
+        True if removed, False if not found.
+    """
+    with _get_session() as session:
+        machine = session.query(RemoteMachine).filter(RemoteMachine.id == machine_id).first()
+        if not machine:
+            return False
+        session.delete(machine)
+    return True
+
+
+def list_remote_machines() -> list[dict[str, Any]]:
+    """List all registered remote machines."""
+    _, SessionLocal = _get_engine()
+    session = SessionLocal()
+    try:
+        machines = session.query(RemoteMachine).order_by(RemoteMachine.name).all()
+        return [
+            {
+                "id": m.id,
+                "name": m.name,
+                "host": m.host,
+                "port": m.port,
+                "username": m.username,
+                "ssh_key_path": m.ssh_key_path,
+                "status": m.status,
+                "last_checked_at": m.last_checked_at.isoformat() if m.last_checked_at else None,
+                "created_at": m.created_at.isoformat() if m.created_at else None,
+            }
+            for m in machines
+        ]
+    finally:
+        session.close()
+
+
+def get_remote_machine(machine_id: int) -> dict[str, Any] | None:
+    """Get a remote machine by ID."""
+    _, SessionLocal = _get_engine()
+    session = SessionLocal()
+    try:
+        m = session.query(RemoteMachine).filter(RemoteMachine.id == machine_id).first()
+        if not m:
+            return None
+        return {
+            "id": m.id,
+            "name": m.name,
+            "host": m.host,
+            "port": m.port,
+            "username": m.username,
+            "ssh_key_path": m.ssh_key_path,
+            "status": m.status,
+            "last_checked_at": m.last_checked_at.isoformat() if m.last_checked_at else None,
+            "created_at": m.created_at.isoformat() if m.created_at else None,
+        }
+    finally:
+        session.close()
+
+
+def update_remote_machine_status(machine_id: int, status: str) -> bool:
+    """Update a remote machine's status."""
+    with _get_session() as session:
+        machine = session.query(RemoteMachine).filter(RemoteMachine.id == machine_id).first()
+        if not machine:
+            return False
+        machine.status = status
+        machine.last_checked_at = datetime.now()
+    return True
+
+
+# =============================================================================
+# Remote Agent CRUD Functions
+# =============================================================================
+
+def create_remote_agent(project_name: str, machine_id: int, agent_number: int = 1) -> int:
+    """
+    Create or get an existing remote agent record.
+
+    Returns:
+        The remote agent's ID.
+    """
+    with _get_session() as session:
+        existing = session.query(RemoteAgent).filter(
+            RemoteAgent.project_name == project_name,
+            RemoteAgent.machine_id == machine_id,
+            RemoteAgent.agent_number == agent_number
+        ).first()
+
+        if existing:
+            existing.status = 'created'
+            existing.current_feature = None
+            existing.pid = None
+            existing.graceful_stop_requested = False
+            existing.restarting = False
+            session.flush()
+            return existing.id
+
+        agent = RemoteAgent(
+            project_name=project_name,
+            machine_id=machine_id,
+            agent_number=agent_number,
+            status='created',
+            created_at=datetime.now()
+        )
+        session.add(agent)
+        session.flush()
+        return agent.id
+
+
+def update_remote_agent(
+    agent_id: int,
+    status: str | None = None,
+    current_feature: str | None = None,
+    pid: int | None = None,
+    graceful_stop_requested: bool | None = None,
+    restarting: bool | None = None,
+) -> bool:
+    """Update a remote agent's state."""
+    with _get_session() as session:
+        agent = session.query(RemoteAgent).filter(RemoteAgent.id == agent_id).first()
+        if not agent:
+            return False
+        if status is not None:
+            agent.status = status
+        if current_feature is not None:
+            agent.current_feature = current_feature if current_feature else None
+        if pid is not None:
+            agent.pid = pid
+        if graceful_stop_requested is not None:
+            agent.graceful_stop_requested = graceful_stop_requested
+        if restarting is not None:
+            agent.restarting = restarting
+        agent.last_activity_at = datetime.now()
+    return True
+
+
+def get_remote_agents_for_project(project_name: str) -> list[dict[str, Any]]:
+    """Get all remote agents for a project."""
+    _, SessionLocal = _get_engine()
+    session = SessionLocal()
+    try:
+        agents = session.query(RemoteAgent).filter(
+            RemoteAgent.project_name == project_name
+        ).all()
+
+        result = []
+        for a in agents:
+            machine = session.query(RemoteMachine).filter(RemoteMachine.id == a.machine_id).first()
+            result.append({
+                "id": a.id,
+                "project_name": a.project_name,
+                "machine_id": a.machine_id,
+                "machine_name": machine.name if machine else "unknown",
+                "agent_number": a.agent_number,
+                "status": a.status,
+                "current_feature": a.current_feature,
+                "pid": a.pid,
+                "graceful_stop_requested": a.graceful_stop_requested,
+                "restarting": a.restarting,
+                "last_activity_at": a.last_activity_at.isoformat() if a.last_activity_at else None,
+            })
+        return result
+    finally:
+        session.close()
+
+
+def get_remote_agent(agent_id: int) -> dict[str, Any] | None:
+    """Get a remote agent by ID."""
+    _, SessionLocal = _get_engine()
+    session = SessionLocal()
+    try:
+        a = session.query(RemoteAgent).filter(RemoteAgent.id == agent_id).first()
+        if not a:
+            return None
+        machine = session.query(RemoteMachine).filter(RemoteMachine.id == a.machine_id).first()
+        return {
+            "id": a.id,
+            "project_name": a.project_name,
+            "machine_id": a.machine_id,
+            "machine_name": machine.name if machine else "unknown",
+            "agent_number": a.agent_number,
+            "status": a.status,
+            "current_feature": a.current_feature,
+            "pid": a.pid,
+            "graceful_stop_requested": a.graceful_stop_requested,
+            "restarting": a.restarting,
+            "last_activity_at": a.last_activity_at.isoformat() if a.last_activity_at else None,
+        }
+    finally:
+        session.close()
+
+
+def delete_remote_agent(agent_id: int) -> bool:
+    """Delete a remote agent record."""
+    with _get_session() as session:
+        agent = session.query(RemoteAgent).filter(RemoteAgent.id == agent_id).first()
+        if not agent:
+            return False
+        session.delete(agent)
+    return True
 
 

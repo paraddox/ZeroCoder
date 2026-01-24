@@ -8,6 +8,7 @@ websockets>=13.0
 python-multipart>=0.0.17
 psutil>=6.0.0
 aiofiles>=24.0.0
+asyncssh>=2.14.0
 
 # Dev dependencies
 ruff>=0.8.0
