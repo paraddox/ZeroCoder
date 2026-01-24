@@ -6,6 +6,11 @@ Main entry point for the Autonomous Coding UI server.
 Provides REST API, WebSocket, and static file serving.
 """
 
+# Initialize centralized logging FIRST, before any other imports
+from .logging_config import cleanup_old_logs, setup_logging
+
+setup_logging()
+
 import asyncio
 import atexit
 import logging
@@ -29,8 +34,8 @@ from fastapi.staticfiles import StaticFiles
 from .routers import (
     agent_router,
     assistant_chat_router,
+    beads_api_router,
     features_router,
-    filesystem_router,
     projects_router,
     spec_creation_router,
 )
@@ -39,9 +44,13 @@ from .services.assistant_chat_session import cleanup_all_sessions as cleanup_ass
 from .services.container_manager import (
     cleanup_all_containers,
     cleanup_idle_containers,
+    cleanup_stale_containers,
+    restore_managers_from_registry,
     start_agent_health_monitor,
 )
-from .services.feature_poller import start_feature_poller
+from .services.beads_manager import initialize_all_projects, start_beads_sync_poller
+from .services.branch_cleanup import cleanup_all_remote_branches
+from .services.task_cleanup import revert_all_in_progress_tasks
 from .websocket import project_websocket
 
 # Idle container check interval (seconds)
@@ -59,13 +68,23 @@ async def idle_container_monitor():
             await asyncio.sleep(IDLE_CHECK_INTERVAL)
             stopped = await cleanup_idle_containers()
             if stopped:
-                import logging
-                logging.getLogger(__name__).info(f"Stopped idle containers: {stopped}")
+                logger.info(f"Stopped idle containers: {stopped}")
         except asyncio.CancelledError:
             break
         except Exception as e:
-            import logging
-            logging.getLogger(__name__).warning(f"Idle monitor error: {e}")
+            logger.warning(f"Idle monitor error: {e}")
+
+
+async def log_cleanup_task():
+    """Periodically clean up old log files (every hour)."""
+    while True:
+        try:
+            await asyncio.sleep(3600)  # Every hour
+            cleanup_old_logs()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.warning(f"Log cleanup error: {e}")
 
 
 def cleanup_on_exit():
@@ -103,10 +122,55 @@ async def lifespan(app: FastAPI):
     # Setup signal handlers
     setup_signal_handlers()
 
+    # Clear session-scoped state from database (prevents stale state from previous run)
+    try:
+        from registry import clear_session_state
+        clear_session_state()
+        logger.info("Cleared session-scoped state from database")
+    except Exception as e:
+        logger.warning(f"Failed to clear session state: {e}")
+
+    # Restore container managers from registry (for server restarts)
+    try:
+        restored = await restore_managers_from_registry()
+        if restored:
+            logger.info(f"Restored {restored} container managers from registry")
+    except Exception as e:
+        logger.warning(f"Failed to restore container managers: {e}")
+
+    # Clean up stale container DB entries (containers that no longer exist in Docker)
+    try:
+        cleaned = await cleanup_stale_containers()
+        if cleaned:
+            logger.info(f"Cleaned up {cleaned} stale container DB entries")
+    except Exception as e:
+        logger.warning(f"Failed to cleanup stale containers: {e}")
+
+    # Initialize beads managers for all registered projects
+    try:
+        await initialize_all_projects()
+    except Exception as e:
+        logger.warning(f"Failed to initialize beads managers: {e}")
+
+    # Clean up remote feature branches for all projects
+    try:
+        await cleanup_all_remote_branches()
+    except Exception as e:
+        logger.warning(f"Failed to cleanup remote branches: {e}")
+
+    # Revert stale in_progress tasks to open
+    try:
+        reverted = await revert_all_in_progress_tasks()
+        if reverted:
+            logger.info(f"Reverted in_progress tasks in {len(reverted)} projects")
+    except Exception as e:
+        logger.warning(f"Failed to revert in_progress tasks: {e}")
+
     # Startup - start background monitors
     idle_monitor_task = asyncio.create_task(idle_container_monitor())
     health_monitor_task = asyncio.create_task(start_agent_health_monitor())
-    feature_poller_task = asyncio.create_task(start_feature_poller())
+    beads_sync_task = asyncio.create_task(start_beads_sync_poller())
+    log_cleanup_monitor_task = asyncio.create_task(log_cleanup_task())
 
     yield
 
@@ -115,7 +179,8 @@ async def lifespan(app: FastAPI):
 
     idle_monitor_task.cancel()
     health_monitor_task.cancel()
-    feature_poller_task.cancel()
+    beads_sync_task.cancel()
+    log_cleanup_monitor_task.cancel()
     try:
         await idle_monitor_task
     except asyncio.CancelledError:
@@ -125,7 +190,11 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
     try:
-        await feature_poller_task
+        await beads_sync_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await log_cleanup_monitor_task
     except asyncio.CancelledError:
         pass
 
@@ -181,10 +250,17 @@ async def require_localhost(request: Request, call_next):
     client_host = request.client.host if request.client else None
 
     # Allow localhost connections
-    if client_host not in ("127.0.0.1", "::1", "localhost", None):
-        raise HTTPException(status_code=403, detail="Localhost access only")
+    if client_host in ("127.0.0.1", "::1", "localhost", None):
+        return await call_next(request)
 
-    return await call_next(request)
+    # Allow Docker network IPs (172.17.0.0/16) for beads API endpoints only
+    # Containers need to call host beads API
+    if client_host and client_host.startswith("172.17."):
+        path = request.url.path
+        if path.startswith("/api/projects/") and "/beads/" in path:
+            return await call_next(request)
+
+    raise HTTPException(status_code=403, detail="Localhost access only")
 
 
 # ============================================================================
@@ -195,8 +271,8 @@ app.include_router(projects_router)
 app.include_router(features_router)
 app.include_router(agent_router)
 app.include_router(spec_creation_router)
-app.include_router(filesystem_router)
 app.include_router(assistant_chat_router)
+app.include_router(beads_api_router)
 
 
 # ============================================================================

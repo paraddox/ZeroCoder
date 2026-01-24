@@ -16,6 +16,9 @@ from pathlib import Path
 # Base templates location (generic templates)
 TEMPLATES_DIR = Path(__file__).parent / ".claude" / "templates"
 
+# Marker for beads workflow section in CLAUDE.md (used for refresh logic)
+BEADS_WORKFLOW_MARKER = "## BEADS WORKFLOW"
+
 
 def get_project_prompts_dir(project_dir: Path) -> Path:
     """Get the prompts directory for a specific project."""
@@ -77,7 +80,7 @@ def get_coding_prompt(project_dir: Path | None = None) -> str:
 
 def get_coding_prompt_yolo(project_dir: Path | None = None) -> str:
     """Load the YOLO mode coding agent prompt (project-specific if available)."""
-    return load_prompt("coding_prompt_yolo", project_dir)
+    return load_prompt("coding_prompt", project_dir)
 
 
 def get_overseer_prompt(project_dir: Path | None = None) -> str:
@@ -85,9 +88,19 @@ def get_overseer_prompt(project_dir: Path | None = None) -> str:
     return load_prompt("overseer_prompt", project_dir)
 
 
-def get_hound_prompt(project_dir: Path | None = None) -> str:
-    """Load the hound agent prompt (project-specific if available)."""
-    return load_prompt("hound_prompt", project_dir)
+def get_reviewer_prompt(project_dir: Path | None, feature_id: str) -> str:
+    """
+    Load the reviewer agent prompt with feature ID injected.
+
+    Args:
+        project_dir: Optional project directory for project-specific prompts
+        feature_id: The feature ID to review (e.g., "beads-42")
+
+    Returns:
+        The reviewer prompt with {FEATURE_ID} replaced
+    """
+    prompt = load_prompt("reviewer_prompt", project_dir)
+    return prompt.replace("{FEATURE_ID}", feature_id)
 
 
 def get_app_spec(project_dir: Path) -> str:
@@ -146,9 +159,9 @@ def scaffold_project_prompts(project_dir: Path) -> Path:
     templates = [
         ("app_spec.template.txt", "app_spec.txt"),
         ("coding_prompt.template.md", "coding_prompt.md"),
-        ("coding_prompt_yolo.template.md", "coding_prompt_yolo.md"),
         ("initializer_prompt.template.md", "initializer_prompt.md"),
         ("overseer_prompt.template.md", "overseer_prompt.md"),
+        ("reviewer_prompt.template.md", "reviewer_prompt.md"),
     ]
 
     copied_files = []
@@ -327,22 +340,22 @@ def refresh_project_prompts(project_dir: Path) -> list[str]:
     is_existing = is_existing_repo_project(project_dir)
 
     # Define template mappings based on project type
-    # Note: hound_prompt is the same for both project types
+    # Both project types now use the same consolidated overseer template
+    # which adapts its behavior based on whether app_spec.txt exists
     if is_existing:
-        # Existing repos use different template variants
+        # Existing repos skip initializer
         templates = [
-            ("coding_prompt_existing.template.md", "coding_prompt.md"),
-            ("overseer_prompt_existing.template.md", "overseer_prompt.md"),
-            ("hound_prompt.template.md", "hound_prompt.md"),
+            ("coding_prompt.template.md", "coding_prompt.md"),
+            ("overseer_prompt.template.md", "overseer_prompt.md"),
+            ("reviewer_prompt.template.md", "reviewer_prompt.md"),
         ]
     else:
         # New projects with app_spec
         templates = [
             ("coding_prompt.template.md", "coding_prompt.md"),
-            ("coding_prompt_yolo.template.md", "coding_prompt_yolo.md"),
             ("initializer_prompt.template.md", "initializer_prompt.md"),
             ("overseer_prompt.template.md", "overseer_prompt.md"),
-            ("hound_prompt.template.md", "hound_prompt.md"),
+            ("reviewer_prompt.template.md", "reviewer_prompt.md"),
         ]
 
     updated_files = []
@@ -355,23 +368,75 @@ def refresh_project_prompts(project_dir: Path) -> list[str]:
             continue
 
         try:
-            # Delete existing file first to handle permission issues
-            # (container may have created files with different ownership)
+            template_content = template_path.read_bytes()
+            # Skip if destination already has identical content
             if dest_path.exists():
+                try:
+                    if dest_path.read_bytes() == template_content:
+                        continue
+                except (OSError, PermissionError):
+                    pass
                 try:
                     dest_path.unlink()
                 except (OSError, PermissionError):
-                    # If unlink fails, try to overwrite anyway
                     pass
-            shutil.copy(template_path, dest_path)
+            dest_path.write_bytes(template_content)
             updated_files.append(dest_name)
         except (OSError, PermissionError) as e:
             print(f"  Warning: Could not update {dest_name}: {e}")
 
+    # Ensure prompts/.gitignore exists (keeps .agent_config.json local-only)
+    gitignore_template = TEMPLATES_DIR / "prompts_gitignore.template"
+    gitignore_dest = project_prompts / ".gitignore"
+    if gitignore_template.exists():
+        try:
+            template_content = gitignore_template.read_text(encoding="utf-8")
+            # Only write if missing or content differs
+            if not gitignore_dest.exists() or gitignore_dest.read_text(encoding="utf-8") != template_content:
+                gitignore_dest.write_text(template_content, encoding="utf-8")
+                updated_files.append(".gitignore")
+        except (OSError, PermissionError) as e:
+            print(f"  Warning: Could not update prompts/.gitignore: {e}")
+
+    # Also refresh CLAUDE.md beads workflow section
+    # This ensures agents always get the latest beads instructions
+    claude_md = project_dir / "CLAUDE.md"
+    claude_template = TEMPLATES_DIR / "project_claude.md.template"
+
+    if claude_template.exists():
+        try:
+            template_content = claude_template.read_text(encoding="utf-8")
+            template_content = template_content.replace("{project_name}", project_dir.name)
+
+            if claude_md.exists():
+                existing_content = claude_md.read_text(encoding="utf-8")
+
+                # Extract beads workflow section from template
+                if BEADS_WORKFLOW_MARKER in template_content:
+                    beads_start = template_content.find(BEADS_WORKFLOW_MARKER)
+                    template_beads_section = template_content[beads_start:]
+
+                    # Replace or append in existing file
+                    if BEADS_WORKFLOW_MARKER in existing_content:
+                        # Replace existing beads section with latest from template
+                        beads_pos = existing_content.find(BEADS_WORKFLOW_MARKER)
+                        updated_content = existing_content[:beads_pos].rstrip() + "\n\n" + template_beads_section
+                    else:
+                        # Append beads section
+                        updated_content = existing_content.rstrip() + "\n\n" + template_beads_section
+
+                    claude_md.write_text(updated_content, encoding="utf-8")
+                    updated_files.append("CLAUDE.md")
+            else:
+                # Create new CLAUDE.md from template
+                claude_md.write_text(template_content, encoding="utf-8")
+                updated_files.append("CLAUDE.md")
+        except (OSError, PermissionError) as e:
+            print(f"  Warning: Could not update CLAUDE.md: {e}")
+
     return updated_files
 
 
-BEADS_WORKFLOW_MARKER = "## BEADS WORKFLOW"
 BEADS_WORKFLOW_SECTION = """
 ## BEADS WORKFLOW
 
@@ -437,14 +502,15 @@ def scaffold_existing_repo(project_dir: Path) -> None:
         except (OSError, PermissionError) as e:
             print(f"  Warning: Could not create CLAUDE.md: {e}")
 
-    # 2. Create prompts directory with existing-repo variants
+    # 2. Create prompts directory with templates
     prompts_dir = get_project_prompts_dir(project_dir)
     prompts_dir.mkdir(parents=True, exist_ok=True)
 
-    # Template mappings for existing repos
+    # Template mappings for existing repos (uses same consolidated overseer template)
     templates = [
-        ("coding_prompt_existing.template.md", "coding_prompt.md"),
-        ("overseer_prompt_existing.template.md", "overseer_prompt.md"),
+        ("coding_prompt.template.md", "coding_prompt.md"),
+        ("overseer_prompt.template.md", "overseer_prompt.md"),
+        ("reviewer_prompt.template.md", "reviewer_prompt.md"),
     ]
 
     for template_name, dest_name in templates:

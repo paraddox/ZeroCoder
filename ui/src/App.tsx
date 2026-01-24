@@ -1,25 +1,29 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useProjects, useFeatures, useAgentStatus, useReopenFeature } from './hooks/useProjects'
 import { useProjectWebSocket } from './hooks/useWebSocket'
 import { useFeatureSound } from './hooks/useFeatureSound'
 import { useCelebration } from './hooks/useCelebration'
 import { useTheme } from './hooks/useTheme'
+import { useContainers, useUpdateContainerCount, useStartAgent, useStopAgent, useGracefulStopAgent } from './hooks/useContainers'
 
 const STORAGE_KEY = 'zerocoder-selected-project'
 import { ProjectTabs } from './components/ProjectTabs'
 import { KanbanBoard } from './components/KanbanBoard'
-import { ControlBar } from './components/ControlBar'
 import { SetupWizard } from './components/SetupWizard'
 import { AddFeatureForm } from './components/AddFeatureForm'
 import { FeatureModal } from './components/FeatureModal'
 import { FeatureEditModal } from './components/FeatureEditModal'
 import { ProjectSettingsModal } from './components/ProjectSettingsModal'
 import { AgentLogViewer } from './components/AgentLogViewer'
+import { FullScreenLogViewer } from './components/FullScreenLogViewer'
 import { AssistantFAB } from './components/AssistantFAB'
 import { AssistantPanel } from './components/AssistantPanel'
 import { IncompleteProjectModal } from './components/IncompleteProjectModal'
 import { NewProjectModal } from './components/NewProjectModal'
 import { DeleteProjectModal } from './components/DeleteProjectModal'
+import { ContainerControl } from './components/ContainerControl'
+import { ContainerList } from './components/ContainerList'
 import { Loader2, Sun, Moon } from 'lucide-react'
 import type { Feature, ProjectSummary, WizardStatus } from './lib/types'
 
@@ -36,6 +40,8 @@ function App() {
   const [selectedFeature, setSelectedFeature] = useState<Feature | null>(null)
   const [setupComplete, setSetupComplete] = useState(true) // Start optimistic
   const [logViewerExpanded, setLogViewerExpanded] = useState(false)
+  const [logContainerFilter, setLogContainerFilter] = useState<number | null>(null)
+  const [showFullScreenLogs, setShowFullScreenLogs] = useState(false)
   const [assistantOpen, setAssistantOpen] = useState(false)
 
   // Incomplete project wizard resume state
@@ -55,22 +61,51 @@ function App() {
   // Edit feature modal state
   const [editingFeature, setEditingFeature] = useState<Feature | null>(null)
 
+  const queryClient = useQueryClient()
   const { data: projects, isLoading: projectsLoading, refetch: refetchProjects } = useProjects()
   const { data: features } = useFeatures(selectedProject)
   const { data: agentStatusData } = useAgentStatus(selectedProject)
+  const { data: containers, isLoading: containersLoading, refetch: refetchContainers } = useContainers(selectedProject)
   const reopenFeature = useReopenFeature(selectedProject ?? '')
   const wsState = useProjectWebSocket(selectedProject)
   const { theme, toggleTheme } = useTheme()
 
+  // Container control mutations
+  const updateContainerCount = useUpdateContainerCount(selectedProject ?? '')
+  const startAgent = useStartAgent(selectedProject ?? '')
+  const stopAgent = useStopAgent(selectedProject ?? '')
+  const gracefulStopAgent = useGracefulStopAgent(selectedProject ?? '')
+
   // Play sounds when features move between columns
-  useFeatureSound(features)
+  useFeatureSound(features, selectedProject)
 
   // Celebrate when all features are complete
   useCelebration(features, selectedProject)
 
+  // Refetch containers when WebSocket notifies of container update (e.g., current_feature changed)
+  useEffect(() => {
+    if (wsState.containerUpdateCounter > 0) {
+      refetchContainers()
+    }
+  }, [wsState.containerUpdateCounter, refetchContainers])
+
   // Persist selected project to localStorage
   const handleSelectProject = useCallback((project: string | null) => {
     setSelectedProject(project)
+    setLogContainerFilter(null)
+    // Reset UI state to prevent stale modals/panels showing wrong project context
+    setShowAddFeature(false)
+    setSelectedFeature(null)
+    setEditingFeature(null)
+    setShowSettingsModal(false)
+    setShowDeleteModal(false)
+    setShowFullScreenLogs(false)
+    setAssistantOpen(false)
+    // Reset queries to prevent stale cached data from showing during project switch
+    if (project) {
+      queryClient.resetQueries({ queryKey: ['agent-status', project] })
+      queryClient.resetQueries({ queryKey: ['containers', project] })
+    }
     try {
       if (project) {
         localStorage.setItem(STORAGE_KEY, project)
@@ -80,7 +115,7 @@ function App() {
     } catch {
       // localStorage not available
     }
-  }, [])
+  }, [queryClient])
 
   // Handle click on incomplete project in selector
   const handleIncompleteProjectClick = useCallback((project: ProjectSummary) => {
@@ -131,6 +166,56 @@ function App() {
     reopenFeature.mutate(feature.id)
   }, [reopenFeature])
 
+  // Container control handlers
+  const handleContainerCountChange = useCallback(async (count: number) => {
+    try {
+      await updateContainerCount.mutateAsync(count)
+    } catch (err) {
+      console.error('Failed to update container count:', err)
+    }
+  }, [updateContainerCount])
+
+  const handleStartAgent = useCallback(async () => {
+    try {
+      await startAgent.mutateAsync(false)
+    } catch (err) {
+      console.error('Failed to start agent:', err)
+    }
+  }, [startAgent])
+
+  const handleStopAgent = useCallback(async () => {
+    try {
+      await stopAgent.mutateAsync()
+    } catch (err) {
+      console.error('Failed to stop agent:', err)
+    }
+  }, [stopAgent])
+
+  const handleGracefulStop = useCallback(async () => {
+    try {
+      await gracefulStopAgent.mutateAsync()
+    } catch (err) {
+      console.error('Failed to initiate graceful stop:', err)
+    }
+  }, [gracefulStopAgent])
+
+  const handleEditTasks = useCallback(() => {
+    // Open edit tasks mode - could open a modal or navigate to edit view
+    // For now, open assistant panel which allows task management
+    setAssistantOpen(true)
+  }, [])
+
+  const handleViewContainerLogs = useCallback((containerNumber: number) => {
+    // Expand log viewer and filter by container
+    setLogViewerExpanded(true)
+    setLogContainerFilter(containerNumber)
+  }, [])
+
+  // Get current project data for container count
+  const currentProject = projects?.find(p => p.name === selectedProject)
+  const targetContainerCount = currentProject?.target_container_count ?? 1
+  const runningContainerCount = containers?.filter(c => c.status === 'running').length ?? 0
+
   // Validate stored project exists (clear if project was deleted)
   useEffect(() => {
     if (selectedProject && projects && !projects.some(p => p.name === selectedProject)) {
@@ -150,6 +235,13 @@ function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ignore if user is typing in an input
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return
+      }
+
+      // Shift+D : Open full-screen log viewer
+      if (e.shiftKey && (e.key === 'd' || e.key === 'D')) {
+        e.preventDefault()
+        setShowFullScreenLogs(prev => !prev)
         return
       }
 
@@ -173,7 +265,9 @@ function App() {
 
       // Escape : Close modals
       if (e.key === 'Escape') {
-        if (assistantOpen) {
+        if (showFullScreenLogs) {
+          setShowFullScreenLogs(false)
+        } else if (assistantOpen) {
           setAssistantOpen(false)
         } else if (showSettingsModal) {
           setShowSettingsModal(false)
@@ -191,7 +285,7 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [selectedProject, showAddFeature, selectedFeature, editingFeature, logViewerExpanded, assistantOpen, showSettingsModal])
+  }, [selectedProject, showAddFeature, selectedFeature, editingFeature, logViewerExpanded, assistantOpen, showSettingsModal, showFullScreenLogs])
 
   // Combine WebSocket progress with feature data
   const progress = wsState.progress.total > 0 ? wsState.progress : {
@@ -216,6 +310,7 @@ function App() {
           <div className="flex items-center justify-between">
             {/* Logo and Theme */}
             <div className="flex items-center gap-3">
+              <img src="/favicon.svg" alt="" className="w-7 h-7" />
               <h1 className="font-display text-xl font-medium tracking-tight text-[var(--color-text)]">
                 ZeroCoder
               </h1>
@@ -239,40 +334,60 @@ function App() {
               onSelectProject={handleSelectProject}
               onIncompleteProjectClick={handleIncompleteProjectClick}
               isLoading={projectsLoading}
+              currentProgress={progress}
             />
           </div>
         </div>
       </header>
 
-      {/* Control Bar */}
-      {selectedProject && (
-        <ControlBar
-          projectName={selectedProject}
-          agentStatus={wsState.agentStatus}
-          yoloMode={agentStatusData?.yolo_mode ?? false}
-          agentRunning={agentStatusData?.agent_running ?? false}
-          gracefulStopRequested={wsState.gracefulStopRequested}
-          progress={progress}
-          isConnected={wsState.isConnected}
-          onAddFeature={() => setShowAddFeature(true)}
-          onSettings={() => setShowSettingsModal(true)}
-          onDelete={() => setShowDeleteModal(true)}
-        />
-      )}
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-6 py-8">
         {!selectedProject ? (
           <div className="empty-state mt-12">
-            <h2 className="font-display text-2xl font-medium mb-3 text-[var(--color-text)]">
-              Welcome to ZeroCoder
-            </h2>
-            <p className="text-[var(--color-text-secondary)]">
-              Select a project from the dropdown above or create a new one to get started.
+            <img
+              src="/banner.png"
+              alt="ZeroCoder"
+              className="max-w-md mx-auto mb-8 rounded-lg"
+            />
+            <p className="text-[var(--color-text-secondary)] text-lg">
+              Select a project from the tabs above or create a new one to get started.
             </p>
           </div>
         ) : (
           <div className="space-y-6">
+            {/* Unified Toolbar - control buttons and actions */}
+            <ContainerControl
+              key={selectedProject}
+              projectName={selectedProject}
+              agentRunning={agentStatusData?.agent_running ?? false}
+              gracefulStopRequested={wsState.gracefulStopRequested}
+              progress={progress}
+              isConnected={wsState.isConnected}
+              onStart={handleStartAgent}
+              onStopNow={handleStopAgent}
+              onGracefulStop={handleGracefulStop}
+              onEditTasks={handleEditTasks}
+              onAddFeature={() => setShowAddFeature(true)}
+              onSettings={() => setShowSettingsModal(true)}
+              onDelete={() => setShowDeleteModal(true)}
+            />
+
+            {/* Container List - show running containers with status and controls */}
+            {containers && (
+              <ContainerList
+                containers={containers}
+                onViewLogs={handleViewContainerLogs}
+                isLoading={containersLoading}
+                agentStatus={wsState.agentStatus}
+                agentRunning={agentStatusData?.agent_running ?? false}
+                gracefulStopRequested={wsState.gracefulStopRequested}
+                targetCount={targetContainerCount}
+                runningCount={runningContainerCount}
+                onTargetChange={handleContainerCountChange}
+              />
+            )}
+
             {/* Agent Log Viewer - replaces both AgentThought and DebugLogViewer */}
             <AgentLogViewer
               logs={wsState.logs}
@@ -280,6 +395,10 @@ function App() {
               isExpanded={logViewerExpanded}
               onToggleExpanded={() => setLogViewerExpanded(!logViewerExpanded)}
               onClearLogs={wsState.clearLogs}
+              containerFilter={logContainerFilter}
+              onContainerFilterChange={setLogContainerFilter}
+              registeredContainers={wsState.containers}
+              onOpenFullScreen={() => setShowFullScreenLogs(true)}
             />
 
             {/* Initializing Features State - show when agent is running but no features yet */}
@@ -385,6 +504,15 @@ function App() {
         project={projects?.find(p => p.name === selectedProject) ?? null}
         onClose={() => setShowDeleteModal(false)}
         onDeleted={handleProjectDeleted}
+      />
+
+      {/* Full Screen Log Viewer */}
+      <FullScreenLogViewer
+        isOpen={showFullScreenLogs}
+        onClose={() => setShowFullScreenLogs(false)}
+        logs={wsState.logs}
+        projectName={selectedProject}
+        registeredContainers={wsState.containers}
       />
     </div>
   )

@@ -13,6 +13,11 @@
           }
         }
       }
+    },
+    "minimax-coding-plan": {
+      "models": {
+        "MiniMax-M2.1": {}
+      }
     }
   },
   "permission": {
@@ -33,7 +38,8 @@
         "Z_AI_API_KEY": "{env:ZHIPU_API_KEY}",
         "Z_AI_MODE": "ZAI"
       },
-      "enabled": true
+      "enabled": true,
+      "timeout": 30000
     },
     "zread": {
       "type": "remote",
@@ -42,7 +48,26 @@
       "headers": {
         "Authorization": "Bearer {env:ZHIPU_API_KEY}"
       },
-      "enabled": true
+      "enabled": true,
+      "timeout": 30000
+    },
+    "minimax": {
+      "type": "local",
+      "command": ["uvx", "minimax-coding-plan-mcp"],
+      "environment": {
+        "MINIMAX_API_KEY": "{env:MINIMAX_API_KEY}",
+        "MINIMAX_MCP_BASE_PATH": "/tmp/minimax-output",
+        "MINIMAX_API_HOST": "https://api.minimax.io",
+        "MINIMAX_API_RESOURCE_MODE": "url"
+      },
+      "enabled": true,
+      "timeout": 30000
+    },
+    "context7": {
+      "type": "local",
+      "command": ["npx", "-y", "@upstash/context7-mcp"],
+      "enabled": true,
+      "timeout": 30000
     }
   }
 }

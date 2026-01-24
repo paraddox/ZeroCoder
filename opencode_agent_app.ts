@@ -23,19 +23,124 @@ const EXIT_GRACEFUL_STOP = 129;
 const EXIT_INTERRUPTED = 130;
 const EXIT_CONTEXT_LIMIT = 131;  // Context limit reached - restart with fresh context
 
-// Context monitoring constants
-const CONTEXT_LIMIT_TOKENS = 200000;  // GLM-4.7 context window (200K)
-const EXIT_THRESHOLD = 0.70;          // Exit at 70% (~140K tokens)
+// Context monitoring constants (defaults, overridden by model config)
+let CONTEXT_LIMIT_TOKENS = 200000;  // Default: GLM-4.7 context window (200K)
+const EXIT_THRESHOLD = 0.70;          // Exit at 70%
 const CONTEXT_CHECK_INTERVAL_MS = 30000;  // Check every 30 seconds
 
 // Project directory (mounted in container)
 const PROJECT_DIR = "/project";
+
+// Agent config file (contains model selection)
+const AGENT_CONFIG_FILE = path.join(PROJECT_DIR, "prompts", ".agent_config.json");
+
+// Model configuration mapping: internal ID -> OpenCode provider/model string
+const MODEL_MAPPING: Record<string, { provider: string; contextLimit: number }> = {
+  "glm-4-7": { provider: "zai-coding-plan/glm-4.7", contextLimit: 200000 },
+  "minimax-m2-1": { provider: "minimax-coding-plan/MiniMax-M2.1", contextLimit: 1000000 },
+};
+const DEFAULT_MODEL = "glm-4-7";
 
 // Graceful stop flag file
 const GRACEFUL_STOP_FLAG = path.join(PROJECT_DIR, ".graceful_stop");
 
 // Agent log file (shared with container entrypoint for docker logs visibility)
 const AGENT_LOG_FILE = "/var/log/agent.log";
+
+// Host API configuration (for graceful stop detection)
+const HOST_API_URL = process.env.HOST_API_URL || "http://host.docker.internal:8888";
+const PROJECT_NAME = process.env.PROJECT_NAME || "";
+const CONTAINER_NUMBER = parseInt(process.env.CONTAINER_NUMBER || "1", 10);
+
+// Track if we've already logged an API failure (avoid spam)
+let apiFailureLogged = false;
+
+// State file for crash recovery (in project dir so host can read it)
+const STATE_FILE = path.join(PROJECT_DIR, ".agent_state.json");
+
+/**
+ * Read agent config to get the selected model
+ */
+function getAgentModel(): string {
+  // Environment variable takes priority (passed by host container_manager)
+  const envModel = process.env.AGENT_MODEL;
+  if (envModel) {
+    log("CONFIG", `Using model from environment: ${envModel}`);
+    return envModel;
+  }
+  // Fall back to config file
+  try {
+    if (fs.existsSync(AGENT_CONFIG_FILE)) {
+      const config = JSON.parse(fs.readFileSync(AGENT_CONFIG_FILE, "utf8"));
+      return config.agent_model || DEFAULT_MODEL;
+    }
+  } catch (e) {
+    log("WARN", `Failed to read agent config: ${e}`);
+  }
+  return DEFAULT_MODEL;
+}
+
+/**
+ * Get model configuration (provider string and context limit)
+ */
+function getModelConfig(): { provider: string; contextLimit: number } {
+  const modelId = getAgentModel();
+  const config = MODEL_MAPPING[modelId] || MODEL_MAPPING[DEFAULT_MODEL];
+  log("CONFIG", `Using model: ${modelId} (${config.provider})`);
+  return config;
+}
+
+/**
+ * Update the OpenCode config file with the selected model
+ */
+function updateOpencodeConfig(provider: string, agentType: string): void {
+  const configPath = "/home/coder/.config/opencode/config.json";
+  try {
+    if (fs.existsSync(configPath)) {
+      const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      const oldModel = config.model;
+      config.model = provider;
+
+      // Enable MCP servers for all agent types
+      if (config.mcp) {
+        for (const key of Object.keys(config.mcp)) {
+          config.mcp[key].enabled = true;
+        }
+        log("CONFIG", "Enabled MCP servers for container session");
+      }
+
+      fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+      log("CONFIG", `Updated OpenCode model: ${oldModel} -> ${provider}`);
+    }
+  } catch (e) {
+    log("WARN", `Failed to update OpenCode config: ${e}`);
+  }
+}
+
+/**
+ * Save state for crash recovery (mirrors agent_app.py behavior)
+ */
+function saveState(state: Record<string, unknown>): void {
+  try {
+    state.updated_at = getLocalTimestamp();
+    fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+  } catch {
+    // Ignore errors
+  }
+}
+
+/**
+ * Clear state after successful completion
+ */
+function clearState(): void {
+  try {
+    if (fs.existsSync(STATE_FILE)) {
+      fs.unlinkSync(STATE_FILE);
+    }
+  } catch {
+    // Ignore errors
+  }
+}
 
 /**
  * Get local ISO timestamp (without Z suffix, uses system timezone)
@@ -90,7 +195,43 @@ async function readStdin(): Promise<string> {
 }
 
 /**
- * Check if graceful stop was requested
+ * Check if graceful stop was requested via host API
+ */
+async function checkGracefulStopAsync(): Promise<boolean> {
+  // Fall back to file check if API not available (backwards compatibility)
+  try {
+    if (fs.existsSync(GRACEFUL_STOP_FLAG)) {
+      return true;
+    }
+  } catch {
+    // Ignore file check errors
+  }
+
+  // Query host API for graceful stop state
+  if (!PROJECT_NAME) {
+    return false;
+  }
+
+  try {
+    const url = `${HOST_API_URL}/api/projects/${PROJECT_NAME}/agent/containers/${CONTAINER_NUMBER}/session`;
+    const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (response.ok) {
+      const data = await response.json() as { graceful_stop_requested?: boolean };
+      return data.graceful_stop_requested === true;
+    }
+  } catch (e) {
+    // Only log the first API failure to avoid spamming logs
+    if (!apiFailureLogged) {
+      log("WARN", `Failed to check graceful stop via API: ${e}`);
+      apiFailureLogged = true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Check if graceful stop was requested (sync version, file-only)
  */
 function checkGracefulStop(): boolean {
   try {
@@ -135,6 +276,14 @@ function logTrace(
 async function runAgent(prompt: string, agentType: string): Promise<number> {
   log("AGENT", `Starting OpenCode agent: ${agentType}`);
   log("AGENT", `Prompt length: ${prompt.length} chars`);
+
+  // Get model configuration and update context limit
+  const modelConfig = getModelConfig();
+  CONTEXT_LIMIT_TOKENS = modelConfig.contextLimit;
+  log("AGENT", `Context limit: ${(CONTEXT_LIMIT_TOKENS / 1000).toFixed(0)}K tokens`);
+
+  // Update OpenCode config with the selected model (and toggle MCP for reviewer)
+  updateOpencodeConfig(modelConfig.provider, agentType);
 
   let opencode: { client: any; server: { url: string; close(): void } } | null = null;
   let eventStream: { cancel: () => void } | null = null;
@@ -206,7 +355,7 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
                 // Only log if we have substantial complete content (over 100 chars)
                 if (!props?.delta && part?.text && part.text.length > 100) {
                   // Extract first line as summary
-                  const firstLine = part.text.split('\n')[0].slice(0, 150);
+                  const firstLine = part.text.split('\n')[0].slice(0, 500);
                   log("THINKING", firstLine);
                 }
               }
@@ -215,7 +364,7 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
                 // Skip deltas - too noisy
                 // Only log complete text blocks
                 if (!props?.delta && part?.text && part.text.length > 20) {
-                  const firstLine = part.text.split('\n')[0].slice(0, 200);
+                  const firstLine = part.text.split('\n')[0].slice(0, 500);
                   log("TEXT", firstLine);
                 }
               }
@@ -237,7 +386,7 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
                 logTrace("tool.end", {
                   toolName,
                   toolId: part?.id,
-                  result: typeof result === "string" ? result.slice(0, 500) : result,
+                  result: typeof result === "string" ? result.slice(0, 2000) : result,
                 });
               }
               break;
@@ -272,7 +421,7 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
               logTrace("tool.end", {
                 toolName: props?.name || props?.toolName || "unknown",
                 toolId: props?.id || props?.toolCallId,
-                result: typeof props?.result === "string" ? props.result.slice(0, 500) : props?.result,
+                result: typeof props?.result === "string" ? props.result.slice(0, 2000) : props?.result,
               });
               break;
           }
@@ -305,16 +454,22 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
     const checkIntervalMs = 1000;
     let elapsedMs = 0;
     let lastContextCheck = 0;
+    let lastGracefulStopCheck = 0;
+    const gracefulStopCheckInterval = 10000; // Check API every 10 seconds
 
     while (!sessionComplete && elapsedMs < maxWaitMs) {
       await new Promise(resolve => setTimeout(resolve, checkIntervalMs));
       elapsedMs += checkIntervalMs;
 
-      // Check for graceful stop - don't abort, just flag to exit after completion
-      if (checkGracefulStop() && !gracefulStopRequested) {
-        log("AGENT", "Graceful stop requested, will exit after current session completes...");
-        gracefulStopRequested = true;
-        // Don't call session.abort() - let the current work finish naturally
+      // Check for graceful stop - rate-limited to every 10 seconds to avoid log spam
+      if (elapsedMs - lastGracefulStopCheck >= gracefulStopCheckInterval) {
+        lastGracefulStopCheck = elapsedMs;
+        const shouldStop = await checkGracefulStopAsync();
+        if (shouldStop && !gracefulStopRequested) {
+          log("AGENT", "Graceful stop requested, will exit after current session completes...");
+          gracefulStopRequested = true;
+          // Don't call session.abort() - let the current work finish naturally
+        }
       }
 
       // Periodic context usage check (every 30 seconds)
@@ -368,14 +523,19 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
     }
 
     log("AGENT", "Completed successfully");
+    clearState();
     return EXIT_SUCCESS;
 
   } catch (err: unknown) {
     const error = err as Error;
+    let errorMsg = "unknown error";
+    let errorType = "Exception";
 
     if (err && typeof err === 'object' && 'status' in err) {
       const apiErr = err as { status?: number; message?: string };
-      log("ERROR", `API Error (${apiErr.status}): ${apiErr.message || error.message}`);
+      errorMsg = `API Error (${apiErr.status}): ${apiErr.message || error.message}`;
+      errorType = "APIError";
+      log("ERROR", errorMsg);
 
       if (apiErr.status === 401) {
         log("ERROR", "Authentication failed - check ZHIPU_API_KEY");
@@ -383,12 +543,26 @@ async function runAgent(prompt: string, agentType: string): Promise<number> {
         log("ERROR", "Rate limited - retry after delay");
       }
     } else if (error.message?.includes("timeout") || error.message?.includes("ETIMEDOUT")) {
-      log("ERROR", "Request timed out");
+      errorMsg = "Request timed out";
+      errorType = "TimeoutError";
+      log("ERROR", errorMsg);
     } else if (error.message?.includes("ECONNREFUSED") || error.message?.includes("ENOTFOUND")) {
-      log("ERROR", `Connection failed: ${error.message}`);
+      errorMsg = `Connection failed: ${error.message}`;
+      errorType = "ConnectionError";
+      log("ERROR", errorMsg);
     } else {
-      log("ERROR", `Unexpected error: ${error.message || String(err)}`);
+      errorMsg = error.message || String(err);
+      errorType = error.name || "Exception";
+      log("ERROR", `Unexpected error: ${errorMsg}`);
     }
+
+    // Save error state for host to read
+    saveState({
+      status: "failed",
+      error: errorMsg,
+      error_type: errorType,
+      failed_at: getLocalTimestamp(),
+    });
 
     return EXIT_FAILURE;
   } finally {
@@ -428,11 +602,19 @@ async function main(): Promise<void> {
   // Handle interrupt signal
   process.on("SIGINT", () => {
     log("AGENT", "Interrupted by user");
+    saveState({
+      status: "interrupted",
+      interrupted_at: getLocalTimestamp(),
+    });
     process.exit(EXIT_INTERRUPTED);
   });
 
   process.on("SIGTERM", () => {
     log("AGENT", "Terminated");
+    saveState({
+      status: "terminated",
+      terminated_at: getLocalTimestamp(),
+    });
     process.exit(EXIT_GRACEFUL_STOP);
   });
 

@@ -3,7 +3,7 @@ Progress Tracking Utilities
 ===========================
 
 Functions for tracking and displaying progress of the autonomous coding agent.
-Uses cached feature data from container polling.
+Uses live bd commands via BeadsManager for feature data.
 """
 
 import json
@@ -18,118 +18,65 @@ PROGRESS_CACHE_FILE = ".progress_cache"
 
 def has_features(project_dir: Path, project_name: str | None = None) -> bool:
     """
-    Check if the project has features in beads.
+    Check if the project has features in beads using live bd commands.
 
     This is used to determine if the initializer agent needs to run.
 
-    Returns True if .beads/ exists with issues.
+    Returns True if beads has issues.
     Returns False if no features exist (initializer needs to run).
     """
-    # Try cache first if project_name provided (avoids permission issues)
     if project_name:
         try:
-            from server.services.feature_poller import get_cached_stats
+            from server.services.beads_manager import get_cached_stats
 
             stats = get_cached_stats(project_name)
-            total = stats.get("total", 0)
-            print(f"[DEBUG] has_features cache check: project={project_name}, total={total}")
-            if total > 0:
-                return True
+            return stats.get("total", 0) > 0
         except ImportError:
             pass  # Server modules not available
 
-    # Direct JSONL check
-    issues_file = project_dir / ".beads" / "issues.jsonl"
-    if issues_file.exists():
-        try:
-            with open(issues_file, 'r') as f:
-                for line in f:
-                    if line.strip():
-                        return True  # At least one issue exists
-        except (PermissionError, OSError):
-            pass  # Can't read - try database check
-
-    # Check SQLite database for issues
-    db_file = project_dir / ".beads" / "beads.db"
-    if db_file.exists():
-        try:
-            import sqlite3
-            conn = sqlite3.connect(str(db_file))
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM issues")
-            count = cursor.fetchone()[0]
-            conn.close()
-            print(f"[DEBUG] has_features DB check: project={project_name}, count={count}")
-            return count > 0
-        except Exception as e:
-            print(f"[DEBUG] has_features DB error: {e}")
-            pass  # Database error - assume no issues
-
-    print(f"[DEBUG] has_features returning False for {project_name}")
-    return False
+    # Fallback: check if .beads directory exists
+    return (project_dir / ".beads" / "beads.db").exists()
 
 
 def has_open_features(project_dir: Path, project_name: str | None = None) -> bool:
     """
-    Check if the project has any open or in_progress features.
+    Check for open/in_progress features using live bd commands.
 
     This is used to determine if the overseer agent should run.
     Returns True if there are pending or in_progress features.
     Returns False if all features are closed (overseer should run).
 
     Args:
-        project_dir: Directory containing the project
-        project_name: Optional project name for cache lookup
+        project_dir: Directory containing the project (unused but kept for API compatibility)
+        project_name: Optional project name for bd command lookup
     """
-    # Try cache first if project_name provided (avoids permission issues)
     if project_name:
         try:
-            from server.services.feature_poller import get_cached_stats
+            from server.services.beads_manager import get_cached_stats
 
             stats = get_cached_stats(project_name)
-            open_count = stats.get("pending", 0) + stats.get("in_progress", 0)
-            return open_count > 0
+            return stats.get("pending", 0) + stats.get("in_progress", 0) > 0
         except ImportError:
             pass  # Server modules not available
 
-    # Fallback: Direct JSONL check
-    issues_file = project_dir / ".beads" / "issues.jsonl"
-    if issues_file.exists():
-        try:
-            with open(issues_file, 'r') as f:
-                for line in f:
-                    if line.strip():
-                        try:
-                            issue = json.loads(line)
-                            status = issue.get("status", "open")
-                            if status in ("open", "in_progress"):
-                                return True
-                        except json.JSONDecodeError:
-                            continue
-        except (PermissionError, OSError):
-            pass  # Can't read file
-
-    return False
+    # Fallback: assume features exist (safer)
+    return True
 
 
 def count_passing_tests(project_dir: Path, project_name: str | None = None) -> tuple[int, int, int]:
     """
-    Count passing, in_progress, and total tests.
-
-    Uses cached data from feature_poller. This avoids permission issues
-    when container is running (files may be owned by container user).
+    Count passing, in_progress, and total tests using live bd commands.
 
     Args:
-        project_dir: Directory containing the project
-        project_name: Optional project name for cache lookup
+        project_dir: Directory containing the project (unused but kept for API compatibility)
+        project_name: Optional project name for bd command lookup
 
     Returns:
         (passing_count, in_progress_count, total_count)
     """
-    # Try cache if project_name provided
     if project_name:
         try:
-            from server.services.feature_poller import get_cached_stats
+            from server.services.beads_manager import get_cached_stats
 
             stats = get_cached_stats(project_name)
             if stats.get("total", 0) > 0:
@@ -141,91 +88,31 @@ def count_passing_tests(project_dir: Path, project_name: str | None = None) -> t
         except ImportError:
             pass  # Server modules not available
 
-    # Fallback: try to read JSONL directly (may fail with permission error)
-    issues_file = project_dir / ".beads" / "issues.jsonl"
-    if issues_file.exists():
-        try:
-            passing = 0
-            in_progress = 0
-            total = 0
-            with open(issues_file, 'r') as f:
-                for line in f:
-                    if line.strip():
-                        try:
-                            issue = json.loads(line)
-                            total += 1
-                            status = issue.get("status", "open")
-                            if status == "closed":
-                                passing += 1
-                            elif status == "in_progress":
-                                in_progress += 1
-                        except json.JSONDecodeError:
-                            continue
-            return passing, in_progress, total
-        except (PermissionError, OSError):
-            pass  # Can't read file
-
     return 0, 0, 0
 
 
 def get_all_passing_features(project_dir: Path, project_name: str | None = None) -> list[dict]:
     """
-    Get all passing features for webhook notifications.
-
-    Uses cached data when available.
+    Get all passing features using live bd commands.
 
     Args:
-        project_dir: Directory containing the project
-        project_name: Optional project name for cache lookup
+        project_dir: Directory containing the project (unused but kept for API compatibility)
+        project_name: Optional project name for bd command lookup
 
     Returns:
         List of dicts with id, category, name for each passing feature
     """
-    # Try cache if project_name provided
     if project_name:
         try:
-            from server.services.feature_poller import get_cached_features
+            from server.services.beads_manager import get_cached_features
 
-            cached = get_cached_features(project_name)
-            passing = []
-            for f in cached:
-                if f.get("passes") or f.get("status") == "closed":
-                    passing.append({
-                        "id": f.get("id", ""),
-                        "category": f.get("category", ""),
-                        "name": f.get("name", ""),
-                    })
-            return passing
+            features = get_cached_features(project_name)
+            return [
+                {"id": f.get("id", ""), "category": f.get("category", ""), "name": f.get("name", "")}
+                for f in features if f.get("passes") or f.get("status") == "closed"
+            ]
         except ImportError:
             pass  # Server modules not available
-
-    # Fallback: try to read JSONL directly
-    issues_file = project_dir / ".beads" / "issues.jsonl"
-    if issues_file.exists():
-        try:
-            passing = []
-            with open(issues_file, 'r') as f:
-                for line in f:
-                    if line.strip():
-                        try:
-                            issue = json.loads(line)
-                            if issue.get("status") == "closed":
-                                # Extract category from labels
-                                category = ""
-                                for label in issue.get("labels", []):
-                                    if label.startswith("category:"):
-                                        category = label[9:]
-                                        break
-                                passing.append({
-                                    "id": issue.get("id", ""),
-                                    "category": category,
-                                    "name": issue.get("title", ""),
-                                })
-                        except json.JSONDecodeError:
-                            continue
-            return passing
-        except (PermissionError, OSError):
-            pass  # Can't read file
 
     return []
 

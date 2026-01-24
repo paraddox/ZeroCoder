@@ -59,18 +59,23 @@ export function FeatureCard({
     >
       {/* Header */}
       <div className="flex items-start justify-between gap-2 mb-2">
-        <span
-          className="badge text-xs"
-          style={{
-            backgroundColor: `var(--color-cat-${palette}-bg)`,
-            color: `var(--color-cat-${palette}-text)`,
-            border: `1px solid var(--color-cat-${palette}-border)`,
-          }}
-        >
-          {feature.category}
-        </span>
+        <div className="flex items-center gap-2">
+          <span
+            className="badge text-xs font-mono"
+            style={{
+              backgroundColor: `var(--color-cat-${palette}-bg)`,
+              color: `var(--color-cat-${palette}-text)`,
+              border: `1px solid var(--color-cat-${palette}-border)`,
+            }}
+          >
+            {feature.id}
+          </span>
+          <span className="text-xs text-[var(--color-text-muted)]">
+            {feature.category}
+          </span>
+        </div>
         <span className="font-mono text-xs text-[var(--color-text-muted)]">
-          #{feature.priority}
+          P{feature.priority}
         </span>
       </div>
 

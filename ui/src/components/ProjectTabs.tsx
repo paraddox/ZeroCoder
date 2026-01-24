@@ -10,6 +10,8 @@ interface ProjectTabsProps {
   onSelectProject: (name: string | null) => void
   onIncompleteProjectClick?: (project: ProjectSummary) => void
   isLoading: boolean
+  // Real-time progress for the selected project (from WebSocket)
+  currentProgress?: { passing: number; total: number; percentage: number }
 }
 
 // Helper function to determine status dot configuration
@@ -32,6 +34,7 @@ export function ProjectTabs({
   onSelectProject,
   onIncompleteProjectClick,
   isLoading,
+  currentProgress,
 }: ProjectTabsProps) {
   const [showNewProjectModal, setShowNewProjectModal] = useState(false)
   const [showExistingRepoModal, setShowExistingRepoModal] = useState(false)
@@ -107,11 +110,16 @@ export function ProjectTabs({
                       className="text-[var(--color-warning)]"
                     />
                   )}
-                  {!project.wizard_incomplete && project.stats.total > 0 && (
-                    <span className="badge badge-sm">
-                      {project.stats.percentage}%
-                    </span>
-                  )}
+                  {!project.wizard_incomplete && (() => {
+                    // Use real-time progress for selected project, fall back to static stats
+                    const isSelected = project.name === selectedProject
+                    const stats = isSelected && currentProgress?.total ? currentProgress : project.stats
+                    return stats.total > 0 ? (
+                      <span className="badge badge-sm">
+                        {stats.percentage}%
+                      </span>
+                    ) : null
+                  })()}
                 </button>
               )
             })

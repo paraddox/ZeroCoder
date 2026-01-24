@@ -11,9 +11,10 @@ export interface ProjectStats {
 }
 
 // Agent model options for coder/overseer agents
-export type AgentModel = 'claude-opus-4-5-20251101' | 'claude-sonnet-4-5-20250514' | 'glm-4-7'
+export type AgentModel = 'claude-opus-4-5-20251101' | 'claude-sonnet-4-5-20250514' | 'glm-4-7' | 'minimax-m2-1'
 
 export const AGENT_MODELS: { id: AgentModel; name: string; badge?: string; badgeColor?: string }[] = [
+  { id: 'minimax-m2-1', name: 'MiniMax M2.1', badge: 'OpenCode', badgeColor: 'warning' },
   { id: 'glm-4-7', name: 'GLM 4.7', badge: 'OpenCode', badgeColor: 'warning' },
   { id: 'claude-sonnet-4-5-20250514', name: 'Sonnet 4.5' },
   { id: 'claude-opus-4-5-20251101', name: 'Opus 4.5' },
@@ -21,16 +22,19 @@ export const AGENT_MODELS: { id: AgentModel; name: string; badge?: string; badge
 
 export interface ProjectSummary {
   name: string
-  path: string
+  git_url: string
+  local_path: string  // ~/.zerocoder/projects/{name}
+  is_new: boolean     // False once wizard completed
   has_spec: boolean
   wizard_incomplete: boolean
   stats: ProjectStats
+  target_container_count: number
   agent_status?: AgentStatus
   agent_running?: boolean
   agent_model?: AgentModel
 }
 
-export interface ProjectDetail extends ProjectSummary {
+export interface ProjectDetail extends Omit<ProjectSummary, 'wizard_incomplete'> {
   prompts_dir: string
 }
 
@@ -38,33 +42,21 @@ export interface ProjectSettings {
   agent_model: AgentModel
 }
 
-// Filesystem types
-export interface DriveInfo {
-  letter: string
-  label: string
-  available?: boolean
-}
+// Container types
+export type ContainerType = 'init' | 'coding'
+export type ContainerStatusType = 'not_created' | 'created' | 'running' | 'stopping' | 'stopped' | 'completed'
+export type AgentType = 'coder' | 'initializer' | 'overseer'
+export type SdkType = 'claude' | 'opencode'
 
-export interface DirectoryEntry {
-  name: string
-  path: string
-  is_directory: boolean
-  has_children: boolean
-}
-
-export interface DirectoryListResponse {
-  current_path: string
-  parent_path: string | null
-  entries: DirectoryEntry[]
-  drives: DriveInfo[] | null
-}
-
-export interface PathValidationResponse {
-  valid: boolean
-  exists: boolean
-  is_directory: boolean
-  can_write: boolean
-  message: string
+export interface ContainerInfo {
+  id: number
+  container_number: number
+  container_type: ContainerType
+  status: ContainerStatusType
+  current_feature: string | null
+  docker_container_id: string | null
+  agent_type?: AgentType
+  sdk_type?: SdkType
 }
 
 export interface ProjectPrompts {
@@ -80,7 +72,7 @@ export interface WizardStatusMessage {
   timestamp: string
 }
 
-export type WizardStep = 'name' | 'folder' | 'method' | 'chat'
+export type WizardStep = 'mode' | 'details' | 'method' | 'chat'
 export type SpecMethod = 'claude' | 'manual'
 
 export interface WizardStatus {
@@ -117,7 +109,7 @@ export interface FeatureCreate {
 }
 
 // Agent types
-export type AgentStatus = 'not_created' | 'stopped' | 'running' | 'crashed'
+export type AgentStatus = 'not_created' | 'stopped' | 'running' | 'paused' | 'crashed' | 'completed'
 
 export interface AgentStatusResponse {
   status: AgentStatus
@@ -145,7 +137,7 @@ export interface SetupStatus {
 }
 
 // WebSocket message types
-export type WSMessageType = 'progress' | 'feature_update' | 'log' | 'agent_status' | 'pong' | 'graceful_stop_requested'
+export type WSMessageType = 'progress' | 'feature_update' | 'log' | 'agent_status' | 'pong' | 'graceful_stop_requested' | 'containers'
 
 export interface WSProgressMessage {
   type: 'progress'
@@ -165,11 +157,15 @@ export interface WSLogMessage {
   type: 'log'
   line: string
   timestamp: string
+  container_number?: number
 }
 
 export interface WSAgentStatusMessage {
   type: 'agent_status'
   status: AgentStatus
+  container_number?: number
+  agent_type?: AgentType
+  sdk_type?: SdkType
 }
 
 export interface WSGracefulStopRequestedMessage {
@@ -181,6 +177,22 @@ export interface WSPongMessage {
   type: 'pong'
 }
 
+export interface WSContainersMessage {
+  type: 'containers'
+  containers: Array<{
+    number: number
+    type: 'init' | 'coding'
+    agent_type?: AgentType
+    sdk_type?: SdkType
+  }>
+}
+
+export interface WSContainerUpdateMessage {
+  type: 'container_update'
+  container_number: number
+  current_feature: string | null
+}
+
 export type WSMessage =
   | WSProgressMessage
   | WSFeatureUpdateMessage
@@ -188,6 +200,8 @@ export type WSMessage =
   | WSAgentStatusMessage
   | WSGracefulStopRequestedMessage
   | WSPongMessage
+  | WSContainersMessage
+  | WSContainerUpdateMessage
 
 // ============================================================================
 // Spec Chat Types

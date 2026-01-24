@@ -5,6 +5,19 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import type { WSMessage, AgentStatus } from '../lib/types'
 
+export interface LogEntry {
+  line: string
+  timestamp: string
+  container_number?: number
+}
+
+export interface ContainerInfo {
+  number: number
+  type: 'init' | 'coding'
+  agent_type?: 'coder' | 'initializer' | 'overseer'
+  sdk_type?: 'claude' | 'opencode'
+}
+
 interface WebSocketState {
   progress: {
     passing: number
@@ -13,20 +26,24 @@ interface WebSocketState {
     percentage: number
   }
   agentStatus: AgentStatus
-  logs: Array<{ line: string; timestamp: string }>
+  logs: LogEntry[]
+  containers: ContainerInfo[]
   isConnected: boolean
   gracefulStopRequested: boolean
+  containerUpdateCounter: number // Increments when container_update received
 }
 
-const MAX_LOGS = 100 // Keep last 100 log lines
+const MAX_LOGS = 1000 // Keep last 1000 log lines (full-screen viewer needs more capacity)
 
-export function useProjectWebSocket(projectName: string | null) {
+export function useWebSocket(projectName: string | null) {
   const [state, setState] = useState<WebSocketState>({
     progress: { passing: 0, in_progress: 0, total: 0, percentage: 0 },
     agentStatus: 'stopped',
     logs: [],
+    containers: [],
     isConnected: false,
     gracefulStopRequested: false,
+    containerUpdateCounter: 0,
   })
 
   const wsRef = useRef<WebSocket | null>(null)
@@ -35,6 +52,7 @@ export function useProjectWebSocket(projectName: string | null) {
   const hasConnectedRef = useRef(false) // Track if we've ever successfully connected
   const shouldReconnectRef = useRef(true) // Whether to auto-reconnect
   const logCacheRef = useRef<Record<string, Array<{ line: string; timestamp: string }>>>({}) // Cache logs per project
+  const currentProjectRef = useRef<string | null>(null) // Track current project to ignore stale messages
 
   const connect = useCallback(() => {
     if (!projectName || !shouldReconnectRef.current) return
@@ -55,6 +73,11 @@ export function useProjectWebSocket(projectName: string | null) {
       }
 
       ws.onmessage = (event) => {
+        // Ignore messages if project has changed (stale WebSocket)
+        if (currentProjectRef.current !== projectName) {
+          return
+        }
+
         try {
           const message: WSMessage = JSON.parse(event.data)
 
@@ -81,10 +104,14 @@ export function useProjectWebSocket(projectName: string | null) {
               break
 
             case 'log': {
-              const logEntry = { line: message.line, timestamp: message.timestamp }
+              const logEntry: LogEntry = {
+                line: message.line,
+                timestamp: message.timestamp,
+                container_number: message.container_number,
+              }
               setState(prev => {
                 const newLogs = [...prev.logs, logEntry]
-                // Keep last 100 logs
+                // Keep last MAX_LOGS entries
                 const trimmedLogs = newLogs.slice(-MAX_LOGS)
 
                 // Update cache for current project
@@ -104,8 +131,23 @@ export function useProjectWebSocket(projectName: string | null) {
               }))
               break
 
+            case 'containers':
+              setState(prev => ({
+                ...prev,
+                containers: message.containers as ContainerInfo[],
+              }))
+              break
+
             case 'feature_update':
               // Feature updates will trigger a refetch via React Query
+              break
+
+            case 'container_update':
+              // Container update (current_feature changed) - increment counter to trigger refetch
+              setState(prev => ({
+                ...prev,
+                containerUpdateCounter: prev.containerUpdateCounter + 1,
+              }))
               break
 
             case 'pong':
@@ -162,14 +204,25 @@ export function useProjectWebSocket(projectName: string | null) {
 
   // Connect when project changes
   useEffect(() => {
+    // Track current project to ignore stale WebSocket messages
+    currentProjectRef.current = projectName
+
     // Reset refs for new project
     hasConnectedRef.current = false
     shouldReconnectRef.current = true
     reconnectAttempts.current = 0
 
     if (!projectName) {
-      // No project selected - clear logs
-      setState(prev => ({ ...prev, logs: [] }))
+      // No project selected - reset all state
+      setState({
+        progress: { passing: 0, in_progress: 0, total: 0, percentage: 0 },
+        agentStatus: 'stopped',
+        logs: [],
+        containers: [],
+        isConnected: false,
+        gracefulStopRequested: false,
+        containerUpdateCounter: 0,
+      })
       if (wsRef.current) {
         wsRef.current.close()
         wsRef.current = null
@@ -177,11 +230,16 @@ export function useProjectWebSocket(projectName: string | null) {
       return
     }
 
-    // Restore cached logs for this project (or empty array)
-    setState(prev => ({
-      ...prev,
+    // Reset ALL state for new project, restoring only cached logs
+    setState({
+      progress: { passing: 0, in_progress: 0, total: 0, percentage: 0 },
+      agentStatus: 'stopped',
       logs: logCacheRef.current[projectName] || [],
-    }))
+      containers: [],
+      isConnected: false,
+      gracefulStopRequested: false,
+      containerUpdateCounter: 0,
+    })
 
     connect()
 
@@ -215,3 +273,5 @@ export function useProjectWebSocket(projectName: string | null) {
     clearLogs,
   }
 }
+
+export const useProjectWebSocket = useWebSocket

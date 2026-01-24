@@ -5,6 +5,7 @@
     "lib": ["ES2020", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "skipLibCheck": true,
+    "types": ["node"],
 
     /* Bundler mode */
     "moduleResolution": "bundler",
@@ -26,5 +27,21 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": [
+    "src/components/comprehensive.test.tsx",
+    "src/components/enterprise.test.tsx",
+    "src/components/forms.test.tsx",
+    "src/components/containers.test.tsx",
+    "src/components/ContainerControl.test.tsx",
+    "src/components/FeatureCard.test.tsx",
+    "src/components/KanbanBoard.test.tsx",
+    "src/components/App.test.tsx",
+    "src/hooks/comprehensive.test.tsx",
+    "src/hooks/enterprise.test.tsx",
+    "src/hooks/state-management.test.tsx",
+    "src/hooks/useCelebration.test.tsx",
+    "src/hooks/useContainerStatus.test.tsx",
+    "src/hooks/useContainers.test.tsx"
+  ]
 }

@@ -66,11 +66,19 @@ function getFeatureState(features: FeatureListResponse | undefined): FeatureStat
   }
 }
 
-export function useFeatureSound(features: FeatureListResponse | undefined): void {
+export function useFeatureSound(features: FeatureListResponse | undefined, projectName: string | null): void {
   const prevStateRef = useRef<FeatureState | null>(null)
   const isInitializedRef = useRef(false)
+  const prevProjectRef = useRef<string | null>(null)
 
   useEffect(() => {
+    // Reset refs when project changes to prevent cross-project sound triggers
+    if (prevProjectRef.current !== projectName) {
+      prevProjectRef.current = projectName
+      prevStateRef.current = null
+      isInitializedRef.current = false
+    }
+
     if (!features) return
 
     const currentState = getFeatureState(features)
@@ -105,5 +113,5 @@ export function useFeatureSound(features: FeatureListResponse | undefined): void
     }
 
     prevStateRef.current = currentState
-  }, [features])
+  }, [features, projectName])
 }

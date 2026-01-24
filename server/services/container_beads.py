@@ -14,9 +14,36 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-def get_container_name(project_name: str) -> str:
-    """Get Docker container name for a project."""
-    return f"zerocoder-{project_name}"
+def get_container_name(project_name: str, container_number: int | None = None) -> str:
+    """
+    Get Docker container name for a project.
+
+    Args:
+        project_name: Name of the project
+        container_number: Specific container number (0=init, 1-10=coding).
+                         If None, finds the first running container.
+
+    Returns:
+        Container name in format zerocoder-{project}-{id} or zerocoder-{project}-init
+    """
+    if container_number is not None:
+        if container_number == 0:
+            return f"zerocoder-{project_name}-init"
+        return f"zerocoder-{project_name}-{container_number}"
+
+    # Find first running container for this project
+    from .container_manager import _managers, _managers_lock
+    with _managers_lock:
+        if project_name in _managers:
+            for num, manager in _managers[project_name].items():
+                if manager.status == "running":
+                    return manager.container_name
+            # No running container - return first one (might be stopped)
+            for num, manager in _managers[project_name].items():
+                return manager.container_name
+
+    # Default fallback (shouldn't hit this with proper container management)
+    return f"zerocoder-{project_name}-1"
 
 
 async def send_beads_command(project_name: str, command: dict, timeout: int = 30) -> dict:
@@ -120,12 +147,17 @@ class ContainerBeadsClient:
         self.project_name = project_name
 
     def is_container_running(self) -> bool:
-        """Check if the container is running."""
+        """Check if any container is running for this project."""
         from .container_manager import _managers, _managers_lock
 
         with _managers_lock:
-            manager = _managers.get(self.project_name)
-            return manager is not None and manager.status == "running"
+            if self.project_name not in _managers:
+                return False
+            # Check if any container for this project is running
+            for manager in _managers[self.project_name].values():
+                if manager.status == "running":
+                    return True
+            return False
 
     async def list_all(self) -> list[dict]:
         """List all features."""

@@ -103,9 +103,11 @@ ZeroCoder uses a per-project container architecture for isolated, sandboxed deve
 - **Each project gets:** Its own Docker container with Claude Code + beads CLI
 - **Benefits:** Multiple projects can run simultaneously, each fully isolated
 
-**Build the project container image:**
+**Build the project container image (with SSH key for git clone):**
 ```bash
-docker build -f Dockerfile.project -t zerocoder-project .
+DOCKER_BUILDKIT=1 docker build \
+  --secret id=ssh_key,src=$HOME/.ssh/id_ed25519 \
+  -f Dockerfile.project -t zerocoder-project .
 ```
 
 **Run the test suite:**
@@ -121,16 +123,19 @@ This builds the image, starts the server, creates test projects, spins up contai
 ```
 
 When you start an agent for a project via the UI, it automatically:
-1. Creates a container named `zerocoder-{project-name}`
-2. Mounts the project directory at `/project`
+1. Creates a container named `zerocoder-{project-name}-{N}` (N = container number)
+2. Clones the project repository fresh from git (no volume mounts)
 3. Passes Claude credentials via environment variables
 4. Runs Claude Code with beads-based feature tracking
 
+**Note:** Multiple containers can run simultaneously for the same project (e.g., `zerocoder-nexus-1`, `zerocoder-nexus-2`). Each claims different features via atomic locking through the host API.
+
 **Container lifecycle:**
-- `not_created` → `running` → `stopped` (60 min idle timeout) → `completed`
-- Stopped containers persist and restart quickly
-- Progress is visible in all states (reads from `.beads/` on host)
-- Multiple containers can run simultaneously for different projects
+- `not_created` → `running` → `stopped` (15 min idle timeout) → `completed`
+- Containers clone repos fresh at startup (fully standalone, no volume mounts)
+- SSH key is baked into image at build time using BuildKit secrets
+- Progress synced via host API (beads operations route through server)
+- Multiple containers can run simultaneously with 60-second staggered startup
 - `completed` status when all features are done
 
 **Fresh context per task:**
@@ -156,12 +161,14 @@ When you start an agent for a project via the UI, it automatically:
 
 ### Feature Management
 
-Features are tracked using **beads** (git-backed issue tracking). Each project has its own `.beads/` directory. Claude Code uses the `bd` CLI directly via instructions in the project's `CLAUDE.md`:
-- `bd stats` - Progress statistics
-- `bd ready` - Get available features (no blockers)
-- `bd list --status=open` - List pending features
-- `bd close <id>` - Mark feature complete
-- `bd create` - Create new features
+Features are tracked using **beads** (git-backed issue tracking). Each project has its own `.beads/` directory. Agents use `beads_client` which routes through the host API for coordination:
+- `beads_client claim` - Atomically claim next available feature (server-side locking)
+- `beads_client stats` - Progress statistics
+- `beads_client list --status=open` - List pending features
+- `beads_client close <id>` - Mark feature complete
+- `beads_client show <id>` - View feature details
+
+This architecture enables multiple containers to work on the same project without conflicts.
 
 ### Session Management
 
@@ -223,8 +230,10 @@ ZeroCoder/
 ├── mcp_server/               # MCP servers for assistant
 │   └── issue_creator_mcp.py  # Issue creation tool for assistant
 ├── container_scripts/        # Scripts that run inside containers
+│   ├── beads_client.sh       # Routes beads commands through host API
+│   ├── beads_commands.py     # Beads CRUD operations
 │   ├── feature_status.py     # Returns feature status as JSON
-│   └── beads_commands.py     # Beads CRUD operations
+│   └── setup_repo.sh         # Repository setup after clone
 ├── ui/                       # React frontend
 │   ├── src/
 │   │   ├── App.tsx           # Main app component
@@ -243,7 +252,6 @@ ZeroCoder/
 │   └── templates/            # Prompt templates for agents
 │       ├── initializer_prompt.template.md
 │       ├── coding_prompt.template.md
-│       ├── overseer_prompt.template.md
 │       └── project_claude.md.template
 ├── requirements.txt          # Python dependencies
 └── .env                      # Optional configuration (N8N webhook)
@@ -294,11 +302,12 @@ The application will typically be available at `http://localhost:3000` or simila
 
 This project uses Docker container isolation for security:
 
-1. **Container Isolation:** Each project runs in its own Docker container (`zerocoder-{project-name}`)
-2. **Filesystem Restrictions:** Container only has access to the mounted project directory at `/project`
-3. **Credential Isolation:** Claude credentials passed via environment variables (not stored in container)
-4. **Non-root Execution:** Claude Code runs as a non-root `coder` user inside the container
-5. **Permission Mode:** The agent uses `bypassPermissions` mode within the sandboxed container
+1. **Container Isolation:** Each project runs in its own Docker container (`zerocoder-{project}-{N}`)
+2. **Standalone Containers:** Containers clone repos fresh at startup - no volume mounts to host filesystem
+3. **SSH Key Security:** SSH key baked into image at build time via BuildKit secrets (not in image layers)
+4. **Credential Isolation:** Claude credentials passed via environment variables (not stored in container)
+5. **Non-root Execution:** Claude Code runs as a non-root `coder` user inside the container
+6. **Permission Mode:** The agent uses `bypassPermissions` mode within the sandboxed container
 
 ---
 

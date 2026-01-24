@@ -15,7 +15,7 @@ from typing import Set
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from .services.container_manager import get_container_manager
+from .services.container_manager import get_all_container_managers
 
 # Lazy imports
 _count_passing_tests = None
@@ -34,6 +34,17 @@ def _get_project_path(project_name: str) -> Path:
     return get_project_path(project_name)
 
 
+def _get_project_git_url(project_name: str) -> str | None:
+    """Get project git URL from registry."""
+    import sys
+    root = Path(__file__).parent.parent
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+
+    from registry import get_project_git_url
+    return get_project_git_url(project_name)
+
+
 def _get_count_passing_tests():
     """Lazy import of count_passing_tests."""
     global _count_passing_tests
@@ -45,6 +56,26 @@ def _get_count_passing_tests():
         from progress import count_passing_tests
         _count_passing_tests = count_passing_tests
     return _count_passing_tests
+
+
+async def _send_containers_list(websocket: WebSocket, project_name: str):
+    """Send containers list with agent info to the WebSocket client."""
+    all_managers = get_all_container_managers(project_name)
+
+    container_list = []
+    for cm in all_managers:
+        container_info = {
+            "number": cm.container_number,
+            "type": cm.container_type,
+            "agent_type": cm._current_agent_type,
+            "sdk_type": "claude" if cm._force_claude_sdk or not cm._is_opencode_model() else "opencode",
+        }
+        container_list.append(container_info)
+
+    await websocket.send_json({
+        "type": "containers",
+        "containers": container_list,
+    })
 
 
 class ConnectionManager:
@@ -166,44 +197,99 @@ async def project_websocket(websocket: WebSocket, project_name: str):
         await websocket.close(code=4004, reason="Project directory not found")
         return
 
+    git_url = _get_project_git_url(project_name)
+    if not git_url:
+        await websocket.close(code=4004, reason="Project has no git URL")
+        return
+
     await manager.connect(websocket, project_name)
 
-    # Get container manager and register callbacks
-    container_manager = get_container_manager(project_name, project_dir)
+    # Get all existing container managers for this project and register callbacks
+    # Note: Don't pre-create a manager - only use managers that already exist
+    # Managers are created when the user starts containers via the Start button
+    all_managers = get_all_container_managers(project_name)
 
-    async def on_output(line: str):
-        """Handle agent output - broadcast to this WebSocket."""
-        try:
-            await websocket.send_json({
-                "type": "log",
-                "line": line,
-                "timestamp": datetime.now().isoformat(),
-            })
-        except Exception:
-            pass  # Connection may be closed
+    # Create callback factory that captures container_number
+    def make_output_callback(container_num: int):
+        async def on_output(line: str):
+            """Handle agent output - broadcast to this WebSocket with container info."""
+            try:
+                await websocket.send_json({
+                    "type": "log",
+                    "line": line,
+                    "timestamp": datetime.now().isoformat(),
+                    "container_number": container_num,
+                })
+            except Exception:
+                pass  # Connection may be closed
+        return on_output
 
-    async def on_status_change(status: str):
-        """Handle status change - broadcast to this WebSocket."""
-        try:
-            await websocket.send_json({
-                "type": "agent_status",
-                "status": status,
-            })
-        except Exception:
-            pass  # Connection may be closed
+    def make_status_callback(container_num: int, cm: "ContainerManager"):
+        async def on_status_change(status: str):
+            """Handle status change - broadcast to this WebSocket."""
+            try:
+                await websocket.send_json({
+                    "type": "agent_status",
+                    "status": status,
+                    "container_number": container_num,
+                    "agent_type": cm._current_agent_type,
+                    "sdk_type": "claude" if cm._force_claude_sdk or not cm._is_opencode_model() else "opencode",
+                })
+            except Exception:
+                pass  # Connection may be closed
+        return on_status_change
 
-    # Register callbacks
-    container_manager.add_output_callback(on_output)
-    container_manager.add_status_callback(on_status_change)
+    # Register callbacks for all containers and store them for cleanup
+    registered_callbacks: list[tuple] = []  # (manager, output_cb, status_cb)
+    registered_container_nums: set[int] = set()
+    for cm in all_managers:
+        output_cb = make_output_callback(cm.container_number)
+        status_cb = make_status_callback(cm.container_number, cm)
+        cm.add_output_callback(output_cb)
+        cm.add_status_callback(status_cb)
+        registered_callbacks.append((cm, output_cb, status_cb))
+        registered_container_nums.add(cm.container_number)
 
-    # Start progress polling task
+    # Background task to register callbacks for newly created containers
+    async def register_new_container_callbacks():
+        """Periodically check for new containers and register callbacks."""
+        logger.info(f"[WS] Started callback registration task for {project_name}")
+        while True:
+            try:
+                await asyncio.sleep(2)  # Check every 2 seconds
+
+                current_managers = get_all_container_managers(project_name)
+                if current_managers:
+                    logger.info(f"[WS] Found {len(current_managers)} managers, registered: {registered_container_nums}")
+                for cm in current_managers:
+                    if cm.container_number not in registered_container_nums:
+                        # New container found - register callbacks
+                        output_cb = make_output_callback(cm.container_number)
+                        status_cb = make_status_callback(cm.container_number, cm)
+                        cm.add_output_callback(output_cb)
+                        cm.add_status_callback(status_cb)
+                        registered_callbacks.append((cm, output_cb, status_cb))
+                        registered_container_nums.add(cm.container_number)
+
+                        logger.info(f"Registered callbacks for new container {cm.container_number}")
+
+                        # Send updated containers list to UI with agent info
+                        await _send_containers_list(websocket, project_name)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"Error checking for new containers: {e}")
+
+    # Start background tasks
     poll_task = asyncio.create_task(poll_progress(websocket, project_name, project_dir))
+    callback_registration_task = asyncio.create_task(register_new_container_callbacks())
 
     try:
-        # Send initial status
+        # Send initial status (use first manager's status, or "not_created" if none)
+        initial_status = all_managers[0].status if all_managers else "not_created"
         await websocket.send_json({
             "type": "agent_status",
-            "status": container_manager.status,
+            "status": initial_status,
         })
 
         # Send initial progress (pass project_name for cache lookup)
@@ -217,6 +303,9 @@ async def project_websocket(websocket: WebSocket, project_name: str):
             "total": total,
             "percentage": round(percentage, 1),
         })
+
+        # Send registered containers list with agent info
+        await _send_containers_list(websocket, project_name)
 
         # Keep connection alive and handle incoming messages
         while True:
@@ -238,16 +327,22 @@ async def project_websocket(websocket: WebSocket, project_name: str):
                 break
 
     finally:
-        # Clean up
+        # Clean up background tasks
         poll_task.cancel()
+        callback_registration_task.cancel()
         try:
             await poll_task
         except asyncio.CancelledError:
             pass
+        try:
+            await callback_registration_task
+        except asyncio.CancelledError:
+            pass
 
-        # Unregister callbacks
-        container_manager.remove_output_callback(on_output)
-        container_manager.remove_status_callback(on_status_change)
+        # Unregister callbacks from all containers
+        for cm, output_cb, status_cb in registered_callbacks:
+            cm.remove_output_callback(output_cb)
+            cm.remove_status_callback(status_cb)
 
         # Disconnect from manager
         await manager.disconnect(websocket, project_name)

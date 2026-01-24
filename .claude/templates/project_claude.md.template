@@ -2,27 +2,43 @@
 
 This project uses **beads** for feature/issue tracking and **Ralph artifacts** for session continuity.
 
+**Architecture Note:** The `beads_client` command routes all requests through the host API (not directly to beads). This enables atomic claiming, server-side locking, and coordination between multiple containers. The host API manages the actual beads operations and syncs changes to git.
+
 ## ⚠️ MANDATORY WORKFLOW - NEVER SKIP
 
 **You MUST follow this workflow. It is NOT optional.**
 
+### Context Loading Order (Execute first, in order)
+
+```bash
+# 1. Operational knowledge (~60 lines max)
+cat AGENTS.md 2>/dev/null || echo "No AGENTS.md"
+
+# 2. Current feature plan (delete if stale)
+cat IMPLEMENTATION_PLAN.md 2>/dev/null || echo "No plan"
+
+# 3. Recent history (last 30 lines only)
+tail -30 IMPLEMENTATION_HISTORY.md 2>/dev/null
+
+# 4. Get progress stats
+beads_client stats
+```
+
 ### Session Flow
 
 ```
-1. READ ARTIFACTS        → cat AGENTS.md; cat IMPLEMENTATION_PLAN.md
-2. GET FEATURE           → bd ready
-3. CLAIM IT              → bd update <id> --status=in_progress
-4. GAP ANALYSIS          → What exists vs what's needed?
-5. PLAN                  → Create/update IMPLEMENTATION_PLAN.md
-6. IMPLEMENT             → Follow the plan
-7. VALIDATE              → npm run lint && npm run typecheck (MUST PASS)
-8. CLOSE                 → bd close <id>
-9. UPDATE ARTIFACTS      → Archive plan, update discoveries
-10. COMMIT + EXIT        → git commit && bd sync
+1. LOAD CONTEXT    → Read artifacts in order above
+2. CLAIM FEATURE   → beads_client claim (atomic, returns issue JSON)
+3. CREATE BRANCH   → feature/{id}-{title-slug}
+4. GAP ANALYSIS    → Create IMPLEMENTATION_PLAN.md
+5. IMPLEMENT       → Follow the plan
+6. VALIDATE        → ./validate.sh (MUST PASS - blocks close)
+7. SELF-REVIEW     → No TODOs, no placeholders, tests work
+8. CLOSE           → beads_client close <id>
+9. MERGE + EXIT    → Merge to main, delete branch, push, EXIT SESSION
 ```
 
-**Skipping `--status=in_progress` breaks the UI monitoring. NEVER skip it.**
-**Features CANNOT be closed until validation passes.**
+**Agent exits after completing one feature. agent_app starts a fresh session for the next feature.**
 
 ---
 
@@ -56,79 +72,125 @@ This file is **overwritten for each feature** and archived to IMPLEMENTATION_HIS
 
 ### Size Limits
 
-- **AGENTS.md**: Keep under 100 lines. Consolidate instead of endlessly appending.
-- **IMPLEMENTATION_HISTORY.md**: Only read last 50-100 lines for context. Full history is for human review.
+- **AGENTS.md**: Keep under 60 lines. Be concise - this is read every session.
+- **IMPLEMENTATION_HISTORY.md**: Only read last 30 lines for context. Full history is for human review.
+- **IMPLEMENTATION_PLAN.md**: Delete if stale (references different feature). Plans are cheap.
 
 ## Workflow
 
-### Starting Work
+### Claiming Work (Atomic)
 
-1. Check what's ready to work on:
-   ```bash
-   bd ready
-   ```
+Use `beads_client claim` to atomically claim the next available feature:
 
-2. Pick a feature and view details:
-   ```bash
-   bd show <feature-id>
-   ```
+```bash
+# Claim next available feature (atomic - server handles locking)
+CLAIM_RESULT=$(beads_client claim)
 
-3. **REQUIRED: Mark the feature as in_progress BEFORE starting any work:**
-   ```bash
-   bd update <feature-id> --status=in_progress
-   ```
-   This step is MANDATORY. It allows the UI to show what you're currently working on.
+if [ $? -ne 0 ]; then
+    echo "No features available - exiting"
+    exit 0
+fi
+
+# Parse the claimed issue
+FEATURE_ID=$(echo "$CLAIM_RESULT" | jq -r '.id')
+FEATURE_TITLE=$(echo "$CLAIM_RESULT" | jq -r '.title' | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd '[:alnum:]-' | cut -c1-30)
+
+# Create feature branch
+BRANCH="feature/${FEATURE_ID}-${FEATURE_TITLE}"
+git checkout -b "$BRANCH"
+
+echo "Claimed $FEATURE_ID on branch $BRANCH"
+```
+
+The `claim` command:
+- Finds the next open issue with no blockers
+- Marks it `in_progress` atomically
+- Returns the full issue details as JSON
+- Uses server-side locking so different agents get different issues
 
 ### Implementing Features
 
-**After marking in_progress:**
+**After claiming and creating your branch:**
 1. Create/update IMPLEMENTATION_PLAN.md with gap analysis + task breakdown
 2. Follow the tasks in your plan
 3. Update discoveries in IMPLEMENTATION_PLAN.md as you work
 4. Test the implementation
 
-### Completing Features (Validation Required)
+### Completing Features (Validation Gate)
 
-**Before closing, validation MUST pass:**
+**Before closing, validation MUST pass (non-negotiable backpressure):**
 
 ```bash
-# Run all validation (check AGENTS.md for project-specific commands)
-npm run lint
-npm run typecheck
+# Run validation (uses project-specific commands from AGENTS.md)
+./validate.sh
 
-# Only after validation passes:
-bd close <feature-id>
+# If validate.sh doesn't exist, use these defaults:
+npm run lint && npm run typecheck && npm test
+
+# Self-review: verify no TODOs, placeholders, or incomplete code
+
+# Only after ALL pass:
+beads_client close "$FEATURE_ID"
 ```
 
-**If validation fails, FIX THE ISSUES before closing.**
+**If validation fails, FIX THE ISSUES. DO NOT close with failing validation.**
 
-Check overall progress:
+### Merge and Exit
+
+After closing the feature, merge to main and exit:
+
 ```bash
-bd stats
+# Archive plan to history
+if [ -f IMPLEMENTATION_PLAN.md ]; then
+    {
+        echo ""
+        echo "---"
+        echo "## Completed: $(date '+%Y-%m-%d %H:%M')"
+        cat IMPLEMENTATION_PLAN.md
+    } >> IMPLEMENTATION_HISTORY.md && rm IMPLEMENTATION_PLAN.md
+fi
+
+# Commit final changes
+git add .
+git diff --cached --quiet || git commit -m "Implement: $FEATURE_TITLE"
+
+# Merge to main
+git fetch origin main
+git checkout main && git pull origin main
+git merge "$BRANCH" --no-ff -m "Merge: $FEATURE_TITLE"
+git push origin main
+
+# Delete feature branch (local and remote)
+git branch -d "$BRANCH"
+git push origin --delete "$BRANCH" 2>/dev/null || true
+
+# Session complete - exit and let agent_app start fresh session
+exit 0
 ```
 
 ### If Blocked
 
 If you encounter a blocker:
 ```bash
-bd update <feature-id> --status=blocked
-bd comments <feature-id> add "Blocked because: <reason>"
+beads_client update "$FEATURE_ID" --status=blocked
+beads_client comments add "$FEATURE_ID" "Blocked because: <reason>"
 ```
 
-Then move to the next available feature with `bd ready`.
+Commit partial work and exit. agent_app will start a new session.
 
 ## Beads Quick Reference
 
+All commands route through the host API for coordination and atomic operations.
+
 | Command | Description |
 |---------|-------------|
-| `bd ready` | List features ready to work on |
-| `bd show <id>` | View feature details |
-| `bd list --status=open` | List all open features |
-| `bd list --status=in_progress` | List features being worked on |
-| `bd update <id> --status=in_progress` | Claim a feature |
-| `bd close <id>` | Mark feature as complete |
-| `bd stats` | Show progress statistics |
-| `bd comments <id> add "..."` | Add a comment to a feature |
+| `beads_client claim` | Claim next available feature (atomic, server-locked) |
+| `beads_client show <id>` | View feature details |
+| `beads_client list --status=open` | List all open features |
+| `beads_client list --status=in_progress` | List features being worked on |
+| `beads_client close <id>` | Mark feature as complete |
+| `beads_client stats` | Show progress statistics |
+| `beads_client comments add <id> "..."` | Add a comment to a feature |
 
 ## Project Guidelines
 
@@ -138,4 +200,4 @@ Then move to the next available feature with `bd ready`.
 - **Update artifacts** - Log discoveries to AGENTS.md
 - Follow existing code patterns and conventions
 - Commit changes with descriptive messages
-- One feature at a time - complete or skip before moving on
+- **One feature per session** - complete, merge, and exit

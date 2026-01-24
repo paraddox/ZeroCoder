@@ -6,15 +6,21 @@ API endpoints for agent/container control (start/stop/send instruction).
 Uses ContainerManager for per-project Docker containers.
 """
 
+import asyncio
+import logging
 import re
+import subprocess
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, HTTPException
 
 from ..schemas import AgentActionResponse, AgentStartRequest, AgentStatus
 from ..services.container_manager import (
     get_container_manager,
+    get_existing_container_manager,
     check_docker_available,
     check_image_exists,
 )
@@ -25,7 +31,7 @@ _root = Path(__file__).parent.parent.parent
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
-from registry import get_project_path
+from registry import get_project_path, get_project_git_url, get_project_info
 from progress import has_features, has_open_features
 from prompts import (
     get_initializer_prompt,
@@ -34,11 +40,116 @@ from prompts import (
     get_overseer_prompt,
     is_existing_repo_project,
 )
+import asyncio
 
 
-def _get_project_path(project_name: str) -> Path:
+def _run_git_recovery(project_dir: Path) -> tuple[bool, str]:
+    """
+    Pre-flight check: Recover from corrupted git state before starting agents.
+
+    Handles:
+    - Stuck rebase/merge/cherry-pick operations
+    - Missing origin remote
+    - Divergent branches
+
+    Returns:
+        Tuple of (success, message)
+    """
+    if not (project_dir / ".git").exists():
+        return True, "Not a git repo"
+
+    def run_git(cmd: list[str], timeout: int = 30) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "-C", str(project_dir)] + cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+
+    messages = []
+
+    try:
+        # 1. Abort any stuck operations
+        for abort_cmd, op_name in [
+            (["rebase", "--abort"], "rebase"),
+            (["merge", "--abort"], "merge"),
+            (["cherry-pick", "--abort"], "cherry-pick"),
+        ]:
+            result = run_git(abort_cmd)
+            if result.returncode == 0:
+                messages.append(f"Aborted stuck {op_name}")
+
+        # 2. Check origin remote exists
+        result = run_git(["remote", "get-url", "origin"])
+        if result.returncode != 0:
+            messages.append("Warning: No origin remote configured")
+
+        # 3. Clean up any ref locks
+        git_dir = project_dir / ".git"
+        if git_dir.is_dir():
+            for lock_file in git_dir.glob("*.lock"):
+                try:
+                    lock_file.unlink()
+                    messages.append(f"Removed stale lock: {lock_file.name}")
+                except Exception:
+                    pass
+            refs_dir = git_dir / "refs"
+            if refs_dir.exists():
+                for lock_file in refs_dir.rglob("*.lock"):
+                    try:
+                        lock_file.unlink()
+                        messages.append(f"Removed stale lock: {lock_file.name}")
+                    except Exception:
+                        pass
+
+        # 4. Check for divergent branches and fix
+        result = run_git(["status", "--porcelain", "-b"])
+        if result.returncode == 0 and "[" in result.stdout:
+            # Has tracking info - check if diverged
+            if "ahead" in result.stdout and "behind" in result.stdout:
+                messages.append("Detected divergent branches")
+                # Reset to remote to fix divergence
+                result = run_git(["fetch", "origin"])
+                if result.returncode == 0:
+                    # Get default branch
+                    default_branch = "main"
+                    result = run_git(["rev-parse", "--verify", "origin/main"])
+                    if result.returncode != 0:
+                        result = run_git(["rev-parse", "--verify", "origin/master"])
+                        if result.returncode == 0:
+                            default_branch = "master"
+
+                    result = run_git(["reset", "--hard", f"origin/{default_branch}"])
+                    if result.returncode == 0:
+                        messages.append(f"Reset to origin/{default_branch}")
+
+        if messages:
+            return True, "; ".join(messages)
+        return True, "Git state OK"
+
+    except subprocess.TimeoutExpired:
+        return False, "Git recovery timed out"
+    except Exception as e:
+        return False, f"Git recovery error: {e}"
+
+
+def _get_project_path(project_name: str) -> Path | None:
     """Get project path from registry."""
     return get_project_path(project_name)
+
+
+def _get_project_git_url(project_name: str) -> str | None:
+    """Get project git URL from registry."""
+    return get_project_git_url(project_name)
+
+
+def _get_registry_functions():
+    """Get registry functions for testing purposes."""
+    return (
+        get_project_path,
+        get_project_git_url,
+        get_project_info,
+    )
 
 
 router = APIRouter(prefix="/api/projects/{project_name}/agent", tags=["agent"])
@@ -54,15 +165,22 @@ def validate_project_name(name: str) -> str:
     return name
 
 
-def get_project_container(project_name: str):
-    """Get the container manager for a project."""
+def get_project_container(project_name: str, container_number: int = 1):
+    """Get the container manager for a project and container number."""
     project_name = validate_project_name(project_name)
     project_dir = _get_project_path(project_name)
+    git_url = _get_project_git_url(project_name)
 
     if not project_dir:
         raise HTTPException(
             status_code=404,
             detail=f"Project '{project_name}' not found in registry"
+        )
+
+    if not git_url:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Project '{project_name}' has no git URL"
         )
 
     if not project_dir.exists():
@@ -71,13 +189,28 @@ def get_project_container(project_name: str):
             detail=f"Project directory not found: {project_dir}"
         )
 
-    return get_container_manager(project_name, project_dir)
+    return get_container_manager(project_name, git_url, container_number, project_dir)
 
 
 @router.get("/status", response_model=AgentStatus)
 async def get_agent_status(project_name: str):
     """Get the current status of the container for a project."""
-    manager = get_project_container(project_name)
+    project_name = validate_project_name(project_name)
+
+    # Check if a manager exists without creating one
+    manager = get_existing_container_manager(project_name, container_number=1)
+
+    if manager is None:
+        # No container has been created yet - return default status
+        return AgentStatus(
+            status="not_created",
+            container_name=f"zerocoder-{project_name}-1",
+            started_at=None,
+            idle_seconds=0,
+            agent_running=False,
+            graceful_stop_requested=False,
+        )
+
     status_dict = manager.get_status_dict()
 
     return AgentStatus(
@@ -146,11 +279,11 @@ async def start_agent(
     if not check_image_exists():
         raise HTTPException(
             status_code=503,
-            detail="Container image 'zerocoder-project' not found. Run: docker build -f Dockerfile.project -t zerocoder-project ."
+            detail="Container image 'zerocoder-project' not found. Run: DOCKER_BUILDKIT=1 docker build --secret id=ssh_key,src=$HOME/.ssh/id_ed25519 -f Dockerfile.project -t zerocoder-project ."
         )
 
     manager = get_project_container(project_name)
-    project_dir = _get_project_path(project_name)
+    project_dir = manager.project_dir  # Use manager's validated project_dir
 
     # Determine the instruction to send
     instruction = request.instruction
@@ -200,41 +333,368 @@ async def start_agent(
     )
 
 
-@router.post("/stop", response_model=AgentActionResponse)
-async def stop_agent(project_name: str):
-    """Stop the container for a project (does not remove it)."""
-    manager = get_project_container(project_name)
-    success, message = await manager.stop()
+@router.post("/start-all", response_model=AgentActionResponse)
+async def start_all_containers(project_name: str):
+    """
+    Start project with init container first, then spawn coding containers.
+
+    This orchestrates parallel container startup according to a two-phase plan:
+
+    Phase 1: Run init container (zerocoder-{project}-0)
+    - New project: full initializer prompt to create features from app_spec
+    - Existing project: recovery (in_progress -> open) and sync
+    - Waits for init to complete before proceeding
+
+    Phase 2: Spawn N coding containers (zerocoder-{project}-1..N)
+    - N is determined by target_container_count in project registry
+    - All coding containers start in parallel with the coding prompt
+    """
+    # Check Docker availability first
+    if not check_docker_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Docker is not available. Please ensure Docker is installed and running."
+        )
+
+    if not check_image_exists():
+        raise HTTPException(
+            status_code=503,
+            detail="Container image 'zerocoder-project' not found. Run: DOCKER_BUILDKIT=1 docker build --secret id=ssh_key,src=$HOME/.ssh/id_ed25519 -f Dockerfile.project -t zerocoder-project ."
+        )
+
+    # Validate project name
+    project_name = validate_project_name(project_name)
+
+    # Get project info from registry
+    project_info = get_project_info(project_name)
+    if not project_info:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found in registry")
+
+    git_url = project_info.get("git_url")
+    if not git_url:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' has no git URL")
+
+    target_count = project_info.get("target_container_count", 1)
+    is_new = project_info.get("is_new", False)
+
+    # Initialize BeadsManager for this project
+    try:
+        from ..services.beads_manager import get_beads_manager
+        beads_manager = await get_beads_manager(project_name, git_url)
+        await beads_manager.ensure_cloned()
+    except Exception as e:
+        # Non-fatal - beads sync might not be set up yet for new projects
+        print(f"[StartAll] Beads sync init warning (continuing): {e}")
+
+    # Get project directory
+    project_dir = _get_project_path(project_name)
+    if not project_dir or not project_dir.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Project directory not found for '{project_name}'"
+        )
+
+    # Pre-flight git health check before any git operations
+    # This recovers from stuck rebases, divergent branches, etc.
+    if (project_dir / ".git").exists():
+        recovery_ok, recovery_msg = _run_git_recovery(project_dir)
+        if recovery_ok and recovery_msg != "Git state OK":
+            print(f"[StartAll] Pre-flight recovery: {recovery_msg}")
+        elif not recovery_ok:
+            print(f"[StartAll] Pre-flight recovery warning: {recovery_msg}")
+
+    # Pull latest changes to local clone before checking state
+    # This ensures we have up-to-date .beads/ data for has_features check
+    if (project_dir / ".git").exists():
+        try:
+            # Sync beads first to commit any pending task state changes
+            # Use beads API to avoid lock conflicts with container beads operations
+            if (project_dir / ".beads").exists():
+                print(f"[StartAll] Syncing beads state...")
+                from .beads_api import run_beads_write_command
+                sync_result = await run_beads_write_command(project_name, ["sync"])
+                if "error" not in sync_result:
+                    print(f"[StartAll] Beads synced successfully")
+                else:
+                    print(f"[StartAll] Beads sync warning: {sync_result.get('error', 'Unknown error')}")
+
+            print(f"[StartAll] Pulling latest changes to local clone...")
+
+            # Stash any unstaged changes first to avoid pull conflicts
+            stash_result = subprocess.run(
+                ["git", "-C", str(project_dir), "stash", "--include-untracked"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            stashed = "No local changes to save" not in stash_result.stdout
+            if stashed:
+                print(f"[StartAll] Stashed local changes")
+
+            # Now pull
+            pull_result = subprocess.run(
+                ["git", "-C", str(project_dir), "pull", "--rebase", "origin", "main"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if pull_result.returncode == 0:
+                print(f"[StartAll] Local clone updated successfully")
+            else:
+                print(f"[StartAll] Git pull warning: {pull_result.stderr}")
+
+            # Restore stashed changes
+            if stashed:
+                pop_result = subprocess.run(
+                    ["git", "-C", str(project_dir), "stash", "pop"],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if pop_result.returncode == 0:
+                    print(f"[StartAll] Restored stashed changes")
+                else:
+                    print(f"[StartAll] Stash pop warning: {pop_result.stderr}")
+        except Exception as e:
+            print(f"[StartAll] Git pull error (continuing anyway): {e}")
+
+    # ==========================================================================
+    # PHASE 1: Init container (only for NEW projects without features)
+    # ==========================================================================
+    project_has_features = has_features(project_dir, project_name)
+
+    if is_new or not project_has_features:
+        # New project - run full initializer with Opus 4.5
+        init_manager = get_container_manager(project_name, git_url, container_number=0, project_dir=project_dir)
+        try:
+            instruction = get_initializer_prompt(project_dir)
+        except FileNotFoundError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Could not load initializer prompt: {e}"
+            )
+
+        init_manager._force_claude_sdk = True
+        init_manager._forced_model = "claude-opus-4-5-20251101"
+        print(f"[StartAll] Phase 1: Running full initializer for new project {project_name}")
+
+        success, message = await init_manager.start(instruction=instruction)
+        if not success:
+            return AgentActionResponse(
+                success=False,
+                status=init_manager.status,
+                message=f"Phase 1 (init) failed: {message}",
+            )
+
+        # Wait for init container to finish
+        print(f"[StartAll] Waiting for init container to complete...")
+        while init_manager.is_agent_running():
+            await asyncio.sleep(2)
+
+        print(f"[StartAll] Phase 1 complete. Init container finished.")
+    else:
+        # Existing project with features - skip init container, do host-side recovery
+        print(f"[StartAll] Phase 1: Host-side recovery for existing project {project_name}")
+
+        # Revert any in_progress tasks to open on the host side
+        from server.services.task_cleanup import revert_in_progress_tasks_for_project
+        reverted = await revert_in_progress_tasks_for_project(project_name, project_dir)
+        if reverted > 0:
+            print(f"[StartAll] Reverted {reverted} in_progress task(s) to open")
+
+        print(f"[StartAll] Phase 1 complete. Recovery finished.")
+
+    # ==========================================================================
+    # PHASE 2: Spawn N coding containers in parallel
+    # ==========================================================================
+    print(f"[StartAll] Phase 2: Spawning {target_count} coding container(s)...")
+
+    coding_managers = []
+    for i in range(1, target_count + 1):
+        manager = get_container_manager(project_name, git_url, container_number=i, project_dir=project_dir)
+        coding_managers.append(manager)
+
+    # Get coding prompt for all containers
+    try:
+        coding_prompt = get_coding_prompt(project_dir)
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not load coding prompt: {e}"
+        )
+
+    # Start coding containers with staggered delays to prevent race conditions
+    # Each container needs time to clone repo and claim a feature before next starts
+    # 60 seconds allows for git clone + agent startup
+    from server.services.container_manager import CONTAINER_STARTUP_DELAY
+    STAGGER_DELAY_SECONDS = CONTAINER_STARTUP_DELAY
+
+    async def start_container_and_agent(manager, container_num: int):
+        """Start container and then start agent as background task."""
+        manager._current_agent_type = "coder"
+        manager._force_claude_sdk = False
+
+        # First, ensure container is running (non-blocking)
+        container_ok, container_msg = await manager.start_container_only()
+        if not container_ok:
+            return False, f"Container failed: {container_msg}"
+
+        # Wait for container to be ready
+        await asyncio.sleep(2)
+
+        # Start agent as background task (don't await completion!)
+        # The send_instruction blocks until agent completes, so we use create_task
+        async def run_agent():
+            try:
+                return await manager.send_instruction(coding_prompt)
+            except Exception as e:
+                logger.error(f"Agent error in container {container_num}: {e}")
+                return False, str(e)
+
+        # Fire-and-forget: create task but don't await it
+        task = asyncio.create_task(run_agent())
+        manager._agent_task = task  # Store reference to prevent garbage collection
+
+        return True, f"Container {container_num} started, agent launching"
+
+    results = []
+    for i, manager in enumerate(coding_managers):
+        container_num = i + 1
+        if i > 0:
+            # Wait between container starts to allow beads coordination
+            logger.info(f"[StartAll] Waiting {STAGGER_DELAY_SECONDS}s before starting container {container_num}...")
+            await asyncio.sleep(STAGGER_DELAY_SECONDS)
+        try:
+            logger.info(f"[StartAll] Starting coding container {container_num}...")
+            result = await start_container_and_agent(manager, container_num)
+            results.append(result)
+        except Exception as e:
+            logger.error(f"[StartAll] Error starting container {container_num}: {e}")
+            results.append((False, str(e)))
+
+    # Analyze results
+    successes = 0
+    failures = []
+    for i, result in enumerate(results, start=1):
+        if isinstance(result, Exception):
+            failures.append(f"Container {i}: {str(result)}")
+        elif isinstance(result, tuple):
+            success, msg = result
+            if success:
+                successes += 1
+            else:
+                failures.append(f"Container {i}: {msg}")
+        else:
+            failures.append(f"Container {i}: unexpected result")
+
+    # Determine overall status
+    all_success = successes == target_count
+    status = "running" if all_success else ("error" if successes == 0 else "partial")
+
+    if failures:
+        message = f"Started {successes}/{target_count} coding containers. Failures: {'; '.join(failures)}"
+    else:
+        message = f"Successfully started init + {target_count} coding container(s)"
 
     return AgentActionResponse(
-        success=success,
-        status=manager.status,
+        success=all_success,
+        status=status,
         message=message,
+    )
+
+
+@router.post("/stop", response_model=AgentActionResponse)
+async def stop_agent(project_name: str):
+    """Stop ALL containers for a project (does not remove them)."""
+    from ..services.container_manager import _managers
+
+    project_name = validate_project_name(project_name)
+
+    # Get all managers for this project
+    project_managers = _managers.get(project_name, {})
+    if not project_managers:
+        # Try to stop container 1 as fallback (single container mode)
+        manager = get_project_container(project_name)
+        success, message = await manager.stop()
+        return AgentActionResponse(
+            success=success,
+            status=manager.status,
+            message=message,
+        )
+
+    # Stop all containers in parallel
+    async def stop_container(manager):
+        return await manager.stop()
+
+    results = await asyncio.gather(
+        *[stop_container(m) for m in project_managers.values()],
+        return_exceptions=True
+    )
+
+    # Count successes
+    successes = sum(1 for r in results if isinstance(r, tuple) and r[0])
+    total = len(project_managers)
+
+    return AgentActionResponse(
+        success=successes == total,
+        status="stopped" if successes == total else "partial",
+        message=f"Stopped {successes}/{total} containers",
     )
 
 
 @router.post("/graceful-stop", response_model=AgentActionResponse)
 async def graceful_stop_agent(project_name: str):
     """
-    Request graceful shutdown of agent after current session.
+    Request graceful shutdown of ALL agents for a project.
 
-    The agent will complete its current work before stopping.
+    Each agent will complete its current work before stopping.
     Falls back to force stop after 10 minutes.
     """
-    manager = get_project_container(project_name)
-    success, message = await manager.graceful_stop()
+    from ..services.container_manager import _managers
 
-    # Broadcast status update to WebSocket clients immediately
-    if success:
+    project_name = validate_project_name(project_name)
+
+    # Get all managers for this project
+    project_managers = _managers.get(project_name, {})
+    if not project_managers:
+        # Try single container mode fallback
+        manager = get_project_container(project_name)
+        success, message = await manager.graceful_stop()
+        if success:
+            await websocket_manager.broadcast_to_project(project_name, {
+                "type": "graceful_stop_requested",
+                "graceful_stop_requested": True,
+            })
+        return AgentActionResponse(
+            success=success,
+            status=manager.status,
+            message=message,
+        )
+
+    # Request graceful stop for all containers
+    async def graceful_stop_container(manager):
+        return await manager.graceful_stop()
+
+    results = await asyncio.gather(
+        *[graceful_stop_container(m) for m in project_managers.values()],
+        return_exceptions=True
+    )
+
+    # Count successes
+    successes = sum(1 for r in results if isinstance(r, tuple) and r[0])
+    total = len(project_managers)
+
+    # Broadcast to WebSocket
+    if successes > 0:
         await websocket_manager.broadcast_to_project(project_name, {
             "type": "graceful_stop_requested",
             "graceful_stop_requested": True,
         })
 
     return AgentActionResponse(
-        success=success,
-        status=manager.status,
-        message=message,
+        success=successes == total,
+        status="stopping" if successes > 0 else "error",
+        message=f"Graceful stop requested for {successes}/{total} containers",
     )
 
 
@@ -300,7 +760,7 @@ async def start_container_only(project_name: str):
     if not check_image_exists():
         raise HTTPException(
             status_code=503,
-            detail="Container image 'zerocoder-project' not found. Run: docker build -f Dockerfile.project -t zerocoder-project ."
+            detail="Container image 'zerocoder-project' not found. Run: DOCKER_BUILDKIT=1 docker build --secret id=ssh_key,src=$HOME/.ssh/id_ed25519 -f Dockerfile.project -t zerocoder-project ."
         )
 
     manager = get_project_container(project_name)
@@ -315,7 +775,7 @@ async def start_container_only(project_name: str):
 
 # Legacy endpoints for backwards compatibility
 @router.post("/pause", response_model=AgentActionResponse)
-async def pause_agent(project_name: str):
+async def pause_agent(_project_name: str):
     """
     Pause endpoint (deprecated).
 
@@ -328,7 +788,7 @@ async def pause_agent(project_name: str):
 
 
 @router.post("/resume", response_model=AgentActionResponse)
-async def resume_agent(project_name: str):
+async def resume_agent(_project_name: str):
     """
     Resume endpoint (deprecated).
 
@@ -338,3 +798,136 @@ async def resume_agent(project_name: str):
         status_code=400,
         detail="Resume is not supported for containers. Use start instead."
     )
+
+
+# =============================================================================
+# Container Session Endpoints (for container-to-host communication)
+# =============================================================================
+
+@router.get("/containers/{container_number}/session")
+async def get_container_session(project_name: str, container_number: int):
+    """
+    Container queries if it should continue running.
+
+    Called by agent inside container to check:
+    - If graceful stop was requested
+    - If there are open features to work on
+    - Configuration (model, etc.)
+
+    Returns JSON with session state for container to use.
+    """
+    project_name = validate_project_name(project_name)
+
+    from registry import is_graceful_stop_requested
+
+    container_type = "init" if container_number == 0 else "coding"
+    graceful_stop = is_graceful_stop_requested(project_name, container_number, container_type)
+
+    # Check if there are open features to work on
+    project_dir = _get_project_path(project_name)
+    open_features = has_open_features(project_dir, project_name) if project_dir else False
+
+    # Get model config from project directory
+    config = {}
+    if project_dir:
+        config_path = project_dir / "prompts" / ".agent_config.json"
+        if config_path.exists():
+            try:
+                import json
+                config = json.loads(config_path.read_text())
+            except Exception:
+                pass
+
+    # Init containers should only run if NO features exist yet (new project)
+    # Coding containers only continue if there are open features
+    if container_type == "init":
+        any_features = has_features(project_dir, project_name) if project_dir else False
+        should_continue = not any_features and not graceful_stop
+    else:
+        should_continue = open_features and not graceful_stop
+
+    return {
+        "should_continue": should_continue,
+        "graceful_stop_requested": graceful_stop,
+        "has_open_features": open_features,
+        "config": config,
+    }
+
+
+@router.post("/containers/{container_number}/heartbeat")
+async def container_heartbeat(project_name: str, container_number: int):
+    """
+    Container sends periodic heartbeat to update last activity.
+
+    Called by agent inside container periodically to:
+    - Update last_activity_at timestamp
+    - Check if graceful stop was requested
+    - Report current feature being worked on
+
+    Request body (optional):
+    - status: Current agent status
+    - current_feature: Feature ID being worked on
+
+    Returns acknowledgment and any pending commands.
+    """
+    project_name = validate_project_name(project_name)
+
+    from registry import (
+        update_last_activity,
+        is_graceful_stop_requested,
+    )
+
+    container_type = "init" if container_number == 0 else "coding"
+
+    # Update last activity timestamp
+    update_last_activity(project_name, container_number, container_type)
+
+    # Check if graceful stop requested
+    graceful_stop = is_graceful_stop_requested(project_name, container_number, container_type)
+
+    return {
+        "acknowledged": True,
+        "graceful_stop_requested": graceful_stop,
+    }
+
+
+@router.post("/containers/{container_number}/exit")
+async def container_exit_notification(project_name: str, container_number: int):
+    """
+    Container notifies host before exiting.
+
+    Called by agent inside container when about to exit to:
+    - Report exit code and reason
+    - Get restart instructions
+
+    Request body (optional):
+    - exit_code: Exit code from agent
+    - reason: Reason for exit
+    - features_completed: List of completed feature IDs
+
+    Returns restart instructions:
+    - restart: Whether container should restart
+    - prompt: Which prompt to use (coding, overseer, or null to stop)
+    """
+    project_name = validate_project_name(project_name)
+
+    from registry import is_graceful_stop_requested
+
+    container_type = "init" if container_number == 0 else "coding"
+    graceful_stop = is_graceful_stop_requested(project_name, container_number, container_type)
+
+    # Check if there are open features to work on
+    project_dir = _get_project_path(project_name)
+    open_features = has_open_features(project_dir, project_name) if project_dir else False
+
+    # Determine if restart is needed
+    # The actual restart logic happens in container_manager._handle_agent_exit()
+    # This endpoint just provides state information back to the container
+    should_restart = open_features and not graceful_stop
+
+    return {
+        "restart": should_restart,
+        "prompt": "coding" if should_restart else None,
+        "has_open_features": open_features,
+        "graceful_stop_requested": graceful_stop,
+    }

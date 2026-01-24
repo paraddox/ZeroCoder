@@ -70,10 +70,10 @@ export function IncompleteProjectModal({
 
   const getStepDescription = (step: string): string => {
     switch (step) {
-      case 'name':
-        return 'entering project name'
-      case 'folder':
-        return 'selecting project folder'
+      case 'mode':
+        return 'selecting project type'
+      case 'details':
+        return 'entering project details'
       case 'method':
         return 'choosing setup method'
       case 'chat':

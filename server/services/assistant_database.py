@@ -50,6 +50,10 @@ def get_db_path(project_dir: Path) -> Path:
     return project_dir / "assistant.db"
 
 
+# Alias for backward compatibility with tests
+_get_db_path = get_db_path
+
+
 def get_engine(project_dir: Path):
     """Get or create a SQLAlchemy engine for a project's assistant database."""
     db_path = get_db_path(project_dir)
@@ -95,6 +99,30 @@ def get_conversations(project_dir: Path, project_name: str) -> list[dict]:
         conversations = (
             session.query(Conversation)
             .filter(Conversation.project_name == project_name)
+            .order_by(Conversation.updated_at.desc())
+            .all()
+        )
+        return [
+            {
+                "id": c.id,
+                "project_name": c.project_name,
+                "title": c.title,
+                "created_at": c.created_at.isoformat() if c.created_at else None,
+                "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+                "message_count": len(c.messages),
+            }
+            for c in conversations
+        ]
+    finally:
+        session.close()
+
+
+def list_conversations(project_dir: Path) -> list[dict]:
+    """List all conversations across all projects in the database (for testing)."""
+    session = get_session(project_dir)
+    try:
+        conversations = (
+            session.query(Conversation)
             .order_by(Conversation.updated_at.desc())
             .all()
         )

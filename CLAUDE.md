@@ -23,7 +23,7 @@ start-app.sh      # Windows
 ### Python Backend (Manual)
 
 ```bash
-# Create and activate virtual hhh
+# Create and activate virtual environment
 python -m venv venv
 venv\Scripts\activate  # Windows
 source venv/bin/activate  # macOS/Linux
@@ -57,8 +57,11 @@ npm run lint     # Run ESLint
 The system uses per-project Docker containers for isolated development:
 
 ```bash
-# Build the project container image
-docker build -f Dockerfile.project -t zerocoder-project .
+# Build the project container image (with SSH key for git clone)
+# SSH key path can be configured via GIT_SSH_KEY_PATH in .env file
+DOCKER_BUILDKIT=1 docker build \
+  --secret id=ssh_key,src=${GIT_SSH_KEY_PATH:-$HOME/.ssh/id_ed25519} \
+  -f Dockerfile.project -t zerocoder-project .
 
 # Run the test suite (builds, tests containers, cleans up)
 ./docker-test.sh
@@ -67,11 +70,14 @@ docker build -f Dockerfile.project -t zerocoder-project .
 **Architecture:**
 - Host runs FastAPI server + React UI (project management, progress monitoring)
 - Each project gets its own Docker container with Claude Code + beads CLI
+- Containers are fully standalone - they clone the repo at runtime (no volume mounts)
+- SSH key is baked into the image at build time using BuildKit secrets (configure path via `GIT_SSH_KEY_PATH` in `.env`)
 - Multiple containers can run simultaneously for different projects
+- 60-second staggered startup between containers to allow git clone
 
 **Container lifecycle:**
 - `not_created` → `running` → `stopped` (15 min idle timeout) → `completed`
-- Stopped containers persist and restart quickly
+- Stopped containers can restart, but will re-fetch latest code from git
 - Progress visible via cached data (polled from container every 30s)
 - `completed` status when all features are done
 
@@ -86,7 +92,25 @@ docker build -f Dockerfile.project -t zerocoder-project .
 - Auto-restarts crashed agents and stopped containers (user-started only)
 - Skips containers already in restart process
 
-**Container naming:** `zerocoder-{project-name}`
+**Container naming:** `zerocoder-{project-name}-{N}` (e.g., `zerocoder-nexus-1`, `zerocoder-nexus-2`)
+
+### Git Hooks
+
+Pre-commit hooks run unit tests before each commit. To enable:
+
+```bash
+./.githooks/setup.sh
+# Or manually: git config core.hooksPath .githooks
+```
+
+To bypass hooks when needed: `git commit --no-verify`
+
+## Development Rules
+
+### Pre-Commit Hooks
+- **NEVER skip pre-commit hooks** with `--no-verify`
+- All commits MUST pass pre-commit tests
+- If tests fail, fix them before committing
 
 ## Architecture
 
@@ -99,8 +123,19 @@ docker build -f Dockerfile.project -t zerocoder-project .
 
 ### Project Registry
 
-Projects can be stored in any directory. The registry maps project names to paths using SQLite:
-- **All platforms**: `~/.zerocoder/registry.db`
+Projects are tracked in a SQLite registry:
+- **Registry**: `~/.zerocoder/registry.db` (SQLite)
+- **Local clones**: `~/.zerocoder/projects/{name}/` (for wizard/edit mode only)
+
+**Container architecture:**
+- Containers are fully standalone - they clone repos at runtime
+- SSH key is baked into the image at build time (not mounted)
+- No volume mounts required - containers are fully isolated
+
+**Key services:**
+- `server/services/container_manager.py` - Container lifecycle and agent control
+- `server/services/local_project_manager.py` - Local clones for wizard/edit mode
+- `registry.py` - Project and container metadata
 
 The registry uses:
 - SQLite database with SQLAlchemy ORM
@@ -114,7 +149,6 @@ The FastAPI server provides REST endpoints for the UI:
 - `server/routers/projects.py` - Project CRUD with registry integration
 - `server/routers/features.py` - Feature management via container docker exec
 - `server/routers/agent.py` - Container control (start/stop/remove)
-- `server/routers/filesystem.py` - Filesystem browser API with security controls
 - `server/routers/spec_creation.py` - WebSocket for interactive spec creation
 - `server/services/container_manager.py` - Per-project Docker container lifecycle
 - `server/services/container_beads.py` - Send beads commands to containers via docker exec
@@ -140,12 +174,12 @@ Features are tracked using **beads** (git-backed issue tracking). Each project h
 - `title` - Feature name
 - `description` - Detailed description with implementation steps
 
-**Agent uses beads CLI directly:**
-- `bd stats` - Progress statistics
-- `bd ready` - Get available features (no blockers)
-- `bd list --status=open` - List pending features
-- `bd close <id>` - Mark feature complete
-- `bd create` - Create new features
+**Agent uses `beads_client` (routes through host API for coordination):**
+- `beads_client claim` - Atomically claim next available feature (server-side locking)
+- `beads_client stats` - Progress statistics
+- `beads_client list --status=open` - List pending features
+- `beads_client close <id>` - Mark feature complete
+- `beads_client show <id>` - View feature details
 
 ### React UI (ui/)
 
@@ -155,7 +189,6 @@ Features are tracked using **beads** (git-backed issue tracking). Each project h
 - `src/hooks/useProjects.ts` - React Query hooks for API calls
 - `src/lib/api.ts` - REST API client
 - `src/lib/types.ts` - TypeScript type definitions
-- `src/components/FolderBrowser.tsx` - Server-side filesystem browser for project folder selection
 - `src/components/NewProjectModal.tsx` - Multi-step project creation wizard (persists state to `.wizard_status.json`)
 - `src/components/IncompleteProjectModal.tsx` - Resume/restart options for interrupted setup
 - `src/components/ProjectSelector.tsx` - Project dropdown with incomplete project detection
@@ -173,9 +206,11 @@ Projects can be stored in any directory (registered in `~/.zerocoder/registry.db
 ### Security Model
 
 Defense-in-depth approach using Docker containers:
-1. Each project runs in isolated Docker container
-2. Container filesystem limited to mounted project directory
-3. Claude credentials passed via environment variables
+1. Each project runs in isolated Docker container (no volume mounts)
+2. Container clones repo fresh at startup - fully isolated filesystem
+3. SSH key baked into image at build time (not mounted at runtime)
+4. Claude credentials passed via environment variables
+5. Non-root `coder` user executes agent code
 
 ## Claude Code Integration
 
@@ -183,6 +218,7 @@ Defense-in-depth approach using Docker containers:
 - `.claude/skills/frontend-design/SKILL.md` - Skill for distinctive UI design
 - `.claude/templates/` - Prompt templates copied to new projects
 - `.claude/templates/project_claude.md.template` - CLAUDE.md template with beads workflow instructions
+- `.claude/templates/overseer_prompt.template.md` - Unified overseer prompt (adapts to project type)
 
 ## Key Patterns
 
@@ -197,9 +233,32 @@ Defense-in-depth approach using Docker containers:
 2. Container runs Claude Code with project-specific `CLAUDE.md`
 3. Claude implements ONE feature + verifies 3 others, then exits
 4. System detects exit, checks for remaining features:
-   - If features remain → auto-restart with fresh context
-   - If all done → mark `completed`, stop container
-5. Health monitor handles crash recovery (every 10 min)
+   - If features remain → check for 10% milestone, then auto-restart with fresh context
+   - If all done → run final overseer verification, then mark `completed`
+5. Health monitor handles crash recovery (every 5 min)
+
+### Overseer Agent
+
+The **Overseer Agent** runs periodic quality verification at 10% completion milestones:
+
+**Trigger Points:**
+- At every 10% milestone (10%, 20%, 30%... up to 90%) - runs in parallel with coders
+- At 100% completion - final verification before marking project complete
+
+**Verification Tasks:**
+1. **Test Suite** - Run all tests, create issues for failures
+2. **Spec Verification** (if `app_spec.txt` exists) - Sample 15 features and verify implementations
+3. **Code Quality Scan** - Search for TODOs, placeholders, empty functions
+
+**Philosophy:** Better to create a false positive issue than miss a real problem.
+
+**Template:** `.claude/templates/overseer_prompt.template.md` (unified for all project types)
+
+**Key Behaviors:**
+- Overseer does NOT implement fixes - only creates/reopens issues
+- Uses parallel subagents (3x) for efficient spec verification
+- Creates issues aggressively to catch problems early
+- Runs in container 0 (`zerocoder-{project}-0`), separate from coding containers
 
 ### Real-time UI Updates
 
