@@ -375,8 +375,6 @@ async def start_all_containers(project_name: str):
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' has no git URL")
 
     target_count = project_info.get("target_container_count", 1)
-    is_new = project_info.get("is_new", False)
-
     # Initialize BeadsManager for this project
     try:
         from ..services.beads_manager import get_beads_manager
@@ -459,11 +457,11 @@ async def start_all_containers(project_name: str):
             print(f"[StartAll] Git pull error (continuing anyway): {e}")
 
     # ==========================================================================
-    # PHASE 1: Init container (only for NEW projects without features)
+    # PHASE 1: Init container (only for projects without features)
     # ==========================================================================
     project_has_features = has_features(project_dir, project_name)
 
-    if is_new or not project_has_features:
+    if not project_has_features:
         # New project - run full initializer with Opus 4.5
         init_manager = get_container_manager(project_name, git_url, container_number=0, project_dir=project_dir)
         try:
