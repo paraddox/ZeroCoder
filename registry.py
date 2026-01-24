@@ -66,7 +66,6 @@ class Project(Base):
 
     name = Column(String(50), primary_key=True, index=True)
     git_url = Column(String, nullable=False)  # git@github.com:user/repo.git or https://...
-    is_new = Column(Boolean, default=True)  # True until wizard completed
     target_container_count = Column(Integer, default=1)  # 1-10 parallel agents
     created_at = Column(DateTime, nullable=False)
 
@@ -344,14 +343,13 @@ def _get_session():
 # Project CRUD Functions
 # =============================================================================
 
-def register_project(name: str, git_url: str, is_new: bool = True) -> None:
+def register_project(name: str, git_url: str, **kwargs) -> None:
     """
     Register a new project in the registry.
 
     Args:
         name: The project name (unique identifier).
         git_url: Git repository URL (https:// or git@).
-        is_new: True if this is a new project needing wizard setup.
 
     Raises:
         ValueError: If project name is invalid or git_url is invalid.
@@ -377,7 +375,6 @@ def register_project(name: str, git_url: str, is_new: bool = True) -> None:
         project = Project(
             name=name,
             git_url=git_url,
-            is_new=is_new,
             target_container_count=1,
             created_at=datetime.now()
         )
@@ -461,16 +458,19 @@ def list_registered_projects() -> dict[str, dict[str, Any]]:
     session = SessionLocal()
     try:
         projects = session.query(Project).all()
-        return {
-            p.name: {
+        projects_dir = get_projects_dir()
+        result = {}
+        for p in projects:
+            local_path = projects_dir / p.name
+            has_beads = (local_path / ".beads" / "beads.db").exists()
+            result[p.name] = {
                 "git_url": p.git_url,
-                "is_new": p.is_new,
+                "is_new": not has_beads,
                 "target_container_count": p.target_container_count,
-                "local_path": (get_projects_dir() / p.name).as_posix(),
+                "local_path": local_path.as_posix(),
                 "created_at": p.created_at.isoformat() if p.created_at else None
             }
-            for p in projects
-        }
+        return result
     finally:
         session.close()
 
@@ -491,11 +491,13 @@ def get_project_info(name: str) -> dict[str, Any] | None:
         project = session.query(Project).filter(Project.name == name).first()
         if project is None:
             return None
+        local_path = get_projects_dir() / project.name
+        has_beads = (local_path / ".beads" / "beads.db").exists()
         return {
             "git_url": project.git_url,
-            "is_new": project.is_new,
+            "is_new": not has_beads,
             "target_container_count": project.target_container_count,
-            "local_path": (get_projects_dir() / project.name).as_posix(),
+            "local_path": local_path.as_posix(),
             "created_at": project.created_at.isoformat() if project.created_at else None
         }
     finally:
@@ -527,22 +529,7 @@ def update_project_git_url(name: str, new_git_url: str) -> bool:
 
 
 def mark_project_initialized(name: str) -> bool:
-    """
-    Mark a project as initialized (wizard completed).
-
-    Args:
-        name: The project name.
-
-    Returns:
-        True if updated, False if project wasn't found.
-    """
-    with _get_session() as session:
-        project = session.query(Project).filter(Project.name == name).first()
-        if not project:
-            return False
-
-        project.is_new = False
-
+    """No-op. Project state is now derived from beads on disk."""
     return True
 
 
@@ -663,10 +650,11 @@ def list_valid_projects() -> list[dict[str, Any]]:
             local_path = get_projects_dir() / p.name
             is_valid, _ = validate_project_path(local_path)
             if is_valid:
+                has_beads = (local_path / ".beads" / "beads.db").exists()
                 valid.append({
                     "name": p.name,
                     "git_url": p.git_url,
-                    "is_new": p.is_new,
+                    "is_new": not has_beads,
                     "target_container_count": p.target_container_count,
                     "local_path": local_path.as_posix(),
                     "created_at": p.created_at.isoformat() if p.created_at else None
@@ -1059,21 +1047,15 @@ def clear_session_state() -> None:
     This resets:
     - Container session state (user_started_at, graceful_stop_requested, etc.)
     - Project verification state
+    - Feature caches (rebuilt from live project state when containers run)
 
     Should be called during server startup before any other operations.
     """
     with _get_session() as session:
-        # Reset container session state
-        session.query(Container).update({
-            Container.user_started_at: None,
-            Container.graceful_stop_requested: False,
-            Container.restarting: False,
-            Container.last_agent_was_overseer: False,
-            Container.is_milestone_overseer: False,
-            Container.last_activity_at: None,
-            Container.last_closed_feature: None,
-        })
-        # Clear verification state
+        # Clear all non-permanent tables (rebuilt from live state at runtime)
+        session.query(Container).delete()
+        session.query(FeatureCache).delete()
+        session.query(FeatureStatsCache).delete()
         session.query(ProjectVerificationState).delete()
     logger.info("Cleared all session-scoped state")
 

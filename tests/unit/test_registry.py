@@ -39,13 +39,13 @@ class TestProjectCRUD:
         isolated_registry.register_project(
             name="ssh-project",
             git_url="git@github.com:user/repo.git",
-            is_new=False
         )
 
         info = isolated_registry.get_project_info("ssh-project")
         assert info is not None
         assert info["git_url"] == "git@github.com:user/repo.git"
-        assert info["is_new"] is False
+        # is_new derived from disk: True when no .beads/beads.db exists
+        assert info["is_new"] is True
 
     @pytest.mark.unit
     def test_register_project_invalid_name(self, isolated_registry):
@@ -167,21 +167,9 @@ class TestProjectCRUD:
 
     @pytest.mark.unit
     def test_mark_project_initialized(self, isolated_registry):
-        """Test marking a project as initialized (wizard complete)."""
-        isolated_registry.register_project(
-            name="init-test",
-            git_url="https://github.com/user/repo.git",
-            is_new=True
-        )
-
-        info = isolated_registry.get_project_info("init-test")
-        assert info["is_new"] is True
-
-        result = isolated_registry.mark_project_initialized("init-test")
+        """Test mark_project_initialized is a no-op (state derived from disk)."""
+        result = isolated_registry.mark_project_initialized("any-project")
         assert result is True
-
-        info = isolated_registry.get_project_info("init-test")
-        assert info["is_new"] is False
 
     @pytest.mark.unit
     def test_update_target_container_count(self, isolated_registry):
