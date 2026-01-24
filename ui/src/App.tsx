@@ -77,7 +77,7 @@ function App() {
   const gracefulStopAgent = useGracefulStopAgent(selectedProject ?? '')
 
   // Play sounds when features move between columns
-  useFeatureSound(features)
+  useFeatureSound(features, selectedProject)
 
   // Celebrate when all features are complete
   useCelebration(features, selectedProject)
@@ -92,7 +92,15 @@ function App() {
   // Persist selected project to localStorage
   const handleSelectProject = useCallback((project: string | null) => {
     setSelectedProject(project)
-    setLogContainerFilter(null) // Reset container filter when switching projects
+    setLogContainerFilter(null)
+    // Reset UI state to prevent stale modals/panels showing wrong project context
+    setShowAddFeature(false)
+    setSelectedFeature(null)
+    setEditingFeature(null)
+    setShowSettingsModal(false)
+    setShowDeleteModal(false)
+    setShowFullScreenLogs(false)
+    setAssistantOpen(false)
     // Reset queries to prevent stale cached data from showing during project switch
     if (project) {
       queryClient.resetQueries({ queryKey: ['agent-status', project] })
