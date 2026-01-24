@@ -61,6 +61,7 @@ class TestProjectAPIIntegration:
     def test_project_crud_flow(self, api_test_env):
         """Test complete project CRUD flow."""
         registry = api_test_env["registry"]
+        projects_dir = api_test_env["projects_dir"]
 
         # Create
         registry.register_project(
@@ -74,7 +75,13 @@ class TestProjectAPIIntegration:
         assert info is not None
         assert info["git_url"] == "https://github.com/user/repo.git"
 
-        # Update (mark initialized)
+        # Update (mark initialized) - is_new is derived from .beads/beads.db existence
+        project_dir = projects_dir / "crud-test"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        beads_dir = project_dir / ".beads"
+        beads_dir.mkdir(parents=True, exist_ok=True)
+        (beads_dir / "beads.db").touch()
+
         registry.mark_project_initialized("crud-test")
         info = registry.get_project_info("crud-test")
         assert info["is_new"] is False
@@ -651,9 +658,10 @@ class TestEndToEndFlows:
         (project_dir / "prompts").mkdir()
         (project_dir / ".beads").mkdir()
 
-        # Step 3: Initialize beads
+        # Step 3: Initialize beads - is_new is derived from .beads/beads.db existence
         issues_file = project_dir / ".beads" / "issues.jsonl"
         issues_file.write_text("")
+        (project_dir / ".beads" / "beads.db").touch()
 
         # Step 4: Mark initialized
         registry.mark_project_initialized("new-project-flow")

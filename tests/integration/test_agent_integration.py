@@ -9,9 +9,17 @@ Tests container control and agent management functionality.
 import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock, AsyncMock
+from contextlib import contextmanager
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+
+@contextmanager
+def allow_external_access():
+    """Context manager to bypass localhost middleware for tests."""
+    with patch("server.main.ALLOW_EXTERNAL_ACCESS", True):
+        yield
 
 
 class TestAgentStatusIntegration:
@@ -98,7 +106,7 @@ class TestAgentStartIntegration:
             mock_path.return_value = Path("/tmp/test-project")
             with patch("server.routers.agent._get_project_git_url") as mock_url:
                 mock_url.return_value = "https://github.com/user/repo.git"
-                with patch("server.routers.agent.ensure_image_exists") as mock_image:
+                with patch("server.routers.agent.check_image_exists") as mock_image:
                     mock_image.return_value = (False, "Docker not available")
 
                     response = test_client.post(
@@ -112,15 +120,22 @@ class TestAgentStartIntegration:
     @pytest.mark.integration
     def test_start_agent_project_not_found(self, test_client):
         """Test starting agent for non-existent project."""
-        with patch("server.routers.agent._get_project_path") as mock_path:
-            mock_path.return_value = None
+        with allow_external_access():
+            with patch("server.routers.agent.check_docker_available") as mock_docker:
+                mock_docker.return_value = True
+                with patch("server.routers.agent.check_image_exists") as mock_image:
+                    mock_image.return_value = True
+                    with patch("server.routers.agent._get_project_path") as mock_path:
+                        mock_path.return_value = None
+                        with patch("server.routers.agent._get_project_git_url") as mock_url:
+                            mock_url.return_value = None
 
-            response = test_client.post(
-                "/api/projects/nonexistent/agent/start",
-                json={}
-            )
+                            response = test_client.post(
+                                "/api/projects/nonexistent/agent/start",
+                                json={}
+                            )
 
-            assert response.status_code == 404
+                            assert response.status_code == 404
 
 
 class TestAgentStopIntegration:
@@ -133,27 +148,32 @@ class TestAgentStopIntegration:
             return_value=(True, "Container stopped")
         )
 
-        with patch("server.routers.agent._get_project_path") as mock_path:
-            mock_path.return_value = Path("/tmp/test-project")
-            with patch("server.routers.agent.get_existing_container_manager") as mock_get:
-                mock_get.return_value = mock_container_manager
-
+        with allow_external_access():
+            with patch("server.services.container_manager._managers", {"test-project": {1: mock_container_manager}}):
                 response = test_client.post("/api/projects/test-project/agent/stop")
 
                 assert response.status_code == 200
 
     @pytest.mark.integration
-    def test_stop_agent_not_running(self, test_client):
+    def test_stop_agent_not_running(self, test_client, mock_container_manager):
         """Test stopping agent when not running."""
-        with patch("server.routers.agent._get_project_path") as mock_path:
-            mock_path.return_value = Path("/tmp/test-project")
-            with patch("server.routers.agent.get_existing_container_manager") as mock_get:
-                mock_get.return_value = None
+        # When no managers exist, stop_agent falls back to get_project_container
+        # which needs project path and git url
+        mock_container_manager.stop = AsyncMock(return_value=(True, "Already stopped"))
 
-                response = test_client.post("/api/projects/test-project/agent/stop")
+        with allow_external_access():
+            with patch("server.services.container_manager._managers", {}):
+                with patch("server.routers.agent._get_project_path") as mock_path:
+                    mock_path.return_value = Path("/tmp/test-project")
+                    with patch("server.routers.agent._get_project_git_url") as mock_url:
+                        mock_url.return_value = "https://github.com/user/repo.git"
+                        with patch("server.routers.agent.get_container_manager") as mock_get:
+                            mock_get.return_value = mock_container_manager
 
-                # Should succeed even if not running
-                assert response.status_code in [200, 404]
+                            response = test_client.post("/api/projects/test-project/agent/stop")
+
+                            # Should succeed even if not running
+                            assert response.status_code in [200, 404]
 
     @pytest.mark.integration
     def test_graceful_stop_agent(self, test_client, mock_container_manager):
@@ -162,11 +182,8 @@ class TestAgentStopIntegration:
             return_value=(True, "Graceful stop initiated")
         )
 
-        with patch("server.routers.agent._get_project_path") as mock_path:
-            mock_path.return_value = Path("/tmp/test-project")
-            with patch("server.routers.agent.get_existing_container_manager") as mock_get:
-                mock_get.return_value = mock_container_manager
-
+        with allow_external_access():
+            with patch("server.services.container_manager._managers", {"test-project": {1: mock_container_manager}}):
                 response = test_client.post(
                     "/api/projects/test-project/agent/graceful-stop"
                 )
@@ -181,9 +198,16 @@ class TestAgentHealthIntegration:
     def test_agent_health_check(self, test_client, mock_container_manager):
         """Test agent health check."""
         mock_container_manager.is_agent_running.return_value = True
+        mock_container_manager.started_at = None
+        mock_container_manager.get_status_dict.return_value = {
+            "status": "running",
+            "agent_running": True,
+            "container_name": "zerocoder-test-project-1",
+            "idle_seconds": 0,
+            "graceful_stop_requested": False,
+        }
 
-        with patch("server.routers.agent._get_project_path") as mock_path:
-            mock_path.return_value = Path("/tmp/test-project")
+        with allow_external_access():
             with patch("server.routers.agent.get_existing_container_manager") as mock_get:
                 mock_get.return_value = mock_container_manager
 
@@ -198,10 +222,12 @@ class TestAgentHealthIntegration:
         mock_container_manager.get_status_dict.return_value = {
             "status": "stopped",
             "agent_running": False,
+            "container_name": "zerocoder-test-project-1",
+            "idle_seconds": 0,
         }
+        mock_container_manager.started_at = None
 
-        with patch("server.routers.agent._get_project_path") as mock_path:
-            mock_path.return_value = Path("/tmp/test-project")
+        with allow_external_access():
             with patch("server.routers.agent.get_existing_container_manager") as mock_get:
                 mock_get.return_value = mock_container_manager
 
@@ -280,10 +306,12 @@ class TestAgentValidationIntegration:
     @pytest.mark.integration
     def test_invalid_project_name(self, test_client):
         """Test validation of project name in requests."""
-        response = test_client.get("/api/projects/../invalid/agent/status")
+        with allow_external_access():
+            response = test_client.get("/api/projects/../invalid/agent/status")
 
-        # Should reject path traversal attempts
-        assert response.status_code in [400, 404, 422]
+            # Should reject path traversal attempts
+            # validate_project_name raises 400 for invalid project names
+            assert response.status_code in [400, 404, 422]
 
     @pytest.mark.integration
     def test_start_with_invalid_payload(self, test_client):

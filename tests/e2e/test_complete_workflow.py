@@ -130,6 +130,11 @@ class TestDataPersistence:
 
         # Update and verify
         isolated_registry.mark_project_initialized("persistence-test")
+        # is_new is derived from disk state: not (local_path / ".beads" / "beads.db").exists()
+        project_dir = isolated_registry.get_projects_dir() / "persistence-test"
+        beads_dir = project_dir / ".beads"
+        beads_dir.mkdir(parents=True, exist_ok=True)
+        (beads_dir / "beads.db").touch()
         info = isolated_registry.get_project_info("persistence-test")
         assert info["is_new"] is False
 
@@ -257,21 +262,18 @@ class TestBeadsSyncWorkflow:
     @pytest.mark.e2e
     @pytest.mark.asyncio
     async def test_beads_sync_lifecycle(self, tmp_path, monkeypatch):
-        """Test complete beads sync lifecycle."""
-        monkeypatch.setattr(
-            "server.services.beads_sync_manager.get_beads_sync_dir",
-            lambda: tmp_path / "beads-sync"
-        )
+        """Test complete beads sync lifecycle.
 
-        from server.services.beads_sync_manager import (
+        BeadsManager now uses the bd CLI for all operations. Since bd CLI
+        is not available in tests, we mock get_tasks() to return test data.
+        """
+        from server.services.beads_manager import (
             get_beads_sync_manager,
-            _sync_managers,
-            _sync_managers_lock
+            _managers,
         )
 
         # Clear existing managers
-        with _sync_managers_lock:
-            _sync_managers.clear()
+        _managers.clear()
 
         # Create manager
         manager = get_beads_sync_manager(
@@ -279,35 +281,29 @@ class TestBeadsSyncWorkflow:
             "https://github.com/test/repo.git"
         )
 
-        # Create local beads data
-        beads_dir = tmp_path / "beads-sync" / "e2e-beads-test" / ".beads"
-        beads_dir.mkdir(parents=True)
-
-        # Create issues
-        issues = [
+        # Define test issues that would be returned by bd CLI
+        mock_issues = [
             {"id": "feat-1", "title": "Feature 1", "status": "open", "priority": 0},
             {"id": "feat-2", "title": "Feature 2", "status": "in_progress", "priority": 1},
             {"id": "feat-3", "title": "Feature 3", "status": "closed", "priority": 2},
         ]
 
-        with open(beads_dir / "issues.jsonl", "w") as f:
-            for issue in issues:
-                f.write(json.dumps(issue) + "\n")
+        # Mock get_tasks to return our test data (bd CLI not available in tests)
+        with patch.object(manager, 'get_tasks', return_value=mock_issues):
+            # Test task reading
+            tasks = manager.get_tasks()
+            assert len(tasks) == 3
 
-        # Test task reading
-        tasks = manager.get_tasks()
-        assert len(tasks) == 3
+            # Test stats (uses get_tasks internally)
+            stats = manager.get_stats()
+            assert stats["open"] == 1
+            assert stats["in_progress"] == 1
+            assert stats["closed"] == 1
+            assert stats["total"] == 3
 
-        # Test stats
-        stats = manager.get_stats()
-        assert stats["open"] == 1
-        assert stats["in_progress"] == 1
-        assert stats["closed"] == 1
-        assert stats["total"] == 3
-
-        # Test filtering
-        open_tasks = manager.get_tasks_by_status("open")
-        assert len(open_tasks) == 1
+            # Test filtering (uses get_tasks internally)
+            open_tasks = manager.get_tasks_by_status("open")
+            assert len(open_tasks) == 1
 
 
 class TestProjectPromptManagement:

@@ -302,6 +302,9 @@ class TestProgressIntegration:
         config_file = beads_dir / "config.yaml"
         config_file.write_text("prefix: feat\n")
 
+        # Create beads.db file for has_features fallback check
+        (beads_dir / "beads.db").write_text("")
+
         issues_file = beads_dir / "issues.jsonl"
         features = [
             {"id": "feat-1", "title": "Feature 1", "status": "open", "priority": 1},
@@ -320,7 +323,10 @@ class TestProgressIntegration:
         """Test counting passing tests."""
         from progress import count_passing_tests
 
-        passing, in_progress, total = count_passing_tests(progress_project)
+        # Progress functions now require project_name to use BeadsManager
+        with patch("server.services.beads_manager.get_cached_stats") as mock_stats:
+            mock_stats.return_value = {"done": 2, "in_progress": 1, "pending": 1, "total": 4}
+            passing, in_progress, total = count_passing_tests(progress_project, "test-project")
 
         assert passing == 2
         assert in_progress == 1
@@ -347,7 +353,13 @@ class TestProgressIntegration:
         """Test getting all passing features."""
         from progress import get_all_passing_features
 
-        passing = get_all_passing_features(progress_project)
+        # Progress functions now require project_name to use BeadsManager
+        with patch("server.services.beads_manager.get_cached_features") as mock_feats:
+            mock_feats.return_value = [
+                {"id": "feat-3", "category": "", "name": "Feature 3", "status": "closed"},
+                {"id": "feat-4", "category": "", "name": "Feature 4", "status": "closed"},
+            ]
+            passing = get_all_passing_features(progress_project, "test-project")
 
         assert len(passing) == 2
         feature_ids = [f["id"] for f in passing]
@@ -497,6 +509,7 @@ class TestMultiServiceFlow:
         beads_dir = project_dir / ".beads"
         beads_dir.mkdir()
         (beads_dir / "config.yaml").write_text("prefix: feat\n")
+        (beads_dir / "beads.db").write_text("")  # For has_features fallback check
         (beads_dir / "issues.jsonl").write_text(
             '{"id": "feat-1", "title": "Feature 1", "status": "open", "priority": 1}\n'
         )
@@ -528,7 +541,10 @@ class TestMultiServiceFlow:
 
         from progress import count_passing_tests
 
-        passing, in_progress, total = count_passing_tests(project_dir)
+        # Progress functions now require project_name to use BeadsManager
+        with patch("server.services.beads_manager.get_cached_stats") as mock_stats:
+            mock_stats.return_value = {"done": 0, "in_progress": 0, "pending": 1, "total": 1}
+            passing, in_progress, total = count_passing_tests(project_dir, "full-test")
 
         assert total == 1
         assert passing == 0

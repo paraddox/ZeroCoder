@@ -62,22 +62,30 @@ class TestProjectLifecycle:
         git_url = "https://github.com/test/repo.git"
 
         # Register project
-        registry.register_project(project_name, git_url, is_new=True)
+        registry.register_project(project_name, git_url)
 
         # Verify registration
         project_path = registry.get_project_path(project_name)
         assert project_path is not None
 
-        # Verify project info
+        # Verify project info - is_new derived from disk (no beads.db = new)
         info = registry.get_project_info(project_name)
         assert info is not None
         assert info["git_url"] == git_url
-        assert info["is_new"] is True
+        assert info["is_new"] is True  # No beads.db exists yet
 
-        # Update project
+        # Create .beads/beads.db to mark project as initialized
+        # (is_new is derived from disk state: not beads.db exists)
+        projects_dir = registry.get_projects_dir()
+        local_path = projects_dir / project_name
+        beads_dir = local_path / ".beads"
+        beads_dir.mkdir(parents=True, exist_ok=True)
+        (beads_dir / "beads.db").touch()
+
+        # mark_project_initialized is now a no-op; is_new derived from disk
         registry.mark_project_initialized(project_name)
         updated_info = registry.get_project_info(project_name)
-        assert updated_info["is_new"] is False
+        assert updated_info["is_new"] is False  # beads.db now exists
 
         # Unregister project
         registry.unregister_project(project_name)
@@ -382,9 +390,10 @@ class TestErrorRecovery:
         project_name = "missing-dir-test"
         project_path = tmp_path / "nonexistent"
 
-        # Should validate path
-        result = registry.validate_project_path(project_path)
-        assert result is False
+        # validate_project_path returns (is_valid, error_message) tuple
+        is_valid, error_msg = registry.validate_project_path(project_path)
+        assert is_valid is False
+        assert "does not exist" in error_msg
 
     @pytest.mark.integration
     def test_concurrent_project_updates(self, isolated_registry, temp_project_dir):
@@ -425,41 +434,63 @@ class TestCaching:
 
     @pytest.mark.integration
     def test_feature_cache_update(self, isolated_registry, temp_project_dir, sample_beads_issues):
-        """Test feature cache updates."""
-        import registry
+        """Test feature cache updates using direct SQLAlchemy models."""
+        from datetime import datetime
+        from registry import FeatureCache, _get_session
 
         project_name = "cache-test"
-        registry.register_project(project_name, "https://github.com/test/repo.git")
+        isolated_registry.register_project(project_name, "https://github.com/test/repo.git")
 
-        # Update feature cache
-        registry.update_feature_cache(project_name, sample_beads_issues)
+        # Insert feature cache entries directly using SQLAlchemy
+        with _get_session() as session:
+            for issue in sample_beads_issues:
+                cache = FeatureCache(
+                    project_name=project_name,
+                    feature_id=issue["id"],
+                    priority=issue.get("priority", 999),
+                    category=issue.get("labels", [""])[0] if issue.get("labels") else "",
+                    name=issue["title"],
+                    description=issue.get("description", ""),
+                    steps_json="[]",
+                    status=issue["status"],
+                    updated_at=datetime.now()
+                )
+                session.add(cache)
 
         # Read from cache
-        cached = registry.get_cached_features(project_name)
-        assert cached is not None
-        assert len(cached) == len(sample_beads_issues)
+        with _get_session() as session:
+            cached = session.query(FeatureCache).filter_by(project_name=project_name).all()
+            assert len(cached) == len(sample_beads_issues)
 
-        registry.unregister_project(project_name)
+        isolated_registry.unregister_project(project_name)
 
     @pytest.mark.integration
     def test_stats_cache_update(self, isolated_registry, temp_project_dir):
-        """Test stats cache updates."""
-        import registry
+        """Test stats cache updates using direct SQLAlchemy models."""
+        from datetime import datetime
+        from registry import FeatureStatsCache, _get_session, get_cached_stats
 
         project_name = "stats-cache-test"
-        registry.register_project(project_name, "https://github.com/test/repo.git")
+        isolated_registry.register_project(project_name, "https://github.com/test/repo.git")
 
-        stats = {
-            "total": 10,
-            "open": 5,
-            "in_progress": 2,
-            "closed": 3,
-        }
+        # Insert stats cache directly using SQLAlchemy
+        with _get_session() as session:
+            stats_cache = FeatureStatsCache(
+                project_name=project_name,
+                pending_count=5,
+                in_progress_count=2,
+                done_count=3,
+                total_count=10,
+                percentage=30.0,
+                last_polled_at=datetime.now()
+            )
+            session.add(stats_cache)
 
-        registry.update_stats_cache(project_name, stats)
-
-        cached_stats = registry.get_cached_stats(project_name)
+        # Read from cache using the registry function
+        cached_stats = get_cached_stats(project_name)
         assert cached_stats is not None
         assert cached_stats["total"] == 10
+        assert cached_stats["pending"] == 5
+        assert cached_stats["done"] == 3
 
-        registry.unregister_project(project_name)
+        isolated_registry.unregister_project(project_name)

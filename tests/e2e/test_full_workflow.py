@@ -44,7 +44,13 @@ class TestProjectLifecycle:
         assert path is not None
 
         # Step 3: Mark as initialized (wizard complete)
+        # is_new is now derived from disk state: not (local_path / ".beads" / "beads.db").exists()
+        # So we need to create the beads.db file to simulate an initialized project
         isolated_registry.mark_project_initialized("e2e-project")
+        project_local_path = isolated_registry.get_projects_dir() / "e2e-project"
+        beads_dir = project_local_path / ".beads"
+        beads_dir.mkdir(parents=True, exist_ok=True)
+        (beads_dir / "beads.db").touch()
 
         info = isolated_registry.get_project_info("e2e-project")
         assert info["is_new"] is False
@@ -60,6 +66,13 @@ class TestProjectLifecycle:
             git_url="https://github.com/user/existing.git",
             is_new=False
         )
+
+        # is_new is now derived from disk state: not (local_path / ".beads" / "beads.db").exists()
+        # For an existing project, the beads.db should already exist
+        project_local_path = isolated_registry.get_projects_dir() / "existing-project"
+        beads_dir = project_local_path / ".beads"
+        beads_dir.mkdir(parents=True, exist_ok=True)
+        (beads_dir / "beads.db").touch()
 
         # Verify registration
         info = isolated_registry.get_project_info("existing-project")
@@ -480,42 +493,72 @@ class TestCachingWorkflow:
     @pytest.mark.e2e
     def test_feature_cache_workflow(self, isolated_registry):
         """Test feature cache creation and retrieval workflow."""
-        # Setup
+        # Setup - register project first (required for foreign key constraint)
         isolated_registry.register_project(
             name="cache-workflow",
             git_url="https://github.com/user/repo.git"
         )
 
         # Initial state: no cache
-        cached = isolated_registry.get_feature_cache("cache-workflow")
-        assert cached is None
+        with isolated_registry._get_session() as session:
+            cached = session.query(isolated_registry.FeatureCache).filter_by(
+                project_name="cache-workflow"
+            ).all()
+            assert len(cached) == 0
 
-        # Create cache
-        feature_data = {
-            "pending": [{"id": "feat-1", "title": "Feature 1"}],
-            "in_progress": [],
-            "done": []
-        }
-        isolated_registry.update_feature_cache("cache-workflow", feature_data)
+        # Create cache entry
+        with isolated_registry._get_session() as session:
+            cache_entry = isolated_registry.FeatureCache(
+                project_name="cache-workflow",
+                feature_id="feat-1",
+                priority=0,
+                category="test",
+                name="Feature 1",
+                description="Test feature",
+                steps_json="[]",
+                status="open",
+                updated_at=datetime.now()
+            )
+            session.add(cache_entry)
+            session.commit()
 
         # Verify cache exists
-        cached = isolated_registry.get_feature_cache("cache-workflow")
-        assert cached is not None
-        assert len(cached["pending"]) == 1
+        with isolated_registry._get_session() as session:
+            cached = session.query(isolated_registry.FeatureCache).filter_by(
+                project_name="cache-workflow"
+            ).all()
+            assert len(cached) == 1
+            assert cached[0].name == "Feature 1"
+            assert cached[0].status == "open"
 
-        # Update cache
-        feature_data["pending"] = []
-        feature_data["done"] = [{"id": "feat-1", "title": "Feature 1"}]
-        isolated_registry.update_feature_cache("cache-workflow", feature_data)
+        # Update cache - mark feature as closed
+        with isolated_registry._get_session() as session:
+            cache_entry = session.query(isolated_registry.FeatureCache).filter_by(
+                project_name="cache-workflow",
+                feature_id="feat-1"
+            ).first()
+            cache_entry.status = "closed"
+            cache_entry.updated_at = datetime.now()
+            session.commit()
 
         # Verify update
-        cached = isolated_registry.get_feature_cache("cache-workflow")
-        assert len(cached["pending"]) == 0
-        assert len(cached["done"]) == 1
+        with isolated_registry._get_session() as session:
+            cached = session.query(isolated_registry.FeatureCache).filter_by(
+                project_name="cache-workflow"
+            ).all()
+            assert len(cached) == 1
+            assert cached[0].status == "closed"
 
-        # Delete cache
-        isolated_registry.delete_feature_cache("cache-workflow")
+        # Delete cache entries
+        with isolated_registry._get_session() as session:
+            session.query(isolated_registry.FeatureCache).filter_by(
+                project_name="cache-workflow"
+            ).delete()
+            session.commit()
 
         # Verify deletion
-        cached = isolated_registry.get_feature_cache("cache-workflow")
-        assert cached is None
+        with isolated_registry._get_session() as session:
+            cached = session.query(isolated_registry.FeatureCache).filter_by(
+                project_name="cache-workflow"
+            ).all()
+            assert len(cached) == 0

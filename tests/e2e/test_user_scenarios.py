@@ -116,6 +116,9 @@ class TestNewProjectUserWorkflow:
         # ===== Step 6: System marks wizard complete =====
         registry.mark_project_initialized(project_name)
 
+        # Create beads.db to satisfy is_new check (is_new = not beads.db exists)
+        (project_dir / ".beads" / "beads.db").touch()
+
         info = registry.get_project_info(project_name)
         assert info["is_new"] is False
 
@@ -237,14 +240,16 @@ class TestExistingRepoWorkflow:
             is_new=False  # Not new - existing repo
         )
 
-        info = registry.get_project_info("existing-app")
-        assert info["is_new"] is False
-
         # ===== Step 2: Simulate existing project structure =====
         project_dir = projects_dir / "existing-app"
         project_dir.mkdir()
         (project_dir / "prompts").mkdir()
         (project_dir / ".beads").mkdir()
+        # Create beads.db to satisfy is_new check (is_new = not beads.db exists)
+        (project_dir / ".beads" / "beads.db").touch()
+
+        info = registry.get_project_info("existing-app")
+        assert info["is_new"] is False
 
         # Existing features already in beads
         features = [
@@ -608,14 +613,14 @@ class TestProjectCompletionWorkflow:
         assert completed == total
         assert completed == 3
 
-        # Mark container as completed
+        # Mark container as stopped (project complete, containers stop)
         registry.update_container_status(
             "complete-project", 1, "coding",
-            status="completed"
+            status="stopped"
         )
 
         container = registry.get_container("complete-project", 1, "coding")
-        assert container["status"] == "completed"
+        assert container["status"] == "stopped"
 
     @pytest.mark.e2e
     def test_project_deletion_workflow(self, completion_env):
@@ -635,7 +640,8 @@ class TestProjectCompletionWorkflow:
         assert registry.get_project_info("to-delete") is not None
         assert len(registry.list_project_containers("to-delete")) == 1
 
-        # Delete project
+        # Delete project and its containers
+        registry.delete_all_project_containers("to-delete")
         registry.unregister_project("to-delete")
 
         # Verify deleted

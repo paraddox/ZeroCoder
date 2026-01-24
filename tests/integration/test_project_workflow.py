@@ -216,15 +216,19 @@ class TestDataPersistence:
             is_new=True
         )
 
-        # Retrieve and verify
+        # Retrieve and verify - is_new is derived from disk state (no .beads/beads.db)
         info = isolated_registry.get_project_info("persist-test")
         assert info is not None
         assert info["is_new"] is True
 
-        # Update
-        isolated_registry.mark_project_initialized("persist-test")
+        # Create .beads/beads.db to simulate initialized state
+        # (is_new is derived from whether this file exists on disk)
+        projects_dir = isolated_registry.get_projects_dir()
+        project_beads_dir = projects_dir / "persist-test" / ".beads"
+        project_beads_dir.mkdir(parents=True, exist_ok=True)
+        (project_beads_dir / "beads.db").touch()
 
-        # Verify update persisted
+        # Verify is_new is now False (derived from disk state)
         info = isolated_registry.get_project_info("persist-test")
         assert info["is_new"] is False
 
@@ -356,8 +360,8 @@ class TestBeadsSyncIntegration:
             _sync_managers_lock
         )
 
-        # Clear existing managers
-        with _sync_managers_lock:
+        # Clear existing managers (_sync_managers_lock is an asyncio.Lock)
+        async with _sync_managers_lock:
             _sync_managers.clear()
 
         # Create manager
@@ -370,8 +374,17 @@ class TestBeadsSyncIntegration:
         assert manager.project_name == "integration-project"
 
     @pytest.mark.integration
-    def test_beads_task_parsing(self, tmp_path, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_beads_task_parsing(self, tmp_path, monkeypatch):
         """Test parsing tasks from beads files."""
+        # Patch get_projects_dir for BeadsManager (used by beads_manager module)
+        projects_dir = tmp_path / "projects"
+        projects_dir.mkdir(parents=True)
+        monkeypatch.setattr(
+            "server.services.beads_manager.get_projects_dir",
+            lambda: projects_dir
+        )
+        # Also patch the deprecated beads_sync_dir for backwards compatibility
         monkeypatch.setattr(
             "server.services.beads_sync_manager.get_beads_sync_dir",
             lambda: tmp_path / "beads-sync"
@@ -383,8 +396,8 @@ class TestBeadsSyncIntegration:
             _sync_managers_lock
         )
 
-        # Clear existing managers
-        with _sync_managers_lock:
+        # Clear existing managers (_sync_managers_lock is an asyncio.Lock)
+        async with _sync_managers_lock:
             _sync_managers.clear()
 
         # Create manager
@@ -393,8 +406,8 @@ class TestBeadsSyncIntegration:
             "https://github.com/test/repo.git"
         )
 
-        # Create beads data
-        beads_dir = tmp_path / "beads-sync" / "parse-test" / ".beads"
+        # Create beads data in the correct location (projects_dir / project_name / .beads)
+        beads_dir = projects_dir / "parse-test" / ".beads"
         beads_dir.mkdir(parents=True)
 
         issues = [
