@@ -368,15 +368,19 @@ def refresh_project_prompts(project_dir: Path) -> list[str]:
             continue
 
         try:
-            # Delete existing file first to handle permission issues
-            # (container may have created files with different ownership)
+            template_content = template_path.read_bytes()
+            # Skip if destination already has identical content
             if dest_path.exists():
+                try:
+                    if dest_path.read_bytes() == template_content:
+                        continue
+                except (OSError, PermissionError):
+                    pass
                 try:
                     dest_path.unlink()
                 except (OSError, PermissionError):
-                    # If unlink fails, try to overwrite anyway
                     pass
-            shutil.copy(template_path, dest_path)
+            dest_path.write_bytes(template_content)
             updated_files.append(dest_name)
         except (OSError, PermissionError) as e:
             print(f"  Warning: Could not update {dest_name}: {e}")

@@ -434,13 +434,59 @@ class ContainerManager:
             logger.warning(f"Callback error: {e}")
 
     async def _push_template_updates(self) -> None:
-        """Commit and push updated template files to git.
-
-        Called after refresh_project_prompts() to ensure containers
-        get the latest templates when they clone/pull the repo.
-        """
+        """Sync with remote and push updated template files to git."""
         try:
-            # Untrack .agent_config.json if it was previously committed
+            # 1. Fetch remote state
+            await asyncio.to_thread(
+                subprocess.run,
+                ["git", "fetch", "origin"],
+                cwd=self.project_dir,
+                capture_output=True,
+                timeout=30,
+            )
+
+            # 2. Check if we're behind remote
+            status_result = await asyncio.to_thread(
+                subprocess.run,
+                ["git", "status", "-sb"],
+                cwd=self.project_dir,
+                capture_output=True,
+                text=True,
+            )
+            status_output = status_result.stdout if status_result.returncode == 0 else ""
+
+            # 3. If behind or diverged, sync with remote first
+            if "behind" in status_output or "diverged" in status_output:
+                pull_result = await asyncio.to_thread(
+                    subprocess.run,
+                    ["git", "pull", "--rebase", "origin", "main"],
+                    cwd=self.project_dir,
+                    capture_output=True,
+                    timeout=60,
+                )
+                if pull_result.returncode != 0:
+                    # Abort failed rebase
+                    await asyncio.to_thread(
+                        subprocess.run,
+                        ["git", "rebase", "--abort"],
+                        cwd=self.project_dir,
+                        capture_output=True,
+                    )
+                    # Use claude to resolve conflicts
+                    logger.info(f"Diverged repo for {self.project_name}, using claude to sync")
+                    await asyncio.to_thread(
+                        subprocess.run,
+                        ["claude", "--dangerously-skip-permissions", "-p",
+                         "sync this repo with remote, fixing any conflicts or issues. "
+                         "don't lose any features from either remote or local. "
+                         "commit and push when done."],
+                        cwd=self.project_dir,
+                        capture_output=True,
+                        timeout=300,
+                    )
+                    return  # claude handled the push
+
+            # 4. Untrack .agent_config.json if previously committed
             await asyncio.to_thread(
                 subprocess.run,
                 ["git", "rm", "--cached", "prompts/.agent_config.json"],
@@ -448,7 +494,7 @@ class ContainerManager:
                 capture_output=True,
             )
 
-            # Stage template .md files, prompts/.gitignore, and CLAUDE.md
+            # 5. Stage template files
             await asyncio.to_thread(
                 subprocess.run,
                 ["git", "add", "prompts/*.md", "prompts/.gitignore", "CLAUDE.md"],
@@ -456,7 +502,7 @@ class ContainerManager:
                 capture_output=True,
             )
 
-            # Commit (may fail if no changes, that's OK)
+            # 6. Commit (fails if no changes, that's OK)
             await asyncio.to_thread(
                 subprocess.run,
                 ["git", "commit", "-m", "chore: Update agent templates"],
@@ -464,7 +510,7 @@ class ContainerManager:
                 capture_output=True,
             )
 
-            # Push to remote
+            # 7. Push
             result = await asyncio.to_thread(
                 subprocess.run,
                 ["git", "push"],
