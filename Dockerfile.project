@@ -58,11 +58,18 @@ RUN npm install -g pnpm yarn
 RUN useradd --uid 1001 -m coder \
     && echo "coder ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
-# Install Claude Code CLI globally (required by Agent SDK)
-RUN npm install -g @anthropic-ai/claude-code
+# Install Claude Code CLI (required by Agent SDK)
+# Install as coder user so it goes to /home/coder/.claude/
+USER coder
+RUN curl -fsSL https://claude.ai/install.sh | bash
+USER root
+# Add claude to PATH for subsequent build steps and runtime
+ENV PATH="/home/coder/.local/bin:/home/coder/.claude/bin:${PATH}"
 
 # Add Context7 MCP for documentation lookup (available to Claude agents)
+USER coder
 RUN claude mcp add context7 -- npx -y @upstash/context7-mcp
+USER root
 
 # Install Claude Agent SDK and dependencies
 RUN pip install --no-cache-dir claude-agent-sdk requests
@@ -199,7 +206,7 @@ umask 000
 
 # Update Claude Code to latest version at startup
 echo "Updating Claude Code to latest version..."
-npm update -g @anthropic-ai/claude-code 2>/dev/null || true
+su - coder -c "claude update" 2>/dev/null || true
 
 # Create agent log file (world-writable so coder user can write to it)
 # This file is tailed to show agent activity in docker logs
