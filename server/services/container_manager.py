@@ -457,6 +457,16 @@ class ContainerManager:
 
             # 3. If behind or diverged, sync with remote first
             if "behind" in status_output or "diverged" in status_output:
+                # Stash .beads/ changes so pull doesn't conflict with them.
+                # Local beads state is source of truth (agents modify via server API).
+                beads_stash = await asyncio.to_thread(
+                    subprocess.run,
+                    ["git", "stash", "push", "-m", "_beads_sync_", "--", ".beads/"],
+                    cwd=self.project_dir,
+                    capture_output=True,
+                    text=True,
+                )
+                has_beads_stash = "No local changes" not in (beads_stash.stdout or "")
                 pull_result = await asyncio.to_thread(
                     subprocess.run,
                     ["git", "pull", "--rebase", "origin", "main"],
@@ -464,6 +474,20 @@ class ContainerManager:
                     capture_output=True,
                     timeout=60,
                 )
+                # Restore local beads state (overrides whatever remote had)
+                if has_beads_stash:
+                    await asyncio.to_thread(
+                        subprocess.run,
+                        ["git", "checkout", "stash@{0}", "--", ".beads/"],
+                        cwd=self.project_dir,
+                        capture_output=True,
+                    )
+                    await asyncio.to_thread(
+                        subprocess.run,
+                        ["git", "stash", "drop"],
+                        cwd=self.project_dir,
+                        capture_output=True,
+                    )
                 if pull_result.returncode != 0:
                     # Abort failed rebase
                     await asyncio.to_thread(
@@ -479,6 +503,8 @@ class ContainerManager:
                         ["claude", "--dangerously-skip-permissions", "-p",
                          "sync this repo with remote, fixing any conflicts or issues. "
                          "don't lose any features from either remote or local. "
+                         "IMPORTANT: for any conflicts in .beads/ files, ALWAYS keep the LOCAL version - "
+                         "local beads state is the source of truth. "
                          "commit and push when done."],
                         cwd=self.project_dir,
                         capture_output=True,
@@ -498,6 +524,14 @@ class ContainerManager:
             await asyncio.to_thread(
                 subprocess.run,
                 ["git", "add", "prompts/*.md", "prompts/.gitignore", "CLAUDE.md"],
+                cwd=self.project_dir,
+                capture_output=True,
+            )
+
+            # 5b. Unstage any .beads/ files that may have been picked up
+            await asyncio.to_thread(
+                subprocess.run,
+                ["git", "reset", "HEAD", "--", ".beads/"],
                 cwd=self.project_dir,
                 capture_output=True,
             )
@@ -1750,21 +1784,28 @@ class ContainerManager:
             return True, "Agent interrupted"
 
         else:
-            # Error - check state file for details and potentially restart
-            state_file = self.project_dir / ".agent_state.json"
-            error_info = f"exit code {exit_code}, no state file"
+            # Error - read state file from container for details
+            error_info = f"exit code {exit_code}"
 
-            if state_file.exists():
-                try:
-                    state = json.loads(state_file.read_text())
-                    error_info = state.get("error", f"exit code {exit_code}")
+            try:
+                result = await asyncio.to_thread(
+                    subprocess.run,
+                    ["docker", "exec", self.container_name, "cat", "/project/.agent_state.json"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    state = json.loads(result.stdout)
+                    error_info = state.get("error", error_info)
                     error_type = state.get("error_type", "Exception")
                     logger.error(f"Agent failed in {self.container_name}: {error_type}: {error_info}")
                     await self._broadcast_output(f"[System] Agent error: {error_type}: {error_info}")
-                except Exception as e:
-                    logger.warning(f"Failed to read agent state: {e}")
-                    error_info = f"exit code {exit_code}, state read error: {e}"
-            else:
+                else:
+                    logger.error(f"Agent failed in {self.container_name}: {error_info}")
+                    await self._broadcast_output(f"[System] Agent failed: {error_info}")
+            except Exception as e:
+                logger.warning(f"Failed to read agent state from container: {e}")
                 logger.error(f"Agent failed in {self.container_name}: {error_info}")
                 await self._broadcast_output(f"[System] Agent failed: {error_info}")
 
