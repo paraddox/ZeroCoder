@@ -33,26 +33,43 @@ When helping create a feature, gather this information:
 
 ### Title
 - Concise and action-oriented
-- Examples: "Add dark mode toggle", "Fix login validation", "Implement search API"
+- Examples: "User can reset password via email", "Add dark mode toggle", "Implement search API"
 
 ### Description
-Include these sections:
+A brief description followed by numbered steps that serve as both implementation guide and verification criteria:
+
 ```
-## Summary
-Brief description of what this feature does.
+Brief description of what this feature does and why it's needed.
 
-## Context
-Why this feature is needed, what problem it solves.
-
-## Implementation Notes
-- Key files to modify
-- Patterns to follow
-- Technical considerations
-
-## Acceptance Criteria
-- [ ] Criterion 1
-- [ ] Criterion 2
+Steps:
+1. First implementation/verification step
+2. Second step
+3. Verify expected result
 ```
+
+### Good Example
+
+```
+Title: User can reset password via email
+Priority: P1
+Description: Password reset flow with email verification and session invalidation.
+
+Steps:
+1. User clicks "Forgot Password" on login page
+2. Enters email address
+3. Receives email with reset link (valid 1 hour)
+4. Clicks link, enters new password
+5. Password updated, user redirected to login
+6. Old sessions invalidated
+```
+
+### Bad Example
+
+```
+Title: Password reset works
+Description: User can reset password
+```
+**Problem:** Too vague, no steps, no verification criteria.
 
 ### Priority
 - 0 = Critical (blocking production)
@@ -60,9 +77,6 @@ Why this feature is needed, what problem it solves.
 - 2 = Medium (default, standard priority)
 - 3 = Low (nice to have)
 - 4 = Backlog (future consideration)
-
-### Steps (Optional)
-Break down implementation into actionable checklist items.
 
 ### Category (Optional)
 Tag appropriately: ui, api, auth, database, testing, docs, etc.
