@@ -2713,6 +2713,44 @@ async def monitor_agent_health() -> list[str]:
             except Exception as e:
                 logger.exception(f"Error restarting stuck agent in {manager.container_name}: {e}")
 
+    # Monitor remote agents
+    from .remote_machine_manager import get_all_remote_managers as _get_all_remote
+
+    # Collect all project names that have remote managers
+    from .remote_machine_manager import _remote_managers as _rm_registry
+    for project_name in list(_rm_registry.keys()):
+        for rm in _get_all_remote(project_name):
+            # Skip if not running
+            if rm.status != "running":
+                continue
+
+            # Check DB for graceful stop
+            from registry import get_remote_agent
+            agent = get_remote_agent(rm.agent_id)
+            if not agent:
+                continue
+
+            if agent.get("graceful_stop_requested"):
+                continue
+
+            if agent.get("restarting"):
+                continue
+
+            # Check if agent process is still alive
+            try:
+                if not await rm.is_agent_running():
+                    logger.warning(
+                        f"Remote agent {rm.agent_id} (machine={rm.machine_name}) not running, restarting..."
+                    )
+                    success, message = await rm.restart_agent()
+                    if success:
+                        restarted.append(f"remote-{rm.machine_name}-{rm.agent_number}")
+                        logger.info(f"Successfully restarted remote agent {rm.agent_id}")
+                    else:
+                        logger.error(f"Failed to restart remote agent {rm.agent_id}: {message}")
+            except Exception as e:
+                logger.exception(f"Error checking remote agent {rm.agent_id}: {e}")
+
     return restarted
 
 

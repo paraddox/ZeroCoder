@@ -3,34 +3,39 @@ Tests for Remote Machine Manager
 """
 
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 import sys
+import os
+import shutil
+import tempfile
 from pathlib import Path
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
+def _reset_registry_db():
+    """Reset registry to use a fresh temp database."""
+    import registry
+    test_dir = tempfile.mkdtemp(prefix="zerocoder_test_")
+    os.environ["ZEROCODER_DATA_DIR"] = test_dir
+    registry._engine = None
+    registry._SessionLocal = None
+    return test_dir
+
+
 class TestRemoteMachineRegistry:
     """Test registry CRUD operations for remote machines."""
 
     def setup_method(self):
-        """Set up test database."""
-        import registry
-        # Reset the engine to use in-memory database
-        registry._engine = None
-        registry._SessionLocal = None
-        # Override to use in-memory SQLite
-        import os
-        os.environ["ZEROCODER_DATA_DIR"] = "/tmp/zerocoder_test"
-        registry._engine = None
-        registry._SessionLocal = None
+        self._test_dir = _reset_registry_db()
+
+    def teardown_method(self):
+        if hasattr(self, '_test_dir') and os.path.exists(self._test_dir):
+            shutil.rmtree(self._test_dir, ignore_errors=True)
 
     def test_add_remote_machine(self):
         import registry
-        registry._engine = None
-        registry._SessionLocal = None
-
         machine_id = registry.add_remote_machine(
             name="test-server",
             host="192.168.1.100",
@@ -42,18 +47,12 @@ class TestRemoteMachineRegistry:
 
     def test_add_duplicate_machine_raises(self):
         import registry
-        registry._engine = None
-        registry._SessionLocal = None
-
         registry.add_remote_machine(name="dup-server", host="10.0.0.1")
         with pytest.raises(registry.RegistryError):
             registry.add_remote_machine(name="dup-server", host="10.0.0.2")
 
     def test_list_remote_machines(self):
         import registry
-        registry._engine = None
-        registry._SessionLocal = None
-
         registry.add_remote_machine(name="list-server-1", host="10.0.0.1")
         registry.add_remote_machine(name="list-server-2", host="10.0.0.2")
 
@@ -64,9 +63,6 @@ class TestRemoteMachineRegistry:
 
     def test_get_remote_machine(self):
         import registry
-        registry._engine = None
-        registry._SessionLocal = None
-
         mid = registry.add_remote_machine(name="get-server", host="10.0.0.3", port=2222, username="ubuntu")
         machine = registry.get_remote_machine(mid)
         assert machine is not None
@@ -77,25 +73,16 @@ class TestRemoteMachineRegistry:
 
     def test_remove_remote_machine(self):
         import registry
-        registry._engine = None
-        registry._SessionLocal = None
-
         mid = registry.add_remote_machine(name="rm-server", host="10.0.0.4")
         assert registry.remove_remote_machine(mid) is True
         assert registry.get_remote_machine(mid) is None
 
     def test_remove_nonexistent_machine(self):
         import registry
-        registry._engine = None
-        registry._SessionLocal = None
-
         assert registry.remove_remote_machine(99999) is False
 
     def test_update_machine_status(self):
         import registry
-        registry._engine = None
-        registry._SessionLocal = None
-
         mid = registry.add_remote_machine(name="status-server", host="10.0.0.5")
         registry.update_remote_machine_status(mid, "online")
         machine = registry.get_remote_machine(mid)
@@ -106,31 +93,23 @@ class TestRemoteMachineRegistry:
 class TestRemoteAgentRegistry:
     """Test registry CRUD operations for remote agents."""
 
+    def setup_method(self):
+        self._test_dir = _reset_registry_db()
+
+    def teardown_method(self):
+        if hasattr(self, '_test_dir') and os.path.exists(self._test_dir):
+            shutil.rmtree(self._test_dir, ignore_errors=True)
+
     def test_create_remote_agent(self):
         import registry
-        registry._engine = None
-        registry._SessionLocal = None
-
-        # First register a project
-        try:
-            registry.register_project("test-proj", "git@github.com:test/repo.git")
-        except registry.RegistryError:
-            pass
-
+        registry.register_project("test-proj", "git@github.com:test/repo.git")
         mid = registry.add_remote_machine(name="agent-server", host="10.0.0.10")
         agent_id = registry.create_remote_agent("test-proj", mid, agent_number=1)
         assert agent_id > 0
 
     def test_update_remote_agent(self):
         import registry
-        registry._engine = None
-        registry._SessionLocal = None
-
-        try:
-            registry.register_project("test-proj2", "git@github.com:test/repo2.git")
-        except registry.RegistryError:
-            pass
-
+        registry.register_project("test-proj2", "git@github.com:test/repo2.git")
         mid = registry.add_remote_machine(name="agent-server-2", host="10.0.0.11")
         agent_id = registry.create_remote_agent("test-proj2", mid, agent_number=1)
 
@@ -141,31 +120,17 @@ class TestRemoteAgentRegistry:
 
     def test_get_agents_for_project(self):
         import registry
-        registry._engine = None
-        registry._SessionLocal = None
-
-        try:
-            registry.register_project("test-proj3", "git@github.com:test/repo3.git")
-        except registry.RegistryError:
-            pass
-
+        registry.register_project("test-proj3", "git@github.com:test/repo3.git")
         mid = registry.add_remote_machine(name="agent-server-3", host="10.0.0.12")
         registry.create_remote_agent("test-proj3", mid, agent_number=1)
         registry.create_remote_agent("test-proj3", mid, agent_number=2)
 
         agents = registry.get_remote_agents_for_project("test-proj3")
-        assert len(agents) >= 2
+        assert len(agents) == 2
 
     def test_delete_remote_agent(self):
         import registry
-        registry._engine = None
-        registry._SessionLocal = None
-
-        try:
-            registry.register_project("test-proj4", "git@github.com:test/repo4.git")
-        except registry.RegistryError:
-            pass
-
+        registry.register_project("test-proj4", "git@github.com:test/repo4.git")
         mid = registry.add_remote_machine(name="agent-server-4", host="10.0.0.13")
         agent_id = registry.create_remote_agent("test-proj4", mid, agent_number=1)
         assert registry.delete_remote_agent(agent_id) is True
@@ -213,14 +178,11 @@ class TestRemoteMachineManagerUnit:
             get_all_remote_managers,
         )
 
-        # Clean state
         _remote_managers.clear()
-
         assert get_all_remote_managers("nonexistent") == []
 
     def test_build_env_vars(self):
         from server.services.remote_machine_manager import RemoteMachineManager
-        import os
 
         manager = RemoteMachineManager(
             project_name="myproject",
