@@ -834,21 +834,20 @@ class TestCachedFeatures:
             get_cached_features,
             _sync_managers,
         )
+        from server.services.beads_manager import BeadsManager
 
         # Clear existing managers
         _sync_managers.clear()
 
-        # Create manager and issues
-        beads_dir = tmp_path / "projects" / "test-project" / ".beads"
-        beads_dir.mkdir(parents=True)
+        # Create project directory
+        project_dir = tmp_path / "projects" / "test-project"
+        project_dir.mkdir(parents=True)
 
-        issues_data = [
+        # Mock get_tasks to return test data (instead of calling bd CLI)
+        test_tasks = [
             {"id": "feat-1", "title": "Feature One", "status": "open", "labels": ["ui"]},
         ]
-
-        with open(beads_dir / "issues.jsonl", "w") as f:
-            for issue in issues_data:
-                f.write(json.dumps(issue) + "\n")
+        monkeypatch.setattr(BeadsManager, "get_tasks", lambda self: test_tasks)
 
         get_beads_sync_manager(
             "test-project",
