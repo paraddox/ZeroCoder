@@ -1,16 +1,481 @@
-// Shared TypeScript types for ZeroCoder
-// These types will be extracted from ui/src/lib/types.ts in ZeroCoder-awb.18
+/**
+ * Shared TypeScript types for ZeroCoder
+ * Extracted from ui/src/lib/types.ts
+ */
 
-// Placeholder types - will be populated with actual types
+// ============================================================================
+// Core Status Types
+// ============================================================================
 
 /** Project status values */
 export type ProjectStatus = 'active' | 'paused' | 'completed' | 'error';
 
 /** Agent/container status values */
-export type AgentStatus = 'not_created' | 'running' | 'stopped' | 'completed';
+export type AgentStatus = 'not_created' | 'stopped' | 'running' | 'paused' | 'crashed' | 'completed';
 
 /** Feature status values */
 export type FeatureStatus = 'open' | 'in_progress' | 'closed';
 
 /** Priority levels (P0=critical, P4=backlog) */
 export type Priority = 0 | 1 | 2 | 3 | 4;
+
+// ============================================================================
+// Project Types
+// ============================================================================
+
+export interface ProjectStats {
+  passing: number;
+  in_progress: number;
+  total: number;
+  percentage: number;
+}
+
+/** Agent model options for coder/overseer agents */
+export type AgentModel =
+  | 'claude-opus-4-5-20251101'
+  | 'claude-sonnet-4-5-20250514'
+  | 'glm-4-7'
+  | 'minimax-m2-1';
+
+export const AGENT_MODELS: { id: AgentModel; name: string; badge?: string; badgeColor?: string }[] = [
+  { id: 'minimax-m2-1', name: 'MiniMax M2.1', badge: 'OpenCode', badgeColor: 'warning' },
+  { id: 'glm-4-7', name: 'GLM 4.7', badge: 'OpenCode', badgeColor: 'warning' },
+  { id: 'claude-sonnet-4-5-20250514', name: 'Sonnet 4.5' },
+  { id: 'claude-opus-4-5-20251101', name: 'Opus 4.5' },
+];
+
+export interface ProjectSummary {
+  name: string;
+  git_url: string;
+  local_path: string; // ~/.zerocoder/projects/{name}
+  is_new: boolean; // False once wizard completed
+  has_spec: boolean;
+  wizard_incomplete: boolean;
+  stats: ProjectStats;
+  target_container_count: number;
+  agent_status?: AgentStatus;
+  agent_running?: boolean;
+  agent_model?: AgentModel;
+}
+
+export interface ProjectDetail extends Omit<ProjectSummary, 'wizard_incomplete'> {
+  prompts_dir: string;
+}
+
+export interface ProjectSettings {
+  agent_model: AgentModel;
+}
+
+export interface ProjectPrompts {
+  app_spec: string;
+  initializer_prompt: string;
+  coding_prompt: string;
+}
+
+// ============================================================================
+// Container Types
+// ============================================================================
+
+export type ContainerType = 'init' | 'coding';
+export type ContainerStatusType = 'not_created' | 'created' | 'running' | 'stopping' | 'stopped' | 'completed';
+export type AgentType = 'coder' | 'initializer' | 'overseer';
+export type SdkType = 'claude' | 'opencode';
+
+export interface ContainerInfo {
+  id: number;
+  container_number: number;
+  container_type: ContainerType;
+  status: ContainerStatusType;
+  current_feature: string | null;
+  docker_container_id: string | null;
+  agent_type?: AgentType;
+  sdk_type?: SdkType;
+  source?: 'docker' | 'remote';
+  machine_name?: string;
+}
+
+// ============================================================================
+// Feature Types
+// ============================================================================
+
+export interface Feature {
+  id: string; // beads uses string IDs like "feat-1"
+  priority: number;
+  category: string;
+  name: string;
+  description: string;
+  steps: string[];
+  passes: boolean;
+  in_progress: boolean;
+}
+
+export interface FeatureListResponse {
+  pending: Feature[];
+  in_progress: Feature[];
+  done: Feature[];
+}
+
+export interface FeatureCreate {
+  category: string;
+  name: string;
+  description: string;
+  steps: string[];
+  priority?: number;
+}
+
+// ============================================================================
+// Agent Types
+// ============================================================================
+
+export interface AgentStatusResponse {
+  status: AgentStatus;
+  container_name: string | null;
+  pid: number | null;
+  started_at: string | null;
+  idle_seconds: number;
+  yolo_mode: boolean;
+  agent_running: boolean;
+  graceful_stop_requested?: boolean;
+}
+
+export interface AgentActionResponse {
+  success: boolean;
+  status: AgentStatus;
+  message: string;
+}
+
+// ============================================================================
+// Remote Machine Types
+// ============================================================================
+
+export interface RemoteMachine {
+  id: number;
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  ssh_key_path: string | null;
+  status: 'online' | 'offline' | 'unknown';
+  last_checked_at: string | null;
+  created_at: string | null;
+}
+
+export interface RemoteMachineCreate {
+  name: string;
+  host: string;
+  port?: number;
+  username?: string;
+  ssh_key_path?: string | null;
+}
+
+export interface RemoteAgentInfo {
+  id: number;
+  project_name: string;
+  machine_id: number;
+  machine_name: string;
+  agent_number: number;
+  status: string;
+  current_feature: string | null;
+  pid: number | null;
+  graceful_stop_requested: boolean;
+  restarting: boolean;
+  last_activity_at: string | null;
+}
+
+// ============================================================================
+// Setup Types
+// ============================================================================
+
+export interface SetupStatus {
+  claude_cli: boolean;
+  credentials: boolean;
+  node: boolean;
+  npm: boolean;
+}
+
+// ============================================================================
+// Wizard Status Types
+// ============================================================================
+
+export interface WizardStatusMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: string;
+}
+
+export type WizardStep = 'mode' | 'details' | 'method' | 'chat';
+export type SpecMethod = 'claude' | 'manual';
+
+export interface WizardStatus {
+  step: WizardStep;
+  spec_method: SpecMethod | null;
+  started_at: string;
+  chat_messages: WizardStatusMessage[];
+}
+
+// ============================================================================
+// WebSocket Message Types
+// ============================================================================
+
+export type WSMessageType =
+  | 'progress'
+  | 'feature_update'
+  | 'log'
+  | 'agent_status'
+  | 'pong'
+  | 'graceful_stop_requested'
+  | 'containers';
+
+export interface WSProgressMessage {
+  type: 'progress';
+  passing: number;
+  in_progress: number;
+  total: number;
+  percentage: number;
+}
+
+export interface WSFeatureUpdateMessage {
+  type: 'feature_update';
+  feature_id: string; // beads uses string IDs
+  passes: boolean;
+}
+
+export interface WSLogMessage {
+  type: 'log';
+  line: string;
+  timestamp: string;
+  container_number?: number;
+}
+
+export interface WSAgentStatusMessage {
+  type: 'agent_status';
+  status: AgentStatus;
+  container_number?: number;
+  agent_type?: AgentType;
+  sdk_type?: SdkType;
+}
+
+export interface WSGracefulStopRequestedMessage {
+  type: 'graceful_stop_requested';
+  graceful_stop_requested: boolean;
+}
+
+export interface WSPongMessage {
+  type: 'pong';
+}
+
+export interface WSContainersMessage {
+  type: 'containers';
+  containers: Array<{
+    number: number;
+    type: 'init' | 'coding';
+    agent_type?: AgentType;
+    sdk_type?: SdkType;
+    source?: 'docker' | 'remote';
+    machine_name?: string;
+  }>;
+}
+
+export interface WSContainerUpdateMessage {
+  type: 'container_update';
+  container_number: number;
+  current_feature: string | null;
+}
+
+export type WSMessage =
+  | WSProgressMessage
+  | WSFeatureUpdateMessage
+  | WSLogMessage
+  | WSAgentStatusMessage
+  | WSGracefulStopRequestedMessage
+  | WSPongMessage
+  | WSContainersMessage
+  | WSContainerUpdateMessage;
+
+// ============================================================================
+// Spec Chat Types
+// ============================================================================
+
+export interface SpecQuestionOption {
+  label: string;
+  description: string;
+}
+
+export interface SpecQuestion {
+  question: string;
+  header: string;
+  options: SpecQuestionOption[];
+  multiSelect: boolean;
+}
+
+export interface SpecChatTextMessage {
+  type: 'text';
+  content: string;
+}
+
+export interface SpecChatQuestionMessage {
+  type: 'question';
+  questions: SpecQuestion[];
+  tool_id?: string;
+}
+
+export interface SpecChatCompleteMessage {
+  type: 'spec_complete';
+  path: string;
+}
+
+export interface SpecChatFileWrittenMessage {
+  type: 'file_written';
+  path: string;
+}
+
+export interface SpecChatSessionCompleteMessage {
+  type: 'complete';
+}
+
+export interface SpecChatErrorMessage {
+  type: 'error';
+  content: string;
+}
+
+export interface SpecChatPongMessage {
+  type: 'pong';
+}
+
+export interface SpecChatResponseDoneMessage {
+  type: 'response_done';
+}
+
+export type SpecChatServerMessage =
+  | SpecChatTextMessage
+  | SpecChatQuestionMessage
+  | SpecChatCompleteMessage
+  | SpecChatFileWrittenMessage
+  | SpecChatSessionCompleteMessage
+  | SpecChatErrorMessage
+  | SpecChatPongMessage
+  | SpecChatResponseDoneMessage;
+
+// ============================================================================
+// File Attachment Types
+// ============================================================================
+
+export type ImageMimeType = 'image/jpeg' | 'image/png';
+export type TextMimeType =
+  | 'text/plain'
+  | 'text/markdown'
+  | 'text/csv'
+  | 'application/json'
+  | 'text/html'
+  | 'text/css'
+  | 'text/javascript'
+  | 'application/xml';
+export type AttachmentMimeType = ImageMimeType | TextMimeType;
+
+/** Image attachment for chat messages */
+export interface ImageAttachment {
+  id: string;
+  filename: string;
+  mimeType: ImageMimeType;
+  base64Data: string; // Raw base64 (without data: prefix)
+  previewUrl: string; // data: URL for display
+  size: number; // File size in bytes
+  isText?: false; // Type discriminator
+}
+
+/** Text file attachment for chat messages */
+export interface TextAttachment {
+  id: string;
+  filename: string;
+  mimeType: TextMimeType;
+  textContent: string; // Raw text content
+  size: number; // File size in bytes
+  isText: true; // Type discriminator
+}
+
+/** Union type for any attachment */
+export type FileAttachment = ImageAttachment | TextAttachment;
+
+/** UI chat message for display */
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  attachments?: FileAttachment[];
+  timestamp: Date;
+  questions?: SpecQuestion[];
+  isStreaming?: boolean;
+}
+
+// ============================================================================
+// Assistant Chat Types
+// ============================================================================
+
+export interface AssistantConversation {
+  id: number;
+  project_name: string;
+  title: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  message_count: number;
+}
+
+export interface AssistantMessage {
+  id: number;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp: string | null;
+}
+
+export interface AssistantConversationDetail {
+  id: number;
+  project_name: string;
+  title: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  messages: AssistantMessage[];
+}
+
+export interface AssistantChatTextMessage {
+  type: 'text';
+  content: string;
+}
+
+export interface AssistantChatToolCallMessage {
+  type: 'tool_call';
+  tool: string;
+  input: Record<string, unknown>;
+}
+
+export interface AssistantChatResponseDoneMessage {
+  type: 'response_done';
+}
+
+export interface AssistantChatErrorMessage {
+  type: 'error';
+  content: string;
+}
+
+export interface AssistantChatConversationCreatedMessage {
+  type: 'conversation_created';
+  conversation_id: number;
+}
+
+export interface AssistantChatPongMessage {
+  type: 'pong';
+}
+
+export interface AssistantChatIssueCreatedMessage {
+  type: 'issue_created';
+  id: string;
+  title: string;
+}
+
+export type AssistantChatServerMessage =
+  | AssistantChatTextMessage
+  | AssistantChatToolCallMessage
+  | AssistantChatResponseDoneMessage
+  | AssistantChatErrorMessage
+  | AssistantChatConversationCreatedMessage
+  | AssistantChatPongMessage
+  | AssistantChatIssueCreatedMessage;
