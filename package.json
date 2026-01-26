@@ -1,0 +1,27 @@
+{
+  "name": "zerocoder-monorepo",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "dev": "pnpm -r --parallel run dev",
+    "build": "pnpm -r run build",
+    "lint": "pnpm -r run lint",
+    "test": "pnpm -r run test",
+    "test:run": "pnpm -r run test:run",
+    "typecheck": "pnpm -r run typecheck",
+    "clean": "pnpm -r exec rm -rf dist node_modules",
+    "dev:server": "pnpm --filter @zerocoder/server run dev",
+    "dev:ui": "pnpm --filter zerocoder run dev",
+    "build:server": "pnpm --filter @zerocoder/server run build",
+    "build:ui": "pnpm --filter zerocoder run build"
+  },
+  "devDependencies": {
+    "typescript": "~5.6.2"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  }
+}
