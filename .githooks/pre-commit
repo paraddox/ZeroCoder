@@ -11,18 +11,59 @@ if [ -f "venv/bin/activate" ]; then
     source venv/bin/activate
 fi
 
-# Run unit tests (fast subset for pre-commit)
+# Run Python unit tests (fast subset for pre-commit)
 # Skip slow tests marked with @pytest.mark.slow
 python -m pytest tests/unit/ -x -q --tb=line -m "not slow" 2>&1
 
-TEST_EXIT_CODE=$?
+PYTHON_EXIT_CODE=$?
 
-if [ $TEST_EXIT_CODE -ne 0 ]; then
+if [ $PYTHON_EXIT_CODE -ne 0 ]; then
     echo ""
-    echo "❌ Tests failed. Commit aborted."
+    echo "❌ Python tests failed. Commit aborted."
     echo "   Fix the failing tests or use 'git commit --no-verify' to bypass."
     exit 1
 fi
 
-echo "✅ Tests passed. Proceeding with commit."
+echo "✅ Python tests passed."
+
+# Run TypeScript typechecks if node_modules exist
+TS_FAILED=0
+
+# Check packages/shared
+if [ -d "packages/shared/node_modules" ]; then
+    echo "Running TypeScript typecheck for packages/shared..."
+    (cd packages/shared && npx tsc --noEmit) 2>&1
+    if [ $? -ne 0 ]; then
+        echo "❌ packages/shared typecheck failed."
+        TS_FAILED=1
+    else
+        echo "✅ packages/shared typecheck passed."
+    fi
+fi
+
+# Check packages/server
+if [ -d "packages/server/node_modules" ]; then
+    echo "Running TypeScript typecheck for packages/server..."
+    (cd packages/server && npx tsc --noEmit) 2>&1
+    if [ $? -ne 0 ]; then
+        echo "❌ packages/server typecheck failed."
+        TS_FAILED=1
+    else
+        echo "✅ packages/server typecheck passed."
+    fi
+fi
+
+# Note: ui typecheck is skipped because:
+# 1. UI uses vitest which has its own type checking
+# 2. UI build (npm run build) already validates types
+# 3. Test files have separate type config via vitest
+
+if [ $TS_FAILED -ne 0 ]; then
+    echo ""
+    echo "❌ TypeScript typechecks failed. Commit aborted."
+    echo "   Fix the type errors or use 'git commit --no-verify' to bypass."
+    exit 1
+fi
+
+echo "✅ All tests passed. Proceeding with commit."
 exit 0
