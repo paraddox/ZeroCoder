@@ -15,17 +15,19 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
-    "@zerocoder/shared": "workspace:*",
     "@hono/node-server": "^1.13.0",
     "@hono/zod-validator": "^0.4.1",
+    "@zerocoder/shared": "workspace:*",
+    "better-sqlite3": "^11.6.0",
     "drizzle-orm": "^0.38.0",
     "hono": "^4.6.0",
-    "better-sqlite3": "^11.6.0",
+    "ws": "^8.19.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.0",
+    "@types/ws": "^8.18.1",
     "drizzle-kit": "^0.30.0",
     "tsx": "^4.19.0",
     "typescript": "~5.6.2"
