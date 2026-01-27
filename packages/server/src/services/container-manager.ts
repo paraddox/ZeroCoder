@@ -1984,3 +1984,126 @@ export async function monitorAgentHealth(): Promise<string[]> {
 
   return restarted;
 }
+
+// =============================================================================
+// Background Monitor Loops
+// =============================================================================
+
+/** Idle container check interval in seconds (1 minute) */
+const IDLE_CHECK_INTERVAL = 60;
+
+/** AbortController for graceful shutdown of background monitors */
+let _shutdownController: AbortController | null = null;
+
+/**
+ * Start the agent health monitoring loop.
+ * Runs every 5 minutes to check for crashed/stuck agents and restart them.
+ */
+export async function startAgentHealthMonitor(): Promise<void> {
+  console.log(`Starting agent health monitor (interval: ${AGENT_HEALTH_CHECK_INTERVAL}s)`);
+
+  while (!_shutdownController?.signal.aborted) {
+    try {
+      // Sleep first, then check (matches Python behavior)
+      await sleep(AGENT_HEALTH_CHECK_INTERVAL * 1000, _shutdownController?.signal);
+
+      const restarted = await monitorAgentHealth();
+      if (restarted.length > 0) {
+        console.log(`Health check restarted agents: ${restarted.join(', ')}`);
+      }
+    } catch (error) {
+      // AbortError means graceful shutdown
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.log('Agent health monitor shutting down...');
+        break;
+      }
+      console.error(`Error in agent health monitor: ${error}`);
+    }
+  }
+}
+
+/**
+ * Start the idle container monitoring loop.
+ * Runs every 60 seconds to stop containers idle for > 15 minutes.
+ */
+export async function startIdleContainerMonitor(): Promise<void> {
+  console.log(`Starting idle container monitor (interval: ${IDLE_CHECK_INTERVAL}s, timeout: ${IDLE_TIMEOUT_MINUTES}m)`);
+
+  while (!_shutdownController?.signal.aborted) {
+    try {
+      // Sleep first, then check
+      await sleep(IDLE_CHECK_INTERVAL * 1000, _shutdownController?.signal);
+
+      const stopped = await cleanupIdleContainers();
+      if (stopped.length > 0) {
+        console.log(`Idle monitor stopped containers: ${stopped.join(', ')}`);
+      }
+    } catch (error) {
+      // AbortError means graceful shutdown
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.log('Idle container monitor shutting down...');
+        break;
+      }
+      console.error(`Error in idle container monitor: ${error}`);
+    }
+  }
+}
+
+/**
+ * Sleep helper that respects abort signals for graceful shutdown.
+ */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+
+    const timeout = setTimeout(resolve, ms);
+
+    signal?.addEventListener('abort', () => {
+      clearTimeout(timeout);
+      reject(new DOMException('Aborted', 'AbortError'));
+    }, { once: true });
+  });
+}
+
+/**
+ * Initialize background monitors.
+ * Call this when the server starts.
+ */
+export function initializeBackgroundMonitors(): void {
+  _shutdownController = new AbortController();
+
+  // Start both monitors (they run as background promises)
+  startAgentHealthMonitor().catch((err) => {
+    if (err?.name !== 'AbortError') {
+      console.error('Agent health monitor failed:', err);
+    }
+  });
+
+  startIdleContainerMonitor().catch((err) => {
+    if (err?.name !== 'AbortError') {
+      console.error('Idle container monitor failed:', err);
+    }
+  });
+}
+
+/**
+ * Shutdown background monitors and cleanup all containers.
+ * Call this on server shutdown (SIGINT/SIGTERM).
+ */
+export async function shutdownBackgroundMonitors(): Promise<void> {
+  console.log('Shutting down background monitors...');
+
+  // Signal all monitors to stop
+  _shutdownController?.abort();
+
+  // Give monitors a moment to clean up
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  // Cleanup all containers
+  await cleanupAllContainers();
+
+  console.log('Background monitors shut down.');
+}

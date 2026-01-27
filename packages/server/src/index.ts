@@ -16,6 +16,10 @@ import { VERSION } from '@zerocoder/shared';
 import { app } from './app.js';
 import { configureStaticFiles, isUIBuildAvailable } from './middleware/static.js';
 import { projectsRouter, featuresRouter } from './routers/index.js';
+import {
+  initializeBackgroundMonitors,
+  shutdownBackgroundMonitors,
+} from './services/container-manager.js';
 
 // ============================================================================
 // Health Check Endpoints
@@ -79,10 +83,38 @@ const host = process.env['HOST'] ?? '127.0.0.1';
 console.log(`ZeroCoder Server v${VERSION}`);
 console.log(`Starting server on http://${host}:${port}...`);
 
-serve({
+// Start background health monitors
+initializeBackgroundMonitors();
+
+const server = serve({
   fetch: app.fetch,
   port,
   hostname: host,
 });
+
+// ============================================================================
+// Graceful Shutdown
+// ============================================================================
+
+let isShuttingDown = false;
+
+async function gracefulShutdown(signal: string): Promise<void> {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  console.log(`\nReceived ${signal}, shutting down gracefully...`);
+
+  // Shutdown background monitors and cleanup containers
+  await shutdownBackgroundMonitors();
+
+  // Close the HTTP server
+  server.close();
+
+  console.log('Server shut down.');
+  process.exit(0);
+}
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 export { app };
