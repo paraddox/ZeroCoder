@@ -10,3 +10,4 @@ const sqlite = new Database(dbPath);
 export const db = drizzle(sqlite, { schema });
 
 export * from './schema.js';
+export * from './crud.js';
