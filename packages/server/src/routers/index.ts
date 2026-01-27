@@ -8,3 +8,4 @@
 export { projectsRouter } from './projects.js';
 export { featuresRouter } from './features.js';
 export { beadsApiRouter } from './beads-api.js';
+export { agentRouter } from './agent.js';
