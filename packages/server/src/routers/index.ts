@@ -6,3 +6,4 @@
  */
 
 export { projectsRouter } from './projects.js';
+export { featuresRouter } from './features.js';

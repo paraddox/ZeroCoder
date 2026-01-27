@@ -15,6 +15,7 @@ import { serve } from '@hono/node-server';
 import { VERSION } from '@zerocoder/shared';
 import { app } from './app.js';
 import { configureStaticFiles, isUIBuildAvailable } from './middleware/static.js';
+import { projectsRouter, featuresRouter } from './routers/index.js';
 
 // ============================================================================
 // Health Check Endpoints
@@ -35,11 +36,17 @@ app.get('/api/health', (c) => {
 });
 
 // ============================================================================
-// API Routes (to be added)
+// API Routes
 // ============================================================================
+
+// Mount project routes
+app.route('/api/projects', projectsRouter);
+
+// Mount feature routes (nested under projects)
+// Features are accessed via /api/projects/:name/features/*
+app.route('/api/projects', featuresRouter);
+
 // Future routes will be mounted here:
-// - /api/projects/* - Project management
-// - /api/features/* - Feature management
 // - /api/agent/* - Agent control
 // - /ws/projects/:project_name - WebSocket connections
 
