@@ -7,3 +7,4 @@
 
 export * from './beads-manager.js';
 export * from './container-manager.js';
+export * from './agent-executor.js';
