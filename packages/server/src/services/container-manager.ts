@@ -1118,6 +1118,132 @@ export class ContainerManager {
   }
 
   /**
+   * Start the container without starting the agent.
+   * Used for multi-container orchestration where agents are started separately.
+   */
+  async startContainerOnly(): Promise<[boolean, string]> {
+    // Refresh prompts from templates before starting
+    try {
+      const updated = refreshProjectPrompts(this.projectDir);
+      if (updated.length > 0) {
+        console.log(`Refreshed prompts from templates: ${updated.join(', ')}`);
+      }
+    } catch (e) {
+      console.warn(`Failed to refresh prompts: ${e}`);
+    }
+
+    this._syncStatus();
+
+    if (this._status === 'running') {
+      return [true, 'Container already running'];
+    }
+
+    try {
+      if (this._status === 'stopped') {
+        // Restart existing container
+        const { stderr } = await execAsync(`docker start ${this.containerName}`);
+        if (stderr && stderr.includes('Error')) {
+          return [false, `Failed to start container: ${stderr}`];
+        }
+        updateContainerStatus(this.projectName, this.containerNumber, this.containerType, {
+          status: 'running',
+        });
+      } else {
+        // Ensure Docker image exists
+        const [imageOk, imageMsg] = await ensureImageExists();
+        if (!imageOk) {
+          return [false, imageMsg];
+        }
+
+        // Create new standalone container
+        const cmd = [
+          'docker', 'run', '-d',
+          '--name', this.containerName,
+          '--add-host', 'host.docker.internal:host-gateway',
+          '--memory', '64g',
+          '--memory-swap', '64g',
+        ];
+
+        // Pass environment variables
+        cmd.push('-e', `GIT_REMOTE_URL=${this.gitUrl}`);
+        cmd.push('-e', `CONTAINER_TYPE=${this._isInitContainer ? 'init' : 'coding'}`);
+        cmd.push('-e', `PROJECT_NAME=${this.projectName}`);
+        cmd.push('-e', `CONTAINER_NUMBER=${this.containerNumber}`);
+
+        const serverPort = process.env['PORT'] || '8888';
+        cmd.push('-e', `HOST_API_URL=http://host.docker.internal:${serverPort}`);
+
+        // Pass API keys if available
+        for (const envName of ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ZHIPU_API_KEY', 'MINIMAX_API_KEY', 'TZ']) {
+          const envValue = process.env[envName];
+          if (envValue) {
+            cmd.push('-e', `${envName}=${envValue}`);
+          }
+        }
+
+        cmd.push(CONTAINER_IMAGE);
+
+        const { stderr } = await execAsync(cmd.join(' '));
+        if (stderr && stderr.includes('Error')) {
+          return [false, `Failed to create container: ${stderr}`];
+        }
+
+        // Register in database
+        createContainerRecord(this.projectName, this.containerNumber, this.containerType);
+
+        // Get docker container ID
+        try {
+          const { stdout: dockerId } = await execAsync(
+            `docker inspect --format "{{.Id}}" ${this.containerName}`
+          );
+          updateContainerStatus(this.projectName, this.containerNumber, this.containerType, {
+            dockerContainerId: dockerId.trim(),
+            status: 'running',
+          });
+        } catch {
+          updateContainerStatus(this.projectName, this.containerNumber, this.containerType, {
+            status: 'running',
+          });
+        }
+      }
+
+      this._startedAt = new Date();
+      this._updateActivity();
+      this.status = 'running';
+      this._userStarted = true;
+
+      // Start log streaming
+      this._startLogStreaming();
+
+      // Wait for git clone to complete
+      for (let attempt = 0; attempt < 30; attempt++) {
+        await this._sleep(2000);
+        try {
+          await execAsync(`docker exec -u coder ${this.containerName} test -e /project/.git`);
+          console.log(`Container ${this.containerName}: repository cloned successfully`);
+          break;
+        } catch {
+          console.log(`Waiting for git clone (attempt ${attempt + 1}/30)`);
+          if (attempt === 29) {
+            return [false, 'Repository clone failed or timed out'];
+          }
+        }
+      }
+
+      // Pre-agent sync
+      const [syncOk, syncMsg] = await this.preAgentSync();
+      if (!syncOk) {
+        console.warn(`Pre-agent sync failed: ${syncMsg}`);
+      }
+
+      return [true, `Container ${this.containerName} started (agent not launched)`];
+    } catch (e) {
+      console.error(`Failed to start container: ${e}`);
+      return [false, `Failed to start container: ${e}`];
+    }
+  }
+
+  /**
    * Remove the container completely.
    */
   async remove(): Promise<[boolean, string]> {

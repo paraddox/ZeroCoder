@@ -48,6 +48,17 @@ import { hasFeatures, hasOpenFeatures } from '../utils/progress.js';
 const CONTAINER_STARTUP_DELAY = 60; // seconds between container starts
 
 // =============================================================================
+// Helpers
+// =============================================================================
+
+/**
+ * Sleep helper for staggered startup.
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// =============================================================================
 // Router Setup
 // =============================================================================
 
@@ -491,6 +502,7 @@ agentRouter.post('/start-all', async (c) => {
   }
 
   const targetCount = projectInfo.targetContainerCount;
+  const gitUrl = projectInfo.gitUrl;
 
   // Pre-flight git health check
   if (existsSync(join(projectDir, '.git'))) {
@@ -502,55 +514,144 @@ agentRouter.post('/start-all', async (c) => {
     }
   }
 
+  // Import container manager functions
+  const { getContainerManager } = await import('../services/container-manager.js');
+
   // Check if project has features
   const projectHasFeatures = hasFeatures(projectDir, projectName);
 
-  // Phase 1: Init container if needed
+  // ==========================================================================
+  // PHASE 1: Init container (only for projects without features)
+  // ==========================================================================
   if (!projectHasFeatures) {
     console.log(`[StartAll] Phase 1: Running full initializer for new project ${projectName}`);
 
-    // Create init container record
-    createContainer(projectName, 0, 'init');
-    updateContainerStatus(projectName, 0, 'init', { status: 'running' });
+    // Get init container manager
+    const initManager = await getContainerManager(projectName, gitUrl, 0, projectDir);
 
-    // TODO: Actually start init container and wait for completion
-    console.log(`[StartAll] Phase 1 complete. Init container would finish here.`);
+    // Load initializer prompt
+    let initInstruction: string;
+    try {
+      initInstruction = getInitializerPrompt(projectDir);
+    } catch (e) {
+      throw new HTTPException(400, { message: `Could not load initializer prompt: ${e}` });
+    }
+
+    // Force Claude SDK with Opus 4.5 for initializer
+    initManager['_forceClaudeSdk'] = true;
+    initManager['_forcedModel'] = 'claude-opus-4-5-20251101';
+
+    // Start init container with instruction
+    const [initSuccess, initMessage] = await initManager.start(initInstruction);
+    if (!initSuccess) {
+      return c.json({
+        success: false,
+        status: initManager.status,
+        message: `Phase 1 (init) failed: ${initMessage}`,
+      });
+    }
+
+    // Wait for init container to finish
+    console.log(`[StartAll] Waiting for init container to complete...`);
+    while (await initManager.isAgentRunning()) {
+      await sleep(2000);
+    }
+
+    console.log(`[StartAll] Phase 1 complete. Init container finished.`);
   } else {
     console.log(`[StartAll] Phase 1: Host-side recovery for existing project ${projectName}`);
-    // TODO: Revert in_progress tasks to open
+
+    // Revert any in_progress tasks to open on the host side
+    // TODO: Implement task cleanup service
+    // const reverted = await revertInProgressTasksForProject(projectName, projectDir);
+    // if (reverted > 0) {
+    //   console.log(`[StartAll] Reverted ${reverted} in_progress task(s) to open`);
+    // }
+
     console.log(`[StartAll] Phase 1 complete. Recovery finished.`);
   }
 
-  // Phase 2: Spawn coding containers
+  // ==========================================================================
+  // PHASE 2: Spawn N coding containers with staggered startup
+  // ==========================================================================
   console.log(`[StartAll] Phase 2: Spawning ${targetCount} coding container(s)...`);
 
-  const results: { success: boolean; message: string }[] = [];
-
-  for (let i = 1; i <= targetCount; i++) {
-    if (i > 1) {
-      // Stagger container starts
-      console.log(`[StartAll] Waiting ${CONTAINER_STARTUP_DELAY}s before starting container ${i}...`);
-      // Note: In production, use actual async sleep
-    }
-
-    // Create container record
-    createContainer(projectName, i, 'coding');
-    updateContainerStatus(projectName, i, 'coding', { status: 'running' });
-
-    // TODO: Actually start the container
-    console.log(`[StartAll] Started coding container ${i}`);
-    results.push({ success: true, message: `Container ${i} started` });
+  // Load coding prompt for all containers
+  let codingPrompt: string;
+  try {
+    codingPrompt = getCodingPrompt(projectDir);
+  } catch (e) {
+    throw new HTTPException(400, { message: `Could not load coding prompt: ${e}` });
   }
 
+  // Create managers for all coding containers
+  const codingManagers: Awaited<ReturnType<typeof getContainerManager>>[] = [];
+  for (let i = 1; i <= targetCount; i++) {
+    const manager = await getContainerManager(projectName, gitUrl, i, projectDir);
+    codingManagers.push(manager);
+  }
+
+  // Start coding containers with staggered delays
+  const results: { success: boolean; message: string }[] = [];
+
+  for (let i = 0; i < codingManagers.length; i++) {
+    const containerNum = i + 1;
+    const manager = codingManagers[i];
+
+    if (!manager) continue;
+
+    // Stagger starts (skip delay for first container)
+    if (i > 0) {
+      console.log(`[StartAll] Waiting ${CONTAINER_STARTUP_DELAY}s before starting container ${containerNum}...`);
+      await sleep(CONTAINER_STARTUP_DELAY * 1000);
+    }
+
+    try {
+      console.log(`[StartAll] Starting coding container ${containerNum}...`);
+
+      // Configure for coding agent
+      manager['_currentAgentType'] = 'coder';
+      manager['_forceClaudeSdk'] = false;
+
+      // Start container first (without agent)
+      const [containerOk, containerMsg] = await manager.startContainerOnly();
+      if (!containerOk) {
+        results.push({ success: false, message: `Container ${containerNum} failed: ${containerMsg}` });
+        continue;
+      }
+
+      // Wait a moment for container to stabilize
+      await sleep(2000);
+
+      // Start agent as fire-and-forget background task
+      manager.sendInstruction(codingPrompt).catch((err) => {
+        console.error(`[StartAll] Agent error in container ${containerNum}: ${err}`);
+      });
+
+      results.push({ success: true, message: `Container ${containerNum} started, agent launching` });
+      console.log(`[StartAll] Container ${containerNum} started, agent launching in background`);
+    } catch (e) {
+      console.error(`[StartAll] Error starting container ${containerNum}: ${e}`);
+      results.push({ success: false, message: `Container ${containerNum}: ${e}` });
+    }
+  }
+
+  // Analyze results
   const successes = results.filter((r) => r.success).length;
+  const failures = results.filter((r) => !r.success);
   const allSuccess = successes === targetCount;
+
+  let message: string;
+  if (failures.length > 0) {
+    message = `Started ${successes}/${targetCount} coding containers. Failures: ${failures.map((f) => f.message).join('; ')}`;
+  } else {
+    message = `Successfully started init + ${targetCount} coding container(s)`;
+  }
 
   return c.json({
     success: allSuccess,
     status: allSuccess ? 'running' : successes === 0 ? 'error' : 'partial',
-    message: allSuccess
-      ? `Successfully started init + ${targetCount} coding container(s)`
-      : `Started ${successes}/${targetCount} containers`,
+    message,
   });
 });
 
