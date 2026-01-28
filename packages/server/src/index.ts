@@ -15,7 +15,12 @@ import { serve } from '@hono/node-server';
 import { VERSION } from '@zerocoder/shared';
 import { app } from './app.js';
 import { configureStaticFiles, isUIBuildAvailable } from './middleware/static.js';
-import { projectsRouter, featuresRouter, specCreationRouter } from './routers/index.js';
+import {
+  projectsRouter,
+  featuresRouter,
+  specCreationRouter,
+  remoteMachinesRouter,
+} from './routers/index.js';
 import {
   initializeBackgroundMonitors,
   shutdownBackgroundMonitors,
@@ -52,6 +57,9 @@ app.route('/api/projects', featuresRouter);
 
 // Mount spec creation routes
 app.route('/api/spec', specCreationRouter);
+
+// Mount remote machines routes
+app.route('/api/remote-machines', remoteMachinesRouter);
 
 // Future routes will be mounted here:
 // - /api/agent/* - Agent control
