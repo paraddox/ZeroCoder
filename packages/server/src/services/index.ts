@@ -12,3 +12,14 @@ export * from './log-streamer.js';
 export * from './local-project-manager.js';
 export * from './task-cleanup.js';
 export * from './branch-cleanup.js';
+export {
+  RemoteMachineManager,
+  getOrCreateRemoteManager,
+  getExistingRemoteManager,
+  getAllRemoteManagers,
+  clearRemoteManager,
+  cleanupAllRemoteManagers,
+  type RemoteAgentStatus,
+  type RemoteOutputCallback,
+  type RemoteStatusCallback,
+} from './remote-machine-manager.js';
