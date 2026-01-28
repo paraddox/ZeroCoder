@@ -23,3 +23,12 @@ export {
   type RemoteOutputCallback,
   type RemoteStatusCallback,
 } from './remote-machine-manager.js';
+export {
+  SpecChatSession,
+  createSession,
+  getSession,
+  listSessions,
+  removeSession,
+  cleanupAllSessions,
+  type MessageChunk,
+} from './spec-chat-session.js';
