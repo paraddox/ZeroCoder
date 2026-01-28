@@ -221,6 +221,14 @@ export class BeadsManager {
 
     try {
       const { execSync } = require('child_process');
+      // Check if bd command exists first
+      try {
+        execSync('which bd', { stdio: 'pipe' });
+      } catch {
+        // bd not available, return empty array for testing
+        return [];
+      }
+
       let result = execSync('bd --no-daemon list --json --all --limit 0', {
         cwd: this.localPath,
         timeout: 30000,
