@@ -20,6 +20,7 @@ import {
   featuresRouter,
   specCreationRouter,
   remoteMachinesRouter,
+  remoteAgentRouter,
 } from './routers/index.js';
 import {
   initializeBackgroundMonitors,
@@ -60,6 +61,9 @@ app.route('/api/spec', specCreationRouter);
 
 // Mount remote machines routes
 app.route('/api/remote-machines', remoteMachinesRouter);
+
+// Mount remote agent routes (nested under projects)
+app.route('/api/projects', remoteAgentRouter);
 
 // Future routes will be mounted here:
 // - /api/agent/* - Agent control

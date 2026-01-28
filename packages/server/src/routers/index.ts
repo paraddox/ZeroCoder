@@ -12,3 +12,4 @@ export { agentRouter } from './agent.js';
 export { specCreationRouter } from './spec-creation.js';
 export { assistantRouter, handleAssistantWebSocket } from './assistant.js';
 export { remoteMachinesRouter } from './remote-machines.js';
+export { remoteAgentRouter } from './remote-agent.js';
