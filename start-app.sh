@@ -4,13 +4,13 @@ cd "$(dirname "$0")"
 # This script launches the web UI for the autonomous coding agent.
 
 # Load environment variables from .env file if it exists
-# Note: PORT is determined dynamically by start-app.py, don't load from .env
+# Note: PORT is determined dynamically, don't load from .env
 if [ -f ".env" ]; then
     # Source each line to properly handle tilde expansion
     while IFS='=' read -r key value; do
         # Skip empty lines and comments
         [[ -z "$key" || "$key" =~ ^# ]] && continue
-        # Skip PORT - it's determined dynamically by start-app.py
+        # Skip PORT - it's determined dynamically
         [[ "$key" == "PORT" ]] && continue
         # Expand tilde in value
         value="${value/#\~/$HOME}"
@@ -18,7 +18,7 @@ if [ -f ".env" ]; then
     done < .env
 fi
 
-# Port file written by start-app.py
+# Port file written by the server
 PORT_FILE="/tmp/zerocoder-port.txt"
 
 echo ""
@@ -27,31 +27,34 @@ echo "  ZeroCoder UI"
 echo "===================================="
 echo ""
 
-# Check if Python is available (prefer Homebrew Python on macOS)
-if [ -x "/opt/homebrew/bin/python3" ]; then
-    # macOS ARM Homebrew
-    PYTHON_CMD="/opt/homebrew/bin/python3"
-elif [ -x "/usr/local/bin/python3" ]; then
-    # macOS Intel Homebrew or Linux /usr/local
-    PYTHON_CMD="/usr/local/bin/python3"
-elif command -v python3 &> /dev/null; then
-    PYTHON_CMD="python3"
-elif command -v python &> /dev/null; then
-    PYTHON_CMD="python"
+# Detect package manager (pnpm preferred)
+if command -v pnpm &> /dev/null; then
+    PKG_MANAGER="pnpm"
+    PKG_CMD="pnpm"
+    PKG_INSTALL="pnpm install"
+    PKG_RUN="pnpm run"
+elif command -v npm &> /dev/null; then
+    PKG_MANAGER="npm"
+    PKG_CMD="npm"
+    PKG_INSTALL="npm install"
+    PKG_RUN="npm run"
 else
-    echo "ERROR: Python not found"
-    echo "Please install Python from https://python.org"
+    echo "ERROR: Neither pnpm nor npm found"
+    echo "Please install pnpm (https://pnpm.io/installation) or Node.js (https://nodejs.org)"
     exit 1
 fi
 
-# Check if venv exists, create if not
-if [ ! -d "venv" ]; then
-    echo "Creating virtual environment..."
-    $PYTHON_CMD -m venv venv
+echo "Using package manager: $PKG_MANAGER"
+
+# Check if Node.js is available
+if ! command -v node &> /dev/null; then
+    echo "ERROR: Node.js not found"
+    echo "Please install Node.js from https://nodejs.org"
+    exit 1
 fi
 
-# Activate the virtual environment
-source venv/bin/activate
+NODE_VERSION=$(node --version)
+echo "Node.js version: $NODE_VERSION"
 
 # Configure git hooks (auto-setup on first run)
 if [ "$(git config core.hooksPath)" != ".githooks" ]; then
@@ -59,9 +62,23 @@ if [ "$(git config core.hooksPath)" != ".githooks" ]; then
     git config core.hooksPath .githooks
 fi
 
-# Install dependencies
-echo "Installing dependencies..."
-pip install -r requirements.txt --quiet
+# Install dependencies at root (for shared packages)
+echo "Installing root dependencies..."
+$PKG_INSTALL
+
+# Install dependencies for packages/server
+echo "Installing server dependencies..."
+cd packages/server
+$PKG_INSTALL
+cd ../..
+
+# Install dependencies for UI (if UI directory exists)
+if [ -d "ui" ]; then
+    echo "Installing UI dependencies..."
+    cd ui
+    $PKG_INSTALL
+    cd ..
+fi
 
 # Always build Docker image to pick up any changes
 # Uses BuildKit with SSH key secret for git clone support
@@ -91,22 +108,33 @@ fi
 echo "Docker image built successfully"
 
 PID_FILE="/tmp/zerocoder-ui.pid"
-PYTHON_PID=""
+SERVER_PID=""
+VITE_PID=""
 
 # Cleanup function for graceful shutdown
 cleanup() {
     echo ""
     echo "Shutting down ZeroCoder UI..."
 
-    # Stop the Python process if running
-    if [ ! -z "$PYTHON_PID" ]; then
-        echo "Stopping Python process (PID: $PYTHON_PID)..."
-        kill -TERM "$PYTHON_PID" 2>/dev/null
+    # Stop the server process if running
+    if [ ! -z "$SERVER_PID" ]; then
+        echo "Stopping server process (PID: $SERVER_PID)..."
+        kill -TERM "$SERVER_PID" 2>/dev/null
         # Wait a bit for graceful shutdown
         sleep 2
         # Force kill if still running
-        if kill -0 "$PYTHON_PID" 2>/dev/null; then
-            kill -9 "$PYTHON_PID" 2>/dev/null
+        if kill -0 "$SERVER_PID" 2>/dev/null; then
+            kill -9 "$SERVER_PID" 2>/dev/null
+        fi
+    fi
+
+    # Stop the Vite process if running
+    if [ ! -z "$VITE_PID" ]; then
+        echo "Stopping Vite process (PID: $VITE_PID)..."
+        kill -TERM "$VITE_PID" 2>/dev/null
+        sleep 1
+        if kill -0 "$VITE_PID" 2>/dev/null; then
+            kill -9 "$VITE_PID" 2>/dev/null
         fi
     fi
 
@@ -117,11 +145,11 @@ cleanup() {
         docker rm -f $ZEROCODER_CONTAINERS 2>/dev/null && echo "Containers removed"
     fi
 
-    # Stop any remaining uvicorn processes
-    UVICORN_PIDS=$(pgrep -f "uvicorn server.main:app")
-    if [ ! -z "$UVICORN_PIDS" ]; then
-        echo "Stopping uvicorn processes..."
-        for PID in $UVICORN_PIDS; do
+    # Stop any remaining Node.js server processes
+    NODE_PIDS=$(pgrep -f "node.*packages/server")
+    if [ ! -z "$NODE_PIDS" ]; then
+        echo "Stopping Node.js server processes..."
+        for PID in $NODE_PIDS; do
             kill -TERM "$PID" 2>/dev/null
         done
     fi
@@ -166,11 +194,11 @@ if [[ " $* " == *" --stop "* ]] || [[ " $* " == *" -s "* ]]; then
         fi
         rm -f "$PID_FILE"
     fi
-    # Also stop any remaining uvicorn processes
-    UVICORN_PIDS=$(pgrep -f "uvicorn server.main:app")
-    if [ ! -z "$UVICORN_PIDS" ]; then
-        echo "Stopping uvicorn processes: $UVICORN_PIDS"
-        for PID in $UVICORN_PIDS; do
+    # Also stop any remaining Node.js server processes
+    NODE_PIDS=$(pgrep -f "node.*packages/server")
+    if [ ! -z "$NODE_PIDS" ]; then
+        echo "Stopping Node.js server processes: $NODE_PIDS"
+        for PID in $NODE_PIDS; do
             kill -TERM "$PID" 2>/dev/null
             # Wait up to 10 seconds
             for i in {1..10}; do
@@ -184,7 +212,20 @@ if [[ " $* " == *" --stop "* ]] || [[ " $* " == *" -s "* ]]; then
                 kill -9 "$PID" 2>/dev/null
             fi
         done
-        echo "Stopped uvicorn processes"
+        echo "Stopped Node.js server processes"
+    fi
+    # Also stop any Vite processes
+    VITE_PIDS=$(pgrep -f "vite")
+    if [ ! -z "$VITE_PIDS" ]; then
+        echo "Stopping Vite processes: $VITE_PIDS"
+        for PID in $VITE_PIDS; do
+            kill -TERM "$PID" 2>/dev/null
+            sleep 1
+            if kill -0 "$PID" 2>/dev/null; then
+                kill -9 "$PID" 2>/dev/null
+            fi
+        done
+        echo "Stopped Vite processes"
     fi
     exit 0
 fi
@@ -194,10 +235,10 @@ if [[ " $* " == *" --restart "* ]] || [[ " $* " == *" -r "* ]]; then
     echo "Restarting ZeroCoder server (preserving containers)..."
 
     # Kill server processes only (not containers)
-    UVICORN_PIDS=$(pgrep -f "uvicorn server.main:app")
-    if [ ! -z "$UVICORN_PIDS" ]; then
-        echo "Stopping uvicorn processes: $UVICORN_PIDS"
-        for PID in $UVICORN_PIDS; do
+    NODE_PIDS=$(pgrep -f "node.*packages/server")
+    if [ ! -z "$NODE_PIDS" ]; then
+        echo "Stopping Node.js server processes: $NODE_PIDS"
+        for PID in $NODE_PIDS; do
             kill -TERM "$PID" 2>/dev/null
             for i in {1..5}; do
                 if ! kill -0 "$PID" 2>/dev/null; then
@@ -216,7 +257,7 @@ if [[ " $* " == *" --restart "* ]] || [[ " $* " == *" -r "* ]]; then
     echo "Rebuilding UI..."
     if [ -d "ui" ]; then
         cd ui
-        npm run build --silent
+        $PKG_RUN build
         cd ..
         echo "UI rebuilt"
     fi
@@ -225,16 +266,16 @@ if [[ " $* " == *" --restart "* ]] || [[ " $* " == *" -r "* ]]; then
     cleanup_restart() {
         echo ""
         echo "Shutting down server (containers preserved)..."
-        if [ ! -z "$PYTHON_PID" ]; then
-            kill -TERM "$PYTHON_PID" 2>/dev/null
+        if [ ! -z "$SERVER_PID" ]; then
+            kill -TERM "$SERVER_PID" 2>/dev/null
             sleep 2
-            if kill -0 "$PYTHON_PID" 2>/dev/null; then
-                kill -9 "$PYTHON_PID" 2>/dev/null
+            if kill -0 "$SERVER_PID" 2>/dev/null; then
+                kill -9 "$SERVER_PID" 2>/dev/null
             fi
         fi
-        UVICORN_PIDS=$(pgrep -f "uvicorn server.main:app")
-        if [ ! -z "$UVICORN_PIDS" ]; then
-            for PID in $UVICORN_PIDS; do
+        NODE_PIDS=$(pgrep -f "node.*packages/server")
+        if [ ! -z "$NODE_PIDS" ]; then
+            for PID in $NODE_PIDS; do
                 kill -TERM "$PID" 2>/dev/null
             done
         fi
@@ -245,42 +286,108 @@ if [[ " $* " == *" --restart "* ]] || [[ " $* " == *" -r "* ]]; then
 
     # Start server in foreground
     echo "Starting server..."
-    python start-app.py &
-    PYTHON_PID=$!
-    echo "Python PID: $PYTHON_PID"
-    wait $PYTHON_PID
+    cd packages/server
+    $PKG_RUN start &
+    SERVER_PID=$!
+    cd ..
+    echo "Server PID: $SERVER_PID"
+    wait $SERVER_PID
     exit 0
+fi
+
+# Function to find an available port
+find_available_port() {
+    local start_port=${1:-8888}
+    local max_attempts=${2:-10}
+    local port=$start_port
+
+    while [ $port -lt $((start_port + max_attempts)) ]; do
+        if ! nc -z 127.0.0.1 $port 2>/dev/null; then
+            echo $port
+            return 0
+        fi
+        port=$((port + 1))
+    done
+
+    echo "ERROR: No available ports found in range $start_port-$((start_port + max_attempts))" >&2
+    return 1
+}
+
+# Function to start the TypeScript server
+start_server() {
+    local port=$1
+    local dev_mode=$2
+
+    export PORT=$port
+    echo "$port" > "$PORT_FILE"
+
+    if [ "$dev_mode" = "true" ]; then
+        echo "Starting development server on port $port..."
+        cd packages/server
+        $PKG_RUN dev &
+        SERVER_PID=$!
+        cd ..
+    else
+        echo "Starting production server on port $port..."
+        # Build first
+        cd packages/server
+        $PKG_RUN build
+        $PKG_RUN start &
+        SERVER_PID=$!
+        cd ..
+    fi
+}
+
+# Check for --dev flag
+DEV_MODE=false
+if [[ " $* " == *" --dev "* ]] || [[ " $* " == *" -d "* ]]; then
+    DEV_MODE=true
 fi
 
 # Check for -bg flag to run in background
 if [[ " $* " == *" -bg "* ]] || [[ " $* " == *" --background "* ]]; then
-    # Remove -bg/--background from args before passing to start-app.py
-    ARGS=$(echo "$@" | sed 's/-bg//g' | sed 's/--background//g')
     echo "Starting server in background..."
-    nohup python start-app.py $ARGS > /tmp/zerocoder-ui.log 2>&1 &
-    BG_PID=$!
-    echo "$BG_PID" > "$PID_FILE"
-    sleep 3  # Wait for uvicorn to start and port file to be written
-    # Find the actual uvicorn PID
-    UVICORN_PID=$(pgrep -f "uvicorn server.main:app" | head -1)
-    echo "Shell PID: $BG_PID"
-    echo "Uvicorn PID: $UVICORN_PID"
+
+    PORT=$(find_available_port)
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Could not find an available port"
+        exit 1
+    fi
+
+    start_server $PORT false
+
+    echo "$SERVER_PID" > "$PID_FILE"
+    sleep 3
+
+    echo "Server PID: $SERVER_PID"
     echo "Log file: /tmp/zerocoder-ui.log"
     echo ""
-    # Read port from file written by start-app.py
-    if [ -f "$PORT_FILE" ]; then
-        ACTUAL_PORT=$(cat "$PORT_FILE")
-        echo "UI available at: http://localhost:$ACTUAL_PORT"
-    else
-        echo "UI available at: http://localhost:8888 (port file not found)"
-    fi
+    echo "UI available at: http://localhost:$PORT"
     echo "To stop: ./start-app.sh --stop"
 else
     # Run in foreground with signal handling
-    python start-app.py "$@" &
-    PYTHON_PID=$!
-    echo "Python PID: $PYTHON_PID"
+    PORT=$(find_available_port)
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Could not find an available port"
+        exit 1
+    fi
 
-    # Wait for the Python process (will be interrupted by Ctrl-C)
-    wait $PYTHON_PID
+    start_server $PORT $DEV_MODE
+
+    echo "Server PID: $SERVER_PID"
+    echo ""
+    echo "===================================="
+    if [ "$DEV_MODE" = "true" ]; then
+        echo "  Development mode active"
+        echo "  API: http://localhost:$PORT"
+        echo "  Press Ctrl+C to stop"
+    else
+        echo "  Server running at http://localhost:$PORT"
+        echo "  Press Ctrl+C to stop"
+    fi
+    echo "===================================="
+    echo ""
+
+    # Wait for the server process (will be interrupted by Ctrl-C)
+    wait $SERVER_PID
 fi
