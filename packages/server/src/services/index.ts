@@ -32,3 +32,30 @@ export {
   cleanupAllSessions,
   type MessageChunk,
 } from './spec-chat-session.js';
+
+// Assistant chat exports
+export {
+  AssistantChatSession,
+  createSession as createAssistantSession,
+  getSession as getAssistantSession,
+  listSessions as listAssistantSessions,
+  removeSession as removeAssistantSession,
+  cleanupAllSessions as cleanupAllAssistantSessions,
+  type MessageChunk as AssistantMessageChunk,
+} from './assistant-chat-session.js';
+
+// Assistant database exports
+export {
+  createConversation,
+  getConversation,
+  getConversations,
+  deleteConversation,
+  addMessage,
+  getMessages,
+  listConversations,
+  type Conversation,
+  type ConversationMessage,
+  type ConversationSummary,
+  type ConversationDetail,
+  type ConversationMessageModel,
+} from './assistant-database.js';

@@ -10,3 +10,4 @@ export { featuresRouter } from './features.js';
 export { beadsApiRouter } from './beads-api.js';
 export { agentRouter } from './agent.js';
 export { specCreationRouter } from './spec-creation.js';
+export { assistantRouter, handleAssistantWebSocket } from './assistant.js';
