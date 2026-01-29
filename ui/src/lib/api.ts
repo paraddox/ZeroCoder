@@ -35,8 +35,9 @@ async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
   })
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
-    throw new Error(error.detail || `HTTP ${response.status}`)
+    const errorBody = await response.json().catch(() => ({ error: 'Unknown error' }))
+    // Server returns { error: message } or { detail: message }
+    throw new Error(errorBody.error || errorBody.detail || `HTTP ${response.status}`)
   }
 
   return response.json()
