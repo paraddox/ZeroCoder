@@ -1,13 +1,26 @@
 #!/bin/bash
 #
-# Pre-commit hook to run TypeScript typechecks before committing
+# Pre-commit hook to run TypeScript typechecks and tests before committing
 # To bypass: git commit --no-verify
 #
 
-echo "Running pre-commit tests..."
+echo "Running pre-commit checks..."
+
+FAILED=0
+
+# Run TypeScript tests (Vitest) for packages/server
+if [ -d "packages/server/node_modules" ]; then
+    echo "Running TypeScript tests for packages/server..."
+    (cd packages/server && npm run test) 2>&1
+    if [ $? -ne 0 ]; then
+        echo "❌ packages/server tests failed."
+        FAILED=1
+    else
+        echo "✅ packages/server tests passed."
+    fi
+fi
 
 # Run TypeScript typechecks if node_modules exist
-TS_FAILED=0
 
 # Check packages/shared
 if [ -d "packages/shared/node_modules" ]; then
@@ -15,7 +28,7 @@ if [ -d "packages/shared/node_modules" ]; then
     (cd packages/shared && npx tsc --noEmit) 2>&1
     if [ $? -ne 0 ]; then
         echo "❌ packages/shared typecheck failed."
-        TS_FAILED=1
+        FAILED=1
     else
         echo "✅ packages/shared typecheck passed."
     fi
@@ -27,23 +40,18 @@ if [ -d "packages/server/node_modules" ]; then
     (cd packages/server && npx tsc --noEmit) 2>&1
     if [ $? -ne 0 ]; then
         echo "❌ packages/server typecheck failed."
-        TS_FAILED=1
+        FAILED=1
     else
         echo "✅ packages/server typecheck passed."
     fi
 fi
 
-# Note: ui typecheck is skipped because:
-# 1. UI uses vitest which has its own type checking
-# 2. UI build (npm run build) already validates types
-# 3. Test files have separate type config via vitest
-
-if [ $TS_FAILED -ne 0 ]; then
+if [ $FAILED -ne 0 ]; then
     echo ""
-    echo "❌ TypeScript typechecks failed. Commit aborted."
-    echo "   Fix the type errors or use 'git commit --no-verify' to bypass."
+    echo "❌ Pre-commit checks failed. Commit aborted."
+    echo "   Fix the errors or use 'git commit --no-verify' to bypass."
     exit 1
 fi
 
-echo "✅ All tests passed. Proceeding with commit."
+echo "✅ All checks passed. Proceeding with commit."
 exit 0
