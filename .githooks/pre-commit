@@ -13,18 +13,22 @@ fi
 
 # Run Python unit tests (fast subset for pre-commit)
 # Skip slow tests marked with @pytest.mark.slow
-python -m pytest tests/unit/ -x -q --tb=line -m "not slow" 2>&1
+if [ -d "tests/unit" ]; then
+    python -m pytest tests/unit/ -x -q --tb=line -m "not slow" 2>&1
 
-PYTHON_EXIT_CODE=$?
+    PYTHON_EXIT_CODE=$?
 
-if [ $PYTHON_EXIT_CODE -ne 0 ]; then
-    echo ""
-    echo "❌ Python tests failed. Commit aborted."
-    echo "   Fix the failing tests or use 'git commit --no-verify' to bypass."
-    exit 1
+    if [ $PYTHON_EXIT_CODE -ne 0 ]; then
+        echo ""
+        echo "❌ Python tests failed. Commit aborted."
+        echo "   Fix the failing tests or use 'git commit --no-verify' to bypass."
+        exit 1
+    fi
+
+    echo "✅ Python tests passed."
+else
+    echo "ℹ️  No Python tests directory found, skipping Python tests."
 fi
-
-echo "✅ Python tests passed."
 
 # Run TypeScript typechecks if node_modules exist
 TS_FAILED=0
