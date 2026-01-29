@@ -120,7 +120,10 @@ beforeAll(() => {
       ssh_key_path TEXT,
       status TEXT NOT NULL DEFAULT 'unknown',
       last_checked_at TEXT,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      daemon_port INTEGER DEFAULT 9999,
+      daemon_pid INTEGER,
+      daemon_last_seen TEXT
     );
 
     CREATE TABLE IF NOT EXISTS remote_agents (

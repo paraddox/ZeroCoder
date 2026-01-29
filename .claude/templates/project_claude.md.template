@@ -2,7 +2,7 @@
 
 This project uses **beads** for feature/issue tracking and **Ralph artifacts** for session continuity.
 
-**Architecture Note:** The `beads_client` command routes all requests through the host API (not directly to beads). This enables atomic claiming, server-side locking, and coordination between multiple containers. The host API manages the actual beads operations and syncs changes to git.
+**Architecture Note:** The `bd` CLI is the standard beads interface. Run `bd onboard` at the start of each session to sync with the git remote.
 
 ## ⚠️ MANDATORY WORKFLOW - NEVER SKIP
 
@@ -11,6 +11,9 @@ This project uses **beads** for feature/issue tracking and **Ralph artifacts** f
 ### Context Loading Order (Execute first, in order)
 
 ```bash
+# 0. Sync beads with remote (FIRST OPERATION in every session)
+bd onboard
+
 # 1. Operational knowledge (~60 lines max)
 cat AGENTS.md 2>/dev/null || echo "No AGENTS.md"
 
@@ -21,20 +24,20 @@ cat IMPLEMENTATION_PLAN.md 2>/dev/null || echo "No plan"
 tail -30 IMPLEMENTATION_HISTORY.md 2>/dev/null
 
 # 4. Get progress stats
-beads_client stats
+bd stats
 ```
 
 ### Session Flow
 
 ```
 1. LOAD CONTEXT    → Read artifacts in order above
-2. CLAIM FEATURE   → beads_client claim (atomic, returns issue JSON)
+2. CLAIM FEATURE   → bd claim (atomic, returns issue JSON)
 3. CREATE BRANCH   → feature/{id}-{title-slug}
 4. GAP ANALYSIS    → Create IMPLEMENTATION_PLAN.md
 5. IMPLEMENT       → Follow the plan
 6. VALIDATE        → ./validate.sh (MUST PASS - blocks close)
 7. SELF-REVIEW     → No TODOs, no placeholders, tests work
-8. CLOSE           → beads_client close <id>
+8. CLOSE           → bd close <id>
 9. MERGE + EXIT    → Merge to main, delete branch, push, EXIT SESSION
 ```
 
@@ -80,11 +83,11 @@ This file is **overwritten for each feature** and archived to IMPLEMENTATION_HIS
 
 ### Claiming Work (Atomic)
 
-Use `beads_client claim` to atomically claim the next available feature:
+Use `bd claim` to atomically claim the next available feature:
 
 ```bash
 # Claim next available feature (atomic - server handles locking)
-CLAIM_RESULT=$(beads_client claim)
+CLAIM_RESULT=$(bd claim)
 
 if [ $? -ne 0 ]; then
     echo "No features available - exiting"
@@ -130,7 +133,7 @@ npm run lint && npm run typecheck && npm test
 # Self-review: verify no TODOs, placeholders, or incomplete code
 
 # Only after ALL pass:
-beads_client close "$FEATURE_ID"
+bd close "$FEATURE_ID"
 ```
 
 **If validation fails, FIX THE ISSUES. DO NOT close with failing validation.**
@@ -172,8 +175,8 @@ exit 0
 
 If you encounter a blocker:
 ```bash
-beads_client update "$FEATURE_ID" --status=blocked
-beads_client comments add "$FEATURE_ID" "Blocked because: <reason>"
+bd update "$FEATURE_ID" --status=blocked
+bd comments add "$FEATURE_ID" "Blocked because: <reason>"
 ```
 
 Commit partial work and exit. agent_app will start a new session.
@@ -184,13 +187,13 @@ All commands route through the host API for coordination and atomic operations.
 
 | Command | Description |
 |---------|-------------|
-| `beads_client claim` | Claim next available feature (atomic, server-locked) |
-| `beads_client show <id>` | View feature details |
-| `beads_client list --status=open` | List all open features |
-| `beads_client list --status=in_progress` | List features being worked on |
-| `beads_client close <id>` | Mark feature as complete |
-| `beads_client stats` | Show progress statistics |
-| `beads_client comments add <id> "..."` | Add a comment to a feature |
+| `bd claim` | Claim next available feature (atomic, server-locked) |
+| `bd show <id>` | View feature details |
+| `bd list --status=open` | List all open features |
+| `bd list --status=in_progress` | List features being worked on |
+| `bd close <id>` | Mark feature as complete |
+| `bd stats` | Show progress statistics |
+| `bd comments add <id> "..."` | Add a comment to a feature |
 
 ## Project Guidelines
 

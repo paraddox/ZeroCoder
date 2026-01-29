@@ -11,13 +11,50 @@
 import { Client as SSHClient, type ClientChannel } from 'ssh2';
 import { Mutex } from 'async-mutex';
 import { homedir } from 'os';
+import { readFileSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 import {
   getRemoteMachine,
   updateRemoteAgent,
+  updateRemoteMachine,
   getRemoteAgent,
   type RemoteMachineInfo,
 } from '../db/crud.js';
+
+// =============================================================================
+// Daemon API Types
+// =============================================================================
+
+export interface DaemonStatus {
+  status: 'idle' | 'running' | 'stopping' | 'stopped';
+  current_repo: string | null;
+  current_feature: string | null;
+  agent_type: string | null;
+  stats: {
+    completed: number;
+    remaining: number;
+    total: number;
+  } | null;
+}
+
+export interface DaemonHealthResponse {
+  healthy: boolean;
+  timestamp: string;
+}
+
+export interface DaemonWorkRequest {
+  repo_url: string;
+  project_name: string;
+  ssh_key: string;
+}
+
+/** Default daemon port */
+const DEFAULT_DAEMON_PORT = 9999;
 
 // =============================================================================
 // Types
@@ -609,4 +646,342 @@ export async function cleanupAllRemoteManagers(): Promise<void> {
     }
   }
   _remoteManagers.clear();
+}
+
+// =============================================================================
+// Daemon Deployment & API Functions
+// =============================================================================
+
+/**
+ * Deploy the daemon to a remote machine via SSH.
+ * Runs the install.sh script to set up all dependencies and start the daemon.
+ */
+export async function deployDaemon(
+  machineId: number,
+  zerocoderRepoUrl: string,
+  daemonSecret?: string
+): Promise<{ success: boolean; message: string; port?: number }> {
+  const machine = getRemoteMachine(machineId);
+  if (!machine) {
+    return { success: false, message: `Machine ${machineId} not found` };
+  }
+
+  const port = machine.daemonPort ?? DEFAULT_DAEMON_PORT;
+
+  console.log(`[daemon] Deploying to ${machine.name} (${machine.host}:${machine.port})...`);
+
+  // Create SSH connection
+  const client = new SSHClient();
+
+  return new Promise((resolve) => {
+    client.on('ready', async () => {
+      try {
+        // Read the install script
+        const installScriptPath = join(__dirname, '../../daemon/scripts/install.sh');
+        let installScript: string;
+        try {
+          installScript = readFileSync(installScriptPath, 'utf8');
+        } catch {
+          // Fallback: use inline minimal install script
+          installScript = `
+#!/bin/bash
+set -e
+echo "Installing ZeroCoder daemon..."
+
+# Install nvm if needed
+if [ ! -d "$HOME/.nvm" ]; then
+  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+fi
+
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \\. "$NVM_DIR/nvm.sh"
+
+# Install Node.js if needed
+if ! command -v node &> /dev/null || [ $(node --version | sed 's/v//' | cut -d. -f1) -lt 20 ]; then
+  nvm install 24
+  nvm use 24
+fi
+
+# Clone/update repo
+DAEMON_DIR="$HOME/zerocoder-daemon"
+if [ -d "$DAEMON_DIR" ]; then
+  cd "$DAEMON_DIR" && git fetch --all && git reset --hard origin/main
+else
+  git clone "${zerocoderRepoUrl}" "$DAEMON_DIR"
+fi
+
+# Install pnpm and build
+cd "$DAEMON_DIR"
+npm install -g pnpm 2>/dev/null || true
+pnpm install
+pnpm --filter @zerocoder/daemon build
+
+# Start daemon
+pkill -f "node.*daemon.*index.js" 2>/dev/null || true
+cd "$DAEMON_DIR/packages/daemon"
+export DAEMON_PORT=${port}
+${daemonSecret ? `export DAEMON_SECRET="${daemonSecret}"` : ''}
+nohup node dist/index.js > "$HOME/zerocoder-daemon.log" 2>&1 &
+sleep 2
+echo "Daemon started on port ${port}"
+`;
+        }
+
+        // Execute install script on remote
+        const execResult = await new Promise<{ exitCode: number; stdout: string; stderr: string }>((res, rej) => {
+          let stdout = '';
+          let stderr = '';
+
+          client.exec(`bash -s`, { env: { ZEROCODER_REPO: zerocoderRepoUrl, DAEMON_PORT: String(port) } }, (err, stream) => {
+            if (err) {
+              rej(err);
+              return;
+            }
+
+            stream.on('data', (data: Buffer) => {
+              stdout += data.toString();
+              console.log(`[daemon:${machine.name}] ${data.toString().trim()}`);
+            });
+
+            stream.stderr.on('data', (data: Buffer) => {
+              stderr += data.toString();
+              console.log(`[daemon:${machine.name}:err] ${data.toString().trim()}`);
+            });
+
+            stream.on('close', (exitCode: number) => {
+              res({ exitCode, stdout, stderr });
+            });
+
+            // Write install script to stdin
+            stream.write(installScript);
+            stream.end();
+          });
+        });
+
+        client.end();
+
+        if (execResult.exitCode === 0) {
+          // Update machine record with daemon info
+          updateRemoteMachine(machineId, {
+            daemonPort: port,
+            daemonLastSeen: new Date().toISOString(),
+          });
+
+          resolve({
+            success: true,
+            message: `Daemon deployed to ${machine.name}`,
+            port,
+          });
+        } else {
+          resolve({
+            success: false,
+            message: `Deployment failed: ${execResult.stderr.trim() || execResult.stdout.trim()}`,
+          });
+        }
+      } catch (e) {
+        client.end();
+        resolve({
+          success: false,
+          message: `Deployment error: ${e instanceof Error ? e.message : String(e)}`,
+        });
+      }
+    });
+
+    client.on('error', (err) => {
+      resolve({
+        success: false,
+        message: `SSH connection error: ${err.message}`,
+      });
+    });
+
+    const privateKeyPath = machine.sshKeyPath
+      ? machine.sshKeyPath.replace(/^~/, homedir())
+      : undefined;
+
+    const connectConfig: {
+      host: string;
+      port: number;
+      username: string;
+      privateKey?: Buffer;
+    } = {
+      host: machine.host,
+      port: machine.port,
+      username: machine.username,
+    };
+
+    if (privateKeyPath) {
+      try {
+        connectConfig.privateKey = readFileSync(privateKeyPath);
+      } catch (e) {
+        resolve({
+          success: false,
+          message: `Cannot read SSH key from ${privateKeyPath}: ${e instanceof Error ? e.message : String(e)}`,
+        });
+        return;
+      }
+    }
+
+    client.connect(connectConfig);
+  });
+}
+
+/**
+ * Call a daemon API endpoint.
+ */
+export async function callDaemonApi<T>(
+  machineId: number,
+  method: 'GET' | 'POST',
+  endpoint: string,
+  body?: unknown,
+  timeoutMs: number = 30000
+): Promise<{ success: boolean; data?: T; error?: string }> {
+  const machine = getRemoteMachine(machineId);
+  if (!machine) {
+    return { success: false, error: `Machine ${machineId} not found` };
+  }
+
+  const port = machine.daemonPort ?? DEFAULT_DAEMON_PORT;
+  const url = `http://${machine.host}:${port}${endpoint}`;
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  // Add auth header if we have a daemon secret
+  const daemonSecret = process.env['DAEMON_SECRET'];
+  if (daemonSecret) {
+    headers['Authorization'] = `Bearer ${daemonSecret}`;
+  }
+
+  try {
+    const response = await fetch(url, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return {
+        success: false,
+        error: `HTTP ${response.status}: ${errorText}`,
+      };
+    }
+
+    const data = await response.json() as T;
+
+    // Update last seen timestamp
+    updateRemoteMachine(machineId, {
+      daemonLastSeen: new Date().toISOString(),
+    });
+
+    return { success: true, data };
+  } catch (e) {
+    return {
+      success: false,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
+/**
+ * Check daemon health on a remote machine.
+ */
+export async function checkDaemonHealth(machineId: number): Promise<boolean> {
+  const result = await callDaemonApi<DaemonHealthResponse>(
+    machineId,
+    'GET',
+    '/health',
+    undefined,
+    5000
+  );
+  return result.success && result.data?.healthy === true;
+}
+
+/**
+ * Get daemon status from a remote machine.
+ */
+export async function getDaemonStatus(machineId: number): Promise<DaemonStatus | null> {
+  const result = await callDaemonApi<DaemonStatus>(machineId, 'GET', '/status');
+  return result.success ? (result.data ?? null) : null;
+}
+
+/**
+ * Assign work to a daemon.
+ */
+export async function assignWorkToDaemon(
+  machineId: number,
+  repoUrl: string,
+  projectName: string,
+  sshKey: string
+): Promise<{ success: boolean; message: string }> {
+  const body: DaemonWorkRequest = {
+    repo_url: repoUrl,
+    project_name: projectName,
+    ssh_key: sshKey,
+  };
+
+  const result = await callDaemonApi<{ success: boolean; message: string }>(
+    machineId,
+    'POST',
+    '/work',
+    body,
+    60000 // 1 minute timeout for work assignment (includes clone time)
+  );
+
+  if (result.success && result.data) {
+    return result.data;
+  }
+
+  return {
+    success: false,
+    message: result.error ?? 'Unknown error',
+  };
+}
+
+/**
+ * Stop daemon on a remote machine (graceful or hard).
+ */
+export async function stopDaemon(
+  machineId: number,
+  hard: boolean = false
+): Promise<{ success: boolean; message: string }> {
+  const endpoint = hard ? '/stop/hard' : '/stop/graceful';
+  const result = await callDaemonApi<{ success: boolean; message: string }>(
+    machineId,
+    'POST',
+    endpoint
+  );
+
+  if (result.success && result.data) {
+    return result.data;
+  }
+
+  return {
+    success: false,
+    message: result.error ?? 'Unknown error',
+  };
+}
+
+/**
+ * Shutdown daemon on a remote machine.
+ */
+export async function shutdownDaemon(machineId: number): Promise<{ success: boolean; message: string }> {
+  const result = await callDaemonApi<{ success: boolean; message: string }>(
+    machineId,
+    'POST',
+    '/shutdown',
+    undefined,
+    5000
+  );
+
+  if (result.success && result.data) {
+    return result.data;
+  }
+
+  return {
+    success: false,
+    message: result.error ?? 'Unknown error',
+  };
 }

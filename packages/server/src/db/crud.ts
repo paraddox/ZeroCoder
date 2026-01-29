@@ -981,6 +981,10 @@ export interface RemoteMachineInfo {
   status: string;
   lastCheckedAt: string | null;
   createdAt: string | null;
+  // Daemon fields
+  daemonPort: number | null;
+  daemonPid: number | null;
+  daemonLastSeen: string | null;
 }
 
 /**
@@ -1037,6 +1041,9 @@ export function listRemoteMachines(): RemoteMachineInfo[] {
     status: m.status,
     lastCheckedAt: m.lastCheckedAt,
     createdAt: m.createdAt,
+    daemonPort: m.daemonPort,
+    daemonPid: m.daemonPid,
+    daemonLastSeen: m.daemonLastSeen,
   }));
 }
 
@@ -1058,6 +1065,9 @@ export function getRemoteMachine(machineId: number): RemoteMachineInfo | null {
     status: m.status,
     lastCheckedAt: m.lastCheckedAt,
     createdAt: m.createdAt,
+    daemonPort: m.daemonPort,
+    daemonPid: m.daemonPid,
+    daemonLastSeen: m.daemonLastSeen,
   };
 }
 
@@ -1068,6 +1078,46 @@ export function updateRemoteMachineStatus(machineId: number, status: string): bo
   const result = db
     .update(remoteMachines)
     .set({ status, lastCheckedAt: new Date().toISOString() })
+    .where(eq(remoteMachines.id, machineId))
+    .run();
+  return result.changes > 0;
+}
+
+/**
+ * Update a remote machine's fields.
+ */
+export function updateRemoteMachine(
+  machineId: number,
+  updates: {
+    status?: string;
+    daemonPort?: number;
+    daemonPid?: number | null;
+    daemonLastSeen?: string;
+  }
+): boolean {
+  const setValues: Record<string, unknown> = {};
+
+  if (updates.status !== undefined) {
+    setValues['status'] = updates.status;
+    setValues['lastCheckedAt'] = new Date().toISOString();
+  }
+  if (updates.daemonPort !== undefined) {
+    setValues['daemonPort'] = updates.daemonPort;
+  }
+  if (updates.daemonPid !== undefined) {
+    setValues['daemonPid'] = updates.daemonPid;
+  }
+  if (updates.daemonLastSeen !== undefined) {
+    setValues['daemonLastSeen'] = updates.daemonLastSeen;
+  }
+
+  if (Object.keys(setValues).length === 0) {
+    return false;
+  }
+
+  const result = db
+    .update(remoteMachines)
+    .set(setValues)
     .where(eq(remoteMachines.id, machineId))
     .run();
   return result.changes > 0;

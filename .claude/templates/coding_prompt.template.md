@@ -23,20 +23,19 @@ Your context is precious (176K tokens). Fill it with implementation, not explora
 
 ## BEADS WORKFLOW (MANDATORY)
 
-**You only need TWO commands:**
+**You only need THREE commands:**
 
 ```bash
-beads_client claim                              # Get next available issue (atomic, returns issue JSON)
-beads_client close <id>                         # Mark complete AFTER validation passes
+bd onboard                            # Sync beads with git remote (FIRST OPERATION)
+bd claim                              # Get next available issue (atomic, returns issue JSON)
+bd close <id>                         # Mark complete AFTER validation passes
 ```
 
-**That's it.** The `claim` command:
+**The `claim` command:**
 - Finds the next open issue with no blockers
 - Marks it `in_progress`
 - Returns the full issue details as JSON
 - Uses server-side locking so different agents get different issues
-
-**Architecture:** `beads_client` routes all requests through the host API (not directly to beads). This enables atomic claiming, server-side locking, and coordination between containers.
 
 **Skipping these commands breaks the UI monitoring.** Users track your progress by reading beads status.
 
@@ -60,6 +59,9 @@ Step 8: Archive, merge, push, exit
 ### STEP 1: CONTEXT LOADING (Execute in order - 3 MIN MAX)
 
 ```bash
+# 0. Sync beads with remote (FIRST OPERATION in every session)
+bd onboard
+
 # 1. Operational knowledge (~60 lines max)
 cat AGENTS.md 2>/dev/null || echo "No AGENTS.md yet"
 
@@ -70,7 +72,7 @@ cat IMPLEMENTATION_PLAN.md 2>/dev/null || echo "No plan"
 tail -30 IMPLEMENTATION_HISTORY.md 2>/dev/null || echo "No history"
 
 # 4. Check project stats (optional context)
-beads_client stats 2>/dev/null || echo "Stats unavailable"
+bd stats 2>/dev/null || echo "Stats unavailable"
 ```
 
 **AGENTS.md** = operational knowledge (commands, patterns, gotchas)
@@ -95,7 +97,7 @@ Plans are cheap. Don't salvage stale plans.
 
 ```bash
 # Claim next available feature (atomic - server handles locking)
-CLAIM_RESULT=$(beads_client claim)
+CLAIM_RESULT=$(bd claim)
 
 if [ $? -ne 0 ]; then
     echo "No features available - exiting"
@@ -288,7 +290,7 @@ Before closing your feature, verify your own work:
 
 ```bash
 # Close the feature (FEATURE_ID and FEATURE_TITLE from Step 2)
-beads_client close "$FEATURE_ID"
+bd close "$FEATURE_ID"
 git add . && git commit -m "Implement: $FEATURE_TITLE"
 ```
 

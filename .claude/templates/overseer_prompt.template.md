@@ -14,8 +14,11 @@ You run IN PARALLEL with coding agents. Your job is to find problems - coders wi
 Quick setup to understand current state:
 
 ```bash
+# Sync beads with remote (FIRST OPERATION in every session)
+bd onboard
+
 # Check current progress
-beads_client stats
+bd stats
 
 # Understand the project
 cat CLAUDE.md 2>/dev/null || cat README.md 2>/dev/null
@@ -28,7 +31,7 @@ else
 fi
 
 # Get all closed features for reference
-beads_client list --status=closed
+bd list --status=closed
 ```
 
 ---
@@ -57,7 +60,7 @@ cat /tmp/test_output.txt 2>/dev/null || echo "No test output captured"
 
 **For EACH failing test**, create an issue:
 ```bash
-beads_client create \
+bd create \
   --title "Fix failing test: <test_name>" \
   --type bug \
   --priority 1 \
@@ -195,7 +198,7 @@ Use Grep to find implementations:
 
 **For Missing Issues** - Create new beads:
 ```bash
-beads_client create \
+bd create \
   --title "[Feature title]" \
   --type feature \
   --priority 2 \
@@ -211,10 +214,10 @@ Implementation Required:
 **For Incomplete Implementations** - Reopen with details:
 ```bash
 # First reopen the bead
-beads_client reopen <bead_id>
+bd reopen <bead_id>
 
 # Then add a comment with details
-beads_client comments add <bead_id> "OVERSEER VERIFICATION FAILED
+bd comments add <bead_id> "OVERSEER VERIFICATION FAILED
 
 Issue: Implementation is incomplete/placeholder
 
@@ -252,10 +255,10 @@ grep -rn "{\s*}\|pass\s*$\|return null" src/ --include="*.ts" --include="*.tsx" 
 
 ```bash
 # Show updated stats
-beads_client stats
+bd stats
 
 # List any new/reopened issues
-beads_client list --status=open
+bd list --status=open
 ```
 
 ### Exit Behavior
@@ -310,7 +313,7 @@ beads_client list --status=open
 ```
 [Agent checks stats and project type]
 
-beads_client stats
+bd stats
 # Shows: 45 closed, 5 open (90% complete)
 
 # Check for app spec
@@ -322,8 +325,8 @@ npm test
 # Found 2 failing tests
 
 Creating issues for failing tests...
-beads_client create --title "Fix failing test: UserAuth.login" ...
-beads_client create --title "Fix failing test: Dashboard.render" ...
+bd create --title "Fix failing test: UserAuth.login" ...
+bd create --title "Fix failing test: Dashboard.render" ...
 
 # Now verify spec - RANDOM sampling with timestamp seed
 SEED=$(date +%s)
@@ -351,17 +354,17 @@ Processing Batch 3 results:
 - Incomplete implementations: 0
 
 Creating issues for findings...
-beads_client create --title "Missing: Export to CSV" ...
-beads_client create --title "Missing: User preferences" ...
-beads_client reopen beads-23 (placeholder found)
-beads_client reopen beads-34 (empty function)
-beads_client reopen beads-45 (mock data)
+bd create --title "Missing: Export to CSV" ...
+bd create --title "Missing: User preferences" ...
+bd reopen beads-23 (placeholder found)
+bd reopen beads-34 (empty function)
+bd reopen beads-45 (mock data)
 
 # Code quality scan
 grep -rn "TODO\|FIXME" src/ ...
 # Found 3 significant TODOs in critical paths
 
-beads_client create --title "TODO: Implement rate limiting" ...
+bd create --title "TODO: Implement rate limiting" ...
 
 Final stats:
 - Test failures: 2 issues created
@@ -369,7 +372,7 @@ Final stats:
 - Incomplete: 3 issues reopened
 - Code quality: 1 issue created
 
-beads_client stats
+bd stats
 # Now shows: 40 closed, 13 open
 
 [Exits - coding agents will pick up the new issues]

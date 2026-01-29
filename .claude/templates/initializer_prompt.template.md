@@ -25,10 +25,10 @@ Create as many features as needed to **fully cover** the specification document.
 
 ## TASK 1: Create Features
 
-Based on `prompts/app_spec.txt`, create features using `beads_client create`.
+Based on `prompts/app_spec.txt`, create features using `bd create`.
 
 ```bash
-beads_client create --title="Feature name" --type=feature --priority=2 --description="Description
+bd create --title="Feature name" --type=feature --priority=2 --description="Description
 
 Steps:
 1. Navigate to relevant page
@@ -362,7 +362,7 @@ Your role is COMPLETE after the five tasks:
 - Implement any features
 - Write application code
 - Fix or close any issues
-- Start working on `beads_client ready` items
+- Start working on `bd ready` items
 
 The **Coding Agent** handles all implementation.
 
@@ -372,7 +372,7 @@ The **Coding Agent** handles all implementation.
 
 **IT IS CATASTROPHIC TO REMOVE OR EDIT FEATURES IN FUTURE SESSIONS.**
 
-Features can ONLY be marked complete via `beads_client close <id>`.
+Features can ONLY be marked complete via `bd close <id>`.
 Never remove, edit descriptions, or modify testing steps.
 
 ---
@@ -382,7 +382,7 @@ Never remove, edit descriptions, or modify testing steps.
 Before context fills up:
 
 1. Verify scaffolding:
-   - `beads_client stats` shows correct feature count
+   - `bd stats` shows correct feature count
    - `init.sh` exists and is executable
    - Project structure matches spec
    - `AGENTS.md` documents setup
@@ -392,7 +392,7 @@ Before context fills up:
    ```bash
    git add .
    git commit -m "Initial scaffold: features, init.sh, structure, AGENTS.md, pre-commit hook" --no-verify
-   beads_client sync
+   bd sync
    git push origin main
    ```
 

@@ -30,7 +30,7 @@ echo "- Feature: $FEATURE_ID" >> AGENTS.md
 echo "- Reason: [specific blocker]" >> AGENTS.md
 echo "- Attempted: [what you tried]" >> AGENTS.md
 
-beads_client sync
+bd sync
 ```
 
 Next session gets fresh context and may solve it.

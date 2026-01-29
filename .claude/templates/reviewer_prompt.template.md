@@ -13,7 +13,7 @@ You are a code reviewer. Your ONLY job is to verify that a recently implemented 
 Review feature: `{FEATURE_ID}`
 
 ### Step 1: Load Feature Requirements
-Run: `beads_client show {FEATURE_ID}`
+Run: `bd show {FEATURE_ID}`
 Read the full description and implementation steps.
 
 ### Step 2: Check Implementation
@@ -34,9 +34,9 @@ Read the full description and implementation steps.
 
 **If implementation is unsatisfactory:**
 1. Add a comment explaining the issues found:
-   `beads_client comments add {FEATURE_ID} "REVIEWER: [Your detailed reasons]"`
+   `bd comments add {FEATURE_ID} "REVIEWER: [Your detailed reasons]"`
 2. Reopen the issue:
-   `beads_client reopen {FEATURE_ID}`
+   `bd reopen {FEATURE_ID}`
 3. Then exit
 
 ## Exit

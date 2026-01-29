@@ -164,6 +164,10 @@ export const remoteMachines = sqliteTable('remote_machines', {
   status: text('status', { length: 20 }).notNull().default('unknown'), // 'online' | 'offline' | 'unknown'
   lastCheckedAt: text('last_checked_at'), // ISO timestamp
   createdAt: text('created_at').notNull(), // ISO timestamp
+  // Daemon fields (for daemon-based remote agents)
+  daemonPort: integer('daemon_port').default(9999),
+  daemonPid: integer('daemon_pid'),
+  daemonLastSeen: text('daemon_last_seen'), // ISO timestamp
 });
 
 export const remoteMachinesRelations = relations(remoteMachines, ({ many }) => ({
