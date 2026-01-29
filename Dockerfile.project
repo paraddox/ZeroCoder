@@ -18,7 +18,7 @@
 #   - PROJECT_NAME: Project identifier
 #   - CONTAINER_TYPE: init or coding
 
-FROM python:3.11-slim-bookworm
+FROM node:22-slim
 
 # Prevent interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
@@ -42,11 +42,9 @@ RUN apt-get update && apt-get install -y \
     rsync \
     build-essential \
     openssh-client \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Node.js v22 (required for Vision MCP Server)
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y nodejs \
+    python3 \
+    python3-pip \
+    python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
 # Install pnpm and yarn globally
@@ -71,11 +69,8 @@ USER coder
 RUN claude mcp add context7 -- npx -y @upstash/context7-mcp
 USER root
 
-# Install Claude Agent SDK and dependencies
-RUN pip install --no-cache-dir claude-agent-sdk requests
-
 # Install uv for uvx command (needed for MiniMax MCP server)
-RUN pip install --no-cache-dir uv
+RUN pip3 install --no-cache-dir --break-system-packages uv
 
 # =============================================================================
 # SSH Key Setup (BuildKit secret)
@@ -139,13 +134,20 @@ RUN mkdir -p /home/coder/.config/opencode \
 WORKDIR /project
 
 # =============================================================================
-# Claude Agent SDK Setup (for Claude models)
+# Claude Agent SDK Setup (TypeScript - for Claude models)
 # =============================================================================
 
-# Copy agent application and container scripts
-COPY agent_app.py /app/agent_app.py
-COPY container_scripts/feature_status.py /app/feature_status.py
-COPY container_scripts/beads_commands.py /app/beads_commands.py
+# Copy TypeScript container scripts source
+COPY container_scripts_ts/ /app/container_scripts_ts/
+
+# Build TypeScript container scripts
+WORKDIR /app/container_scripts_ts
+RUN npm install && npm run build
+
+# Reset working directory
+WORKDIR /app
+
+# Copy shell scripts for container operations
 COPY container_scripts/setup_repo.sh /app/setup_repo.sh
 COPY container_scripts/cleanup_session.sh /app/cleanup_session.sh
 COPY container_scripts/beads_client.sh /app/beads_client.sh
@@ -212,25 +214,25 @@ su - coder -c "claude update" 2>/dev/null || true
 # This file is tailed to show agent activity in docker logs
 touch /var/log/agent.log
 chmod 666 /var/log/agent.log
-echo "[$(date -Iseconds)] Container started" >> /var/log/agent.log
+echo "[\$(date -Iseconds)] Container started" >> /var/log/agent.log
 
 # =============================================================================
 # Clone repository from GIT_REMOTE_URL
 # =============================================================================
 if [ -z "\$GIT_REMOTE_URL" ]; then
-    echo "[$(date -Iseconds)] ERROR: GIT_REMOTE_URL not set" >> /var/log/agent.log
-    echo "[$(date -Iseconds)] Container requires GIT_REMOTE_URL environment variable" >> /var/log/agent.log
+    echo "[\$(date -Iseconds)] ERROR: GIT_REMOTE_URL not set" >> /var/log/agent.log
+    echo "[\$(date -Iseconds)] Container requires GIT_REMOTE_URL environment variable" >> /var/log/agent.log
     exit 1
 fi
 
-echo "[$(date -Iseconds)] Cloning \$GIT_REMOTE_URL (branch: main)..." >> /var/log/agent.log
+echo "[\$(date -Iseconds)] Cloning \$GIT_REMOTE_URL (branch: main)..." >> /var/log/agent.log
 
 # Clone as coder user (always clone main branch)
 if [ -d "/project/.git" ] || [ -f "/project/.git" ]; then
-    echo "[$(date -Iseconds)] Project already exists, pulling latest..." >> /var/log/agent.log
+    echo "[\$(date -Iseconds)] Project already exists, pulling latest..." >> /var/log/agent.log
     # Clean up stale git lock files (from crashed git operations)
     if [ -f "/project/.git/index.lock" ] || [ -f "/project/.git/HEAD.lock" ] || [ -f "/project/.git/config.lock" ]; then
-        echo "[$(date -Iseconds)] Cleaning stale git locks..." >> /var/log/agent.log
+        echo "[\$(date -Iseconds)] Cleaning stale git locks..." >> /var/log/agent.log
         rm -f /project/.git/index.lock
         rm -f /project/.git/HEAD.lock
         rm -f /project/.git/config.lock
@@ -246,16 +248,16 @@ else
 fi
 
 if [ ! -e "/project/.git" ]; then
-    echo "[$(date -Iseconds)] ERROR: Git clone failed - /project/.git not found" >> /var/log/agent.log
+    echo "[\$(date -Iseconds)] ERROR: Git clone failed - /project/.git not found" >> /var/log/agent.log
     exit 1
 fi
 
-echo "[$(date -Iseconds)] Repository cloned successfully" >> /var/log/agent.log
+echo "[\$(date -Iseconds)] Repository cloned successfully" >> /var/log/agent.log
 
 # Clean up stale beads daemon lock files (prevents stack overflow bug)
 if [ -f "/project/.beads/daemon.lock" ]; then
     rm -f /project/.beads/daemon.lock
-    echo "[$(date -Iseconds)] Removed stale beads daemon.lock" >> /var/log/agent.log
+    echo "[\$(date -Iseconds)] Removed stale beads daemon.lock" >> /var/log/agent.log
 fi
 
 # Fix .beads directory permissions at startup (make world-writable)
@@ -272,7 +274,7 @@ fi
 if [ -f "/project/.beads/daemon.pid" ]; then
     DAEMON_PID=\$(cat /project/.beads/daemon.pid 2>/dev/null)
     if [ -n "\$DAEMON_PID" ] && kill -0 "\$DAEMON_PID" 2>/dev/null; then
-        echo "[$(date -Iseconds)] Stopping beads daemon (PID: \$DAEMON_PID)..." >> /var/log/agent.log
+        echo "[\$(date -Iseconds)] Stopping beads daemon (PID: \$DAEMON_PID)..." >> /var/log/agent.log
         kill "\$DAEMON_PID" 2>/dev/null || true
         sleep 1
     fi
@@ -281,11 +283,11 @@ fi
 
 # Run repository setup script (syncs beads via host API)
 if [ -f "/app/setup_repo.sh" ]; then
-    echo "[$(date -Iseconds)] Running repository setup (type: \${CONTAINER_TYPE:-coding})..." >> /var/log/agent.log
+    echo "[\$(date -Iseconds)] Running repository setup (type: \${CONTAINER_TYPE:-coding})..." >> /var/log/agent.log
     su - coder -c "cd /project && CONTAINER_TYPE=\${CONTAINER_TYPE:-coding} HOST_API_URL=\${HOST_API_URL:-} PROJECT_NAME=\${PROJECT_NAME:-} /app/setup_repo.sh"
 fi
 
-echo "[$(date -Iseconds)] Container ready, waiting for agent..." >> /var/log/agent.log
+echo "[\$(date -Iseconds)] Container ready, waiting for agent..." >> /var/log/agent.log
 
 # Keep container running by tailing the agent log
 # Agent processes will write to this file, making output visible in docker logs

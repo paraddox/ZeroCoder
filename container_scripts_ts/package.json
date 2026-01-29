@@ -1,0 +1,18 @@
+{
+  "name": "zerocoder-container-scripts",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "TypeScript container scripts for ZeroCoder agents",
+  "main": "dist/agent_app.js",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}

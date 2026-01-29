@@ -424,7 +424,7 @@ export class ContainerManager {
     try {
       const checkCmd = this._isOpenCodeModel()
         ? ['docker', 'exec', this.containerName, 'pgrep', '-f', 'node.*opencode_agent_app']
-        : ['docker', 'exec', this.containerName, 'pgrep', '-f', 'python.*agent_app'];
+        : ['docker', 'exec', this.containerName, 'pgrep', '-f', 'node.*agent_app'];
       const cmd = checkCmd[0];
       if (!cmd) return false;
       const result = spawnSync(cmd, checkCmd.slice(1), { timeout: 5000 });
@@ -442,7 +442,7 @@ export class ContainerManager {
     try {
       const checkCmd = this._isOpenCodeModel()
         ? `docker exec ${this.containerName} pgrep -f "node.*opencode_agent_app"`
-        : `docker exec ${this.containerName} pgrep -f "python.*agent_app"`;
+        : `docker exec ${this.containerName} pgrep -f "node.*agent_app"`;
       await execAsync(checkCmd, { timeout: 5000 });
       return true;
     } catch {
@@ -1002,7 +1002,7 @@ export class ContainerManager {
             if (useOpencode) {
               await execAsync(`docker exec -u coder ${this.containerName} test -f /app/dist/opencode_agent_app.js`);
             } else {
-              await execAsync(`docker exec -u coder ${this.containerName} python -c "import claude_agent_sdk; print('ok')"`);
+              await execAsync(`docker exec -u coder ${this.containerName} test -f /app/container_scripts_ts/dist/agent_app.js`);
             }
             break;
           } catch {
@@ -1303,7 +1303,7 @@ export class ContainerManager {
             'docker', 'exec', '-i', '-u', 'coder',
             '-e', `AGENT_MODEL=${model}`,
             this.containerName,
-            'python', '/app/agent_app.py',
+            'node', '/app/container_scripts_ts/dist/agent_app.js',
           ];
         }
 
