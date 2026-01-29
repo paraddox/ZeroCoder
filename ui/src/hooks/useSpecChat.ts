@@ -3,7 +3,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react'
-import type { ChatMessage, ImageAttachment, TextAttachment, FileAttachment, SpecChatServerMessage, SpecQuestion } from '../lib/types'
+import type { ChatMessage, ImageAttachment, TextAttachment, FileAttachment, SpecChatServerMessage, SpecQuestion } from '@zerocoder/shared'
 import { getSpecStatus } from '../lib/api'
 
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error'

@@ -7,7 +7,7 @@
 
 import { useState } from 'react'
 import { Check } from 'lucide-react'
-import type { SpecQuestion } from '../lib/types'
+import type { SpecQuestion } from '@zerocoder/shared'
 
 interface QuestionOptionsProps {
   questions: SpecQuestion[]

@@ -3,7 +3,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react'
-import type { ChatMessage, AssistantChatServerMessage } from '../lib/types'
+import type { ChatMessage, AssistantChatServerMessage } from '@zerocoder/shared'
 
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
 

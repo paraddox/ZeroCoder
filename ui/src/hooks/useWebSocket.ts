@@ -3,7 +3,7 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import type { WSMessage, AgentStatus } from '../lib/types'
+import type { WSMessage, AgentStatus } from '@zerocoder/shared'
 
 export interface LogEntry {
   line: string

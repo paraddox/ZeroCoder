@@ -4,7 +4,7 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { listContainers, updateContainerCount, startAgent, stopAgent, gracefulStopAgent } from '../lib/api'
-import type { ContainerInfo, AgentStatusResponse } from '../lib/types'
+import type { ContainerInfo, AgentStatusResponse } from '@zerocoder/shared'
 
 /**
  * Hook to fetch containers for a project

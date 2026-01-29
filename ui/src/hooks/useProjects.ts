@@ -4,7 +4,7 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as api from '../lib/api'
-import type { FeatureCreate, AgentStatusResponse, AgentModel } from '../lib/types'
+import type { FeatureCreate, AgentStatusResponse, AgentModel } from '@zerocoder/shared'
 
 // ============================================================================
 // Projects

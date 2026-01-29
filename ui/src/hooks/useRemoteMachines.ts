@@ -9,7 +9,7 @@ import {
   gracefulStopRemoteAgent,
   getRemoteAgentStatus,
 } from '../lib/api'
-import type { RemoteMachineCreate } from '../lib/types'
+import type { RemoteMachineCreate } from '@zerocoder/shared'
 
 export function useRemoteMachines() {
   return useQuery({

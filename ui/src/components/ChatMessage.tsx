@@ -6,7 +6,7 @@
  */
 
 import { Bot, User, Info, FileText } from 'lucide-react'
-import type { ChatMessage as ChatMessageType, ImageAttachment } from '../lib/types'
+import type { ChatMessage as ChatMessageType, ImageAttachment } from '@zerocoder/shared'
 
 interface ChatMessageProps {
   message: ChatMessageType

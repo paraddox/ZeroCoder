@@ -11,7 +11,7 @@ import { useSpecChat } from '../hooks/useSpecChat'
 import { ChatMessage } from './ChatMessage'
 import { QuestionOptions } from './QuestionOptions'
 import { TypingIndicator } from './TypingIndicator'
-import type { ImageAttachment, TextAttachment, FileAttachment, ImageMimeType, TextMimeType } from '../lib/types'
+import type { ImageAttachment, TextAttachment, FileAttachment, ImageMimeType, TextMimeType } from '@zerocoder/shared'
 
 // File upload validation constants
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024 // 5 MB for images

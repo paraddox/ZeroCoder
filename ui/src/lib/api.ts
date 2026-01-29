@@ -21,7 +21,7 @@ import type {
   RemoteMachine,
   RemoteMachineCreate,
   RemoteAgentInfo,
-} from './types'
+} from '@zerocoder/shared'
 
 const API_BASE = '/api'
 
