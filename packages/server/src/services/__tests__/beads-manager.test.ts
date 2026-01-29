@@ -165,8 +165,9 @@ describe('BeadsManager', () => {
       const mockTasks: BeadsTask[] = [{ id: '1', title: 'Task 1', status: 'open', priority: 1, labels: [] }];
 
       mockedExistsSync.mockReturnValue(true);
-      // First call throws out of sync error, second call succeeds
+      // Call order: 1) which bd, 2) bd list (throws), 3) bd sync --import-only, 4) bd list (retry)
       mockedExecSync
+        .mockReturnValueOnce('/usr/local/bin/bd') // which bd
         .mockImplementationOnce(() => {
           const error = new Error('out of sync') as Error & { stderr?: string };
           error.stderr = 'out of sync';
@@ -378,9 +379,9 @@ describe('BeadsManager', () => {
       mockedExistsSync.mockReturnValue(true);
       mockedLockfileLock.mockResolvedValue(vi.fn());
 
-      let capturedCmd = '';
+      const capturedCmds: string[] = [];
       mockedExec.mockImplementation((cmd, _opts, callback) => {
-        capturedCmd = cmd as string;
+        capturedCmds.push(cmd as string);
         if (callback) {
           (callback as unknown as (error: null, result: { stdout: string }) => void)(null, { stdout: '{}' });
         }
@@ -390,16 +391,16 @@ describe('BeadsManager', () => {
       const manager = new BeadsManager('test-project', 'https://github.com/test/repo');
       await manager.createIssue('Issue with "quotes"');
 
-      expect(capturedCmd).toContain('\\"quotes\\"');
+      expect(capturedCmds.some(cmd => cmd.includes('\\"quotes\\"'))).toBe(true);
     });
 
     it('includes description when provided', async () => {
       mockedExistsSync.mockReturnValue(true);
       mockedLockfileLock.mockResolvedValue(vi.fn());
 
-      let capturedCmd = '';
+      const capturedCmds: string[] = [];
       mockedExec.mockImplementation((cmd, _opts, callback) => {
-        capturedCmd = cmd as string;
+        capturedCmds.push(cmd as string);
         if (callback) {
           (callback as unknown as (error: null, result: { stdout: string }) => void)(null, { stdout: '{}' });
         }
@@ -409,16 +410,16 @@ describe('BeadsManager', () => {
       const manager = new BeadsManager('test-project', 'https://github.com/test/repo');
       await manager.createIssue('Test', 'task', 2, 'Description');
 
-      expect(capturedCmd).toContain('--description');
+      expect(capturedCmds.some(cmd => cmd.includes('--description'))).toBe(true);
     });
 
     it('includes labels when provided', async () => {
       mockedExistsSync.mockReturnValue(true);
       mockedLockfileLock.mockResolvedValue(vi.fn());
 
-      let capturedCmd = '';
+      const capturedCmds: string[] = [];
       mockedExec.mockImplementation((cmd, _opts, callback) => {
-        capturedCmd = cmd as string;
+        capturedCmds.push(cmd as string);
         if (callback) {
           (callback as unknown as (error: null, result: { stdout: string }) => void)(null, { stdout: '{}' });
         }
@@ -428,8 +429,7 @@ describe('BeadsManager', () => {
       const manager = new BeadsManager('test-project', 'https://github.com/test/repo');
       await manager.createIssue('Test', 'task', 2, '', ['bug', 'urgent']);
 
-      expect(capturedCmd).toContain('--labels');
-      expect(capturedCmd).toContain('bug,urgent');
+      expect(capturedCmds.some(cmd => cmd.includes('--labels') && cmd.includes('bug,urgent'))).toBe(true);
     });
   });
 
@@ -438,9 +438,9 @@ describe('BeadsManager', () => {
       mockedExistsSync.mockReturnValue(true);
       mockedLockfileLock.mockResolvedValue(vi.fn());
 
-      let capturedCmd = '';
+      const capturedCmds: string[] = [];
       mockedExec.mockImplementation((cmd, _opts, callback) => {
-        capturedCmd = cmd as string;
+        capturedCmds.push(cmd as string);
         if (callback) {
           (callback as unknown as (error: null, result: { stdout: string }) => void)(null, { stdout: '{}' });
         }
@@ -450,9 +450,7 @@ describe('BeadsManager', () => {
       const manager = new BeadsManager('test-project', 'https://github.com/test/repo');
       await manager.updateIssue('42', { title: 'New Title', status: 'closed' });
 
-      expect(capturedCmd).toContain('update 42');
-      expect(capturedCmd).toContain('--title');
-      expect(capturedCmd).toContain('--status');
+      expect(capturedCmds.some(cmd => cmd.includes('update 42') && cmd.includes('--title') && cmd.includes('--status'))).toBe(true);
     });
 
     it('returns error when no fields provided', async () => {
@@ -468,9 +466,9 @@ describe('BeadsManager', () => {
       mockedExistsSync.mockReturnValue(true);
       mockedLockfileLock.mockResolvedValue(vi.fn());
 
-      let capturedCmd = '';
+      const capturedCmds: string[] = [];
       mockedExec.mockImplementation((cmd, _opts, callback) => {
-        capturedCmd = cmd as string;
+        capturedCmds.push(cmd as string);
         if (callback) {
           (callback as unknown as (error: null, result: { stdout: string }) => void)(null, { stdout: '{}' });
         }
@@ -480,7 +478,7 @@ describe('BeadsManager', () => {
       const manager = new BeadsManager('test-project', 'https://github.com/test/repo');
       await manager.updateIssue('42', { priority: 1 });
 
-      expect(capturedCmd).toContain('--priority P1');
+      expect(capturedCmds.some(cmd => cmd.includes('--priority P1'))).toBe(true);
     });
   });
 
@@ -489,9 +487,9 @@ describe('BeadsManager', () => {
       mockedExistsSync.mockReturnValue(true);
       mockedLockfileLock.mockResolvedValue(vi.fn());
 
-      let capturedCmd = '';
+      const capturedCmds: string[] = [];
       mockedExec.mockImplementation((cmd, _opts, callback) => {
-        capturedCmd = cmd as string;
+        capturedCmds.push(cmd as string);
         if (callback) {
           (callback as unknown as (error: null, result: { stdout: string }) => void)(null, { stdout: '{}' });
         }
@@ -501,16 +499,16 @@ describe('BeadsManager', () => {
       const manager = new BeadsManager('test-project', 'https://github.com/test/repo');
       await manager.closeIssue('42');
 
-      expect(capturedCmd).toContain('close 42');
+      expect(capturedCmds.some(cmd => cmd.includes('close 42'))).toBe(true);
     });
 
     it('includes reason when provided', async () => {
       mockedExistsSync.mockReturnValue(true);
       mockedLockfileLock.mockResolvedValue(vi.fn());
 
-      let capturedCmd = '';
+      const capturedCmds: string[] = [];
       mockedExec.mockImplementation((cmd, _opts, callback) => {
-        capturedCmd = cmd as string;
+        capturedCmds.push(cmd as string);
         if (callback) {
           (callback as unknown as (error: null, result: { stdout: string }) => void)(null, { stdout: '{}' });
         }
@@ -520,8 +518,7 @@ describe('BeadsManager', () => {
       const manager = new BeadsManager('test-project', 'https://github.com/test/repo');
       await manager.closeIssue('42', 'Done');
 
-      expect(capturedCmd).toContain('--reason');
-      expect(capturedCmd).toContain('Done');
+      expect(capturedCmds.some(cmd => cmd.includes('--reason') && cmd.includes('Done'))).toBe(true);
     });
   });
 
@@ -530,9 +527,9 @@ describe('BeadsManager', () => {
       mockedExistsSync.mockReturnValue(true);
       mockedLockfileLock.mockResolvedValue(vi.fn());
 
-      let capturedCmd = '';
+      const capturedCmds: string[] = [];
       mockedExec.mockImplementation((cmd, _opts, callback) => {
-        capturedCmd = cmd as string;
+        capturedCmds.push(cmd as string);
         if (callback) {
           (callback as unknown as (error: null, result: { stdout: string }) => void)(null, { stdout: '{}' });
         }
@@ -542,7 +539,7 @@ describe('BeadsManager', () => {
       const manager = new BeadsManager('test-project', 'https://github.com/test/repo');
       await manager.reopenIssue('42');
 
-      expect(capturedCmd).toContain('reopen 42');
+      expect(capturedCmds.some(cmd => cmd.includes('reopen 42'))).toBe(true);
     });
   });
 
@@ -551,9 +548,9 @@ describe('BeadsManager', () => {
       mockedExistsSync.mockReturnValue(true);
       mockedLockfileLock.mockResolvedValue(vi.fn());
 
-      let capturedCmd = '';
+      const capturedCmds: string[] = [];
       mockedExec.mockImplementation((cmd, _opts, callback) => {
-        capturedCmd = cmd as string;
+        capturedCmds.push(cmd as string);
         if (callback) {
           (callback as unknown as (error: null, result: { stdout: string }) => void)(null, { stdout: '{}' });
         }
@@ -563,7 +560,7 @@ describe('BeadsManager', () => {
       const manager = new BeadsManager('test-project', 'https://github.com/test/repo');
       await manager.addDependency('42', '10');
 
-      expect(capturedCmd).toContain('dep add 42 10');
+      expect(capturedCmds.some(cmd => cmd.includes('dep add 42 10'))).toBe(true);
     });
   });
 
@@ -572,9 +569,9 @@ describe('BeadsManager', () => {
       mockedExistsSync.mockReturnValue(true);
       mockedLockfileLock.mockResolvedValue(vi.fn());
 
-      let capturedCmd = '';
+      const capturedCmds: string[] = [];
       mockedExec.mockImplementation((cmd, _opts, callback) => {
-        capturedCmd = cmd as string;
+        capturedCmds.push(cmd as string);
         if (callback) {
           (callback as unknown as (error: null, result: { stdout: string }) => void)(null, { stdout: '{}' });
         }
@@ -584,7 +581,7 @@ describe('BeadsManager', () => {
       const manager = new BeadsManager('test-project', 'https://github.com/test/repo');
       await manager.addComment('42', 'This is a comment');
 
-      expect(capturedCmd).toContain('comments add 42');
+      expect(capturedCmds.some(cmd => cmd.includes('comments add 42'))).toBe(true);
     });
   });
 
@@ -593,9 +590,9 @@ describe('BeadsManager', () => {
       mockedExistsSync.mockReturnValue(true);
       mockedLockfileLock.mockResolvedValue(vi.fn());
 
-      let capturedCmd = '';
+      const capturedCmds: string[] = [];
       mockedExec.mockImplementation((cmd, _opts, callback) => {
-        capturedCmd = cmd as string;
+        capturedCmds.push(cmd as string);
         if (callback) {
           (callback as unknown as (error: null, result: { stdout: string }) => void)(null, { stdout: '{}' });
         }
@@ -605,7 +602,7 @@ describe('BeadsManager', () => {
       const manager = new BeadsManager('test-project', 'https://github.com/test/repo');
       await manager.deleteIssue('42');
 
-      expect(capturedCmd).toContain('delete 42 --force');
+      expect(capturedCmds.some(cmd => cmd.includes('delete 42 --force'))).toBe(true);
     });
   });
 
@@ -705,9 +702,9 @@ describe('BeadsManager', () => {
       mockedLockfileLock.mockResolvedValue(vi.fn());
       mockedExecSync.mockReturnValue(JSON.stringify(mockTasks));
 
-      let capturedCmd = '';
+      const capturedCmds: string[] = [];
       mockedExec.mockImplementation((cmd, _opts, callback) => {
-        capturedCmd = cmd as string;
+        capturedCmds.push(cmd as string);
         if (callback) {
           (callback as unknown as (error: null, result: { stdout: string }) => void)(null, { stdout: '{}' });
         }
@@ -718,7 +715,7 @@ describe('BeadsManager', () => {
       const result = await manager.skipFeature('42');
 
       expect(result?.success).toBe(true);
-      expect(capturedCmd).toContain('--priority P4');
+      expect(capturedCmds.some(cmd => cmd.includes('--priority P4'))).toBe(true);
     });
   });
 

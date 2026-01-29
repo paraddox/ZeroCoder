@@ -12,7 +12,7 @@
  * - Uses project directory directly (~/.zerocoder/projects/{name}/)
  */
 
-import { exec } from 'child_process';
+import { exec, execSync } from 'child_process';
 import { promisify } from 'util';
 import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
@@ -220,7 +220,6 @@ export class BeadsManager {
     }
 
     try {
-      const { execSync } = require('child_process');
       // Check if bd command exists first
       try {
         execSync('which bd', { stdio: 'pipe' });
@@ -248,7 +247,6 @@ export class BeadsManager {
       if (err.stderr && err.stderr.toLowerCase().includes('out of sync')) {
         console.info(`Beads DB out of sync for ${this.projectName}, importing JSONL...`);
         try {
-          const { execSync } = require('child_process');
           execSync('bd --no-daemon sync --import-only', {
             cwd: this.localPath,
             timeout: 30000,
