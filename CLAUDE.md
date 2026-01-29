@@ -20,37 +20,49 @@ start-app.sh      # Windows
 ./start-app.sh -s #to stop all app service and remove all containers
 ```
 
-### Python Backend (Manual)
+### TypeScript Backend (Monorepo)
+
+ZeroCoder uses a pnpm monorepo structure with TypeScript:
 
 ```bash
-# Create and activate virtual environment
-python -m venv venv
-venv\Scripts\activate  # Windows
-source venv/bin/activate  # macOS/Linux
+# Install dependencies (run from root)
+pnpm install
 
-# Install dependencies
-pip install -r requirements.txt
+# Development mode (hot reload)
+pnpm run dev:server    # Start server in dev mode
+pnpm run dev:ui        # Start UI dev server
 
-# Run the FastAPI server
-uvicorn server.main:app --host 0.0.0.0 --port 8000
+# Build for production
+pnpm run build:server  # Build server package
+pnpm run build:ui      # Build UI package
+
+# Run tests
+pnpm run test          # Run all tests
+pnpm run test:run      # Run tests once (CI)
+
+# Type checking
+pnpm run typecheck     # Check all packages
 ```
 
-**Important:** When testing agents locally, always use `./start-app.sh` instead of running uvicorn directly. The start script:
+**Important:** When testing agents locally, always use `./start-app.sh` instead of running the server directly. The start script:
 - Loads environment variables from `.env` file (API keys like `ZHIPU_API_KEY`, `ANTHROPIC_API_KEY`)
 - Passes these to Docker containers so agents can authenticate
 - Handles graceful shutdown of containers on Ctrl+C
+- Installs dependencies and builds packages automatically
 
 ### React UI (in ui/ directory)
 
+The UI is located in the `ui/` directory and uses pnpm:
+
 ```bash
 cd ui
-npm install
-npm run dev      # Development server (hot reload)
-npm run build    # Production build (required for start-app.sh)
-npm run lint     # Run ESLint
+pnpm install
+pnpm run dev      # Development server (hot reload)
+pnpm run build    # Production build (required for start-app.sh)
+pnpm run lint     # Run ESLint
 ```
 
-**Note:** The `start-app.sh` script serves the pre-built UI from `ui/dist/`. After making UI changes, run `npm run build` in the `ui/` directory.
+**Note:** The `start-app.sh` script serves the pre-built UI from `ui/dist/`. After making UI changes, run `pnpm run build` in the `ui/` directory.
 
 ### Docker (Per-Project Containers)
 
@@ -114,12 +126,57 @@ To bypass hooks when needed: `git commit --no-verify`
 
 ## Architecture
 
-### Core Python Modules
+### Monorepo Structure
 
-- `start-app.py` - Web UI backend (FastAPI server launcher)
-- `prompts.py` - Prompt template loading with project-specific fallback
-- `progress.py` - Progress tracking using beads, webhook notifications
-- `registry.py` - Project registry for mapping names to paths (cross-platform)
+ZeroCoder is organized as a pnpm monorepo with three main packages:
+
+```
+ZeroCoder/
+├── package.json                 # Root monorepo configuration
+├── pnpm-workspace.yaml          # Workspace definition
+├── packages/
+│   ├── server/                  # TypeScript backend (@zerocoder/server)
+│   │   ├── src/
+│   │   │   ├── index.ts         # Server entry point
+│   │   │   ├── app.ts           # Hono app configuration
+│   │   │   ├── routers/         # API route handlers
+│   │   │   ├── services/        # Business logic
+│   │   │   ├── db/              # Database schema & CRUD
+│   │   │   ├── middleware/      # Express/Hono middleware
+│   │   │   ├── websocket/       # WebSocket handlers
+│   │   │   └── utils/           # Shared utilities
+│   │   └── package.json
+│   └── shared/                  # Shared types (@zerocoder/shared)
+│       ├── src/
+│       │   ├── types.ts         # TypeScript type definitions
+│       │   └── schemas.ts       # Zod validation schemas
+│       └── package.json
+└── ui/                          # React frontend
+    └── package.json
+```
+
+### Core Modules (TypeScript)
+
+- `packages/server/src/index.ts` - Hono server entry point
+- `packages/server/src/app.ts` - App configuration with middleware
+- `packages/server/src/services/` - Business logic services
+  - `container-manager.ts` - Docker container lifecycle
+  - `beads-manager.ts` - Beads issue tracking operations
+  - `local-project-manager.ts` - Local project management
+  - `assistant-database.ts` - Assistant chat history storage
+- `packages/server/src/routers/` - API route handlers
+  - `projects.ts` - Project CRUD operations
+  - `features.ts` - Feature management
+  - `agent.ts` - Container/agent control
+  - `assistant.ts` - Assistant chat endpoints
+  - `spec-creation.ts` - Spec creation wizard
+- `packages/server/src/db/` - Database layer
+  - `schema.ts` - Drizzle ORM schema definitions
+  - `crud.ts` - Database CRUD operations
+  - `assistant-db.ts` - Assistant chat storage
+- `packages/shared/src/` - Shared package
+  - `types.ts` - TypeScript type definitions
+  - `schemas.ts` - Zod validation schemas
 
 ### Project Registry
 
@@ -142,17 +199,41 @@ The registry uses:
 - POSIX path format (forward slashes) for cross-platform compatibility
 - SQLite's built-in transaction handling for concurrency safety
 
-### Server API (server/)
+### Server API (packages/server/)
 
-The FastAPI server provides REST endpoints for the UI:
+The TypeScript server uses Hono framework and provides REST endpoints for the UI:
 
-- `server/routers/projects.py` - Project CRUD with registry integration
-- `server/routers/features.py` - Feature management via container docker exec
-- `server/routers/agent.py` - Container control (start/stop/remove)
-- `server/routers/spec_creation.py` - WebSocket for interactive spec creation
-- `server/services/container_manager.py` - Per-project Docker container lifecycle
-- `server/services/container_beads.py` - Send beads commands to containers via docker exec
-- `server/services/feature_poller.py` - Background polling service for feature status (30s interval)
+**Routers:**
+- `routers/projects.ts` - Project CRUD with registry integration
+- `routers/features.ts` - Feature management via container docker exec
+- `routers/agent.ts` - Container control (start/stop/remove)
+- `routers/spec-creation.ts` - WebSocket for interactive spec creation
+- `routers/assistant.ts` - Assistant chat endpoints
+- `routers/beads-api.ts` - Beads operations API
+
+**Services:**
+- `services/container-manager.ts` - Per-project Docker container lifecycle
+- `services/beads-manager.ts` - Beads commands and operations
+- `services/local-project-manager.ts` - Local project management
+- `services/assistant-database.ts` - Assistant chat history storage
+- `services/task-cleanup.ts` - Background task cleanup
+- `services/branch-cleanup.ts` - Branch cleanup service
+
+**Database:**
+- `db/schema.ts` - Drizzle ORM schema (SQLite)
+- `db/crud.ts` - Database CRUD operations
+- `db/assistant-db.ts` - Assistant-specific database operations
+
+**WebSocket:**
+- `websocket/index.ts` - WebSocket server setup
+- `websocket/connection-manager.ts` - Connection management
+- `websocket/callback-system.ts` - Callback handling for async operations
+
+**Key Technologies:**
+- Hono - Fast, lightweight web framework
+- Drizzle ORM - Type-safe SQL-like ORM
+- Zod - Runtime type validation
+- Better-sqlite3 - SQLite database driver
 
 ### Feature Management
 

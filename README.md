@@ -4,6 +4,18 @@ A long-running autonomous coding agent powered by the Claude Agent SDK. This too
 
 ## Prerequisites
 
+### Node.js and pnpm (Required)
+
+ZeroCoder requires Node.js 20+ and pnpm package manager:
+
+**Install Node.js:**
+Download from https://nodejs.org/ (LTS version recommended)
+
+**Install pnpm:**
+```bash
+npm install -g pnpm
+```
+
 ### Claude Code CLI (Required)
 
 This project requires the Claude Code CLI to be installed. Install it using one of these methods:
@@ -197,36 +209,54 @@ This architecture enables multiple containers to work on the same project withou
 
 ## Project Structure
 
+ZeroCoder is organized as a pnpm monorepo with TypeScript backend:
+
 ```
 ZeroCoder/
 ├── start-app.sh              # Start script (macOS/Linux)
-├── start-app.py              # Web UI backend (FastAPI server launcher)
+├── package.json              # Root monorepo configuration
+├── pnpm-workspace.yaml       # Workspace definition
 ├── autostart.sh              # Enable/disable autostart on system boot
 ├── Dockerfile.project        # Per-project container image
 ├── docker-test.sh            # Build and test Docker containers
 ├── agent_app.py              # Claude Agent SDK app (runs inside containers)
 ├── opencode_agent_app.ts     # OpenCode SDK agent for GLM-4.7 (TypeScript)
-├── progress.py               # Progress tracking utilities
-├── prompts.py                # Prompt loading utilities
-├── registry.py               # Project registry (SQLite-based)
-├── server/
-│   ├── main.py               # FastAPI REST API server
-│   ├── websocket.py          # WebSocket handler for real-time updates
-│   ├── schemas.py            # Pydantic schemas
-│   ├── routers/
-│   │   ├── projects.py       # Project CRUD with registry integration
-│   │   ├── features.py       # Feature management via container docker exec
-│   │   ├── agent.py          # Container control (start/stop/remove)
-│   │   ├── filesystem.py     # Filesystem browser API
-│   │   ├── spec_creation.py  # WebSocket for spec creation wizard
-│   │   └── assistant_chat.py # Assistant chat endpoints
-│   └── services/
-│       ├── container_manager.py     # Per-project Docker container lifecycle
-│       ├── container_beads.py       # Send beads commands via docker exec
-│       ├── feature_poller.py        # Background feature status polling
-│       ├── assistant_chat_session.py # Assistant chat via Agent SDK
-│       ├── assistant_database.py    # Assistant chat history storage
-│       └── spec_chat_session.py     # Spec creation chat session
+├── packages/                 # Monorepo packages
+│   ├── server/               # TypeScript backend (@zerocoder/server)
+│   │   ├── src/
+│   │   │   ├── index.ts      # Hono server entry point
+│   │   │   ├── app.ts        # App configuration with middleware
+│   │   │   ├── routers/      # API route handlers
+│   │   │   │   ├── projects.ts
+│   │   │   │   ├── features.ts
+│   │   │   │   ├── agent.ts
+│   │   │   │   ├── assistant.ts
+│   │   │   │   ├── beads-api.ts
+│   │   │   │   ├── spec-creation.ts
+│   │   │   │   └── remote-machines.ts
+│   │   │   ├── services/     # Business logic
+│   │   │   │   ├── container-manager.ts
+│   │   │   │   ├── beads-manager.ts
+│   │   │   │   ├── local-project-manager.ts
+│   │   │   │   ├── assistant-database.ts
+│   │   │   │   └── assistant-chat-session.ts
+│   │   │   ├── db/           # Database layer (Drizzle ORM)
+│   │   │   │   ├── schema.ts
+│   │   │   │   ├── crud.ts
+│   │   │   │   └── assistant-db.ts
+│   │   │   ├── websocket/    # WebSocket handlers
+│   │   │   │   ├── index.ts
+│   │   │   │   ├── connection-manager.ts
+│   │   │   │   └── callback-system.ts
+│   │   │   └── utils/        # Shared utilities
+│   │   ├── package.json
+│   │   └── tsconfig.json
+│   └── shared/               # Shared types (@zerocoder/shared)
+│       ├── src/
+│       │   ├── types.ts      # TypeScript type definitions
+│       │   └── schemas.ts    # Zod validation schemas
+│       ├── package.json
+│       └── tsconfig.json
 ├── mcp_server/               # MCP servers for assistant
 │   └── issue_creator_mcp.py  # Issue creation tool for assistant
 ├── container_scripts/        # Scripts that run inside containers
@@ -253,9 +283,20 @@ ZeroCoder/
 │       ├── initializer_prompt.template.md
 │       ├── coding_prompt.template.md
 │       └── project_claude.md.template
-├── requirements.txt          # Python dependencies
-└── .env                      # Optional configuration (N8N webhook)
+└── .env                      # Optional configuration (API keys, webhooks)
 ```
+
+### Backend Technology Stack
+
+| Component | Technology |
+|-----------|------------|
+| Framework | [Hono](https://hono.dev/) - Fast, lightweight web framework |
+| ORM | [Drizzle ORM](https://orm.drizzle.team/) - Type-safe SQL-like ORM |
+| Database | SQLite (better-sqlite3) |
+| Validation | [Zod](https://zod.dev/) - TypeScript-first validation |
+| WebSocket | ws library |
+| Testing | Vitest |
+| Build | TypeScript compiler |
 
 ---
 
@@ -311,34 +352,54 @@ This project uses Docker container isolation for security:
 
 ---
 
-## Web UI Development
+## Development Workflow
+
+### Monorepo Commands
+
+From the root directory:
+
+```bash
+# Install all dependencies
+pnpm install
+
+# Development mode (runs server and UI in parallel)
+pnpm run dev
+
+# Or run individually:
+pnpm run dev:server    # Server only (hot reload)
+pnpm run dev:ui        # UI only (Vite dev server)
+
+# Build all packages
+pnpm run build
+
+# Run tests
+pnpm run test          # Run all tests in watch mode
+pnpm run test:run      # Run tests once (for CI)
+
+# Type checking
+pnpm run typecheck     # Check all packages
+```
+
+### Web UI Development
 
 The React UI is located in the `ui/` directory.
 
-### Development Mode
-
 ```bash
 cd ui
-npm install
-npm run dev      # Development server with hot reload
+pnpm install
+pnpm run dev      # Development server with hot reload
+pnpm run build    # Production build
 ```
 
-### Building for Production
-
-```bash
-cd ui
-npm run build    # Builds to ui/dist/
-```
-
-**Note:** The `start-app.sh` script serves the pre-built UI from `ui/dist/`. After making UI changes, run `npm run build` to see them when using the start scripts.
+**Note:** The `start-app.sh` script serves the pre-built UI from `ui/dist/`. After making UI changes, run `pnpm run build` to see them when using the start scripts.
 
 ### Tech Stack
 
-- React 18 with TypeScript
-- TanStack Query for data fetching
-- Tailwind CSS v4 with soft editorial design
-- Radix UI components
-- WebSocket for real-time updates
+- **Backend:** TypeScript, Hono, Drizzle ORM, SQLite, Zod
+- **Frontend:** React 18, TypeScript, TanStack Query, Tailwind CSS v4, Radix UI
+- **Testing:** Vitest
+- **Package Manager:** pnpm
+- **WebSocket:** Real-time updates for agent status and logs
 
 ### Real-time Updates
 
@@ -364,7 +425,11 @@ ZHIPU_API_KEY=your_zhipu_api_key_here
 ANTHROPIC_API_KEY=your_anthropic_api_key_here
 ```
 
-**Important:** Always use `./start-app.sh` to start the server. It loads the `.env` file and passes API keys to Docker containers.
+**Important:** Always use `./start-app.sh` to start the server. It:
+- Loads the `.env` file and passes API keys to Docker containers
+- Installs dependencies via pnpm
+- Builds the TypeScript server
+- Builds the Docker image with your SSH key
 
 ### Changing the Agent Model
 
