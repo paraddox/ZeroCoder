@@ -8,7 +8,7 @@
 
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { Client as SSHClient } from 'ssh2';
 
@@ -63,7 +63,8 @@ async function testSSHConnection(
   username: string,
   sshKeyPath?: string | null
 ): Promise<string> {
-  const privateKeyPath = sshKeyPath ? sshKeyPath.replace(/^~/, homedir()) : undefined;
+  const expandedKeyPath = sshKeyPath ? sshKeyPath.replace(/^~/, homedir()) : undefined;
+  const privateKey = expandedKeyPath ? readFileSync(expandedKeyPath) : undefined;
 
   return new Promise((resolve, reject) => {
     const client = new SSHClient();
@@ -102,15 +103,15 @@ async function testSSHConnection(
       host: string;
       port: number;
       username: string;
-      privateKeyPath?: string;
+      privateKey?: Buffer;
     } = {
       host,
       port,
       username,
     };
 
-    if (privateKeyPath) {
-      connectConfig.privateKeyPath = privateKeyPath;
+    if (privateKey) {
+      connectConfig.privateKey = privateKey;
     }
 
     client.connect(connectConfig);
@@ -142,9 +143,10 @@ async function testMachineWithDependencies(
     error: null as string | null,
   };
 
-  const privateKeyPath = machine.sshKeyPath
+  const expandedKeyPath = machine.sshKeyPath
     ? machine.sshKeyPath.replace(/^~/, homedir())
     : undefined;
+  const privateKey = expandedKeyPath ? readFileSync(expandedKeyPath) : undefined;
 
   return new Promise((resolve) => {
     const client = new SSHClient();
@@ -207,15 +209,15 @@ async function testMachineWithDependencies(
       host: string;
       port: number;
       username: string;
-      privateKeyPath?: string;
+      privateKey?: Buffer;
     } = {
       host: machine.host,
       port: machine.port,
       username: machine.username,
     };
 
-    if (privateKeyPath) {
-      connectConfig.privateKeyPath = privateKeyPath;
+    if (privateKey) {
+      connectConfig.privateKey = privateKey;
     }
 
     client.connect(connectConfig);

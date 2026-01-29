@@ -21,9 +21,11 @@ import {
 
 // Mock filesystem operations
 const mockExistsSync = vi.fn();
+const mockReadFileSync = vi.fn();
 
 vi.mock('node:fs', () => ({
   existsSync: (...args: unknown[]) => mockExistsSync(...args),
+  readFileSync: (...args: unknown[]) => mockReadFileSync(...args),
 }));
 
 // Mock ssh2
@@ -97,6 +99,7 @@ beforeEach(() => {
 
   // Reset default mock behaviors
   mockExistsSync.mockReturnValue(true);
+  mockReadFileSync.mockReturnValue(Buffer.from('-----BEGIN OPENSSH PRIVATE KEY-----\nmock-key\n-----END OPENSSH PRIVATE KEY-----'));
   mockCrudModule.listRemoteMachines.mockReturnValue([]);
   mockCrudModule.getRemoteMachine.mockReturnValue(null);
   mockCrudModule.addRemoteMachine.mockReturnValue(1);
