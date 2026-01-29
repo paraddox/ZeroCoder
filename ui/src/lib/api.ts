@@ -330,7 +330,12 @@ export async function listRemoteMachines(): Promise<RemoteMachine[]> {
   return fetchJSON('/remote-machines')
 }
 
-export async function addRemoteMachine(machine: RemoteMachineCreate): Promise<RemoteMachine> {
+export interface AddRemoteMachineResponse extends RemoteMachine {
+  daemon_deployed: boolean
+  daemon_error: string | null
+}
+
+export async function addRemoteMachine(machine: RemoteMachineCreate): Promise<AddRemoteMachineResponse> {
   return fetchJSON('/remote-machines', {
     method: 'POST',
     body: JSON.stringify(machine),

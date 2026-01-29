@@ -941,6 +941,37 @@ export async function assignWorkToDaemon(
 }
 
 /**
+ * Assign work to a daemon using the machine's configured git SSH key.
+ * Reads the SSH key from the machine's gitSshKeyPath field.
+ */
+export async function assignWorkToDaemonWithMachineKey(
+  machineId: number,
+  repoUrl: string,
+  projectName: string
+): Promise<{ success: boolean; message: string }> {
+  const machine = getRemoteMachine(machineId);
+  if (!machine) {
+    return { success: false, message: `Machine ${machineId} not found` };
+  }
+
+  // Read SSH key from the machine's gitSshKeyPath
+  let sshKey = '';
+  if (machine.gitSshKeyPath) {
+    const keyPath = machine.gitSshKeyPath.replace(/^~/, homedir());
+    try {
+      sshKey = readFileSync(keyPath, 'utf8');
+    } catch (e) {
+      return {
+        success: false,
+        message: `Cannot read git SSH key from ${machine.gitSshKeyPath}: ${e instanceof Error ? e.message : String(e)}`,
+      };
+    }
+  }
+
+  return assignWorkToDaemon(machineId, repoUrl, projectName, sshKey);
+}
+
+/**
  * Stop daemon on a remote machine (graceful or hard).
  */
 export async function stopDaemon(

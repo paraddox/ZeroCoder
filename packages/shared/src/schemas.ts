@@ -317,6 +317,7 @@ export const RemoteMachineCreateSchema = z.object({
   port: z.number().int().min(1).max(65535).default(22),
   username: z.string().min(1).max(100).default('root'),
   ssh_key_path: z.string().max(500).nullable().optional(),
+  git_ssh_key_path: z.string().max(500).nullable().optional(), // Path to SSH key for git clone on remote
 });
 
 export const RemoteMachineResponseSchema = z.object({
@@ -326,9 +327,14 @@ export const RemoteMachineResponseSchema = z.object({
   port: z.number().int(),
   username: z.string(),
   ssh_key_path: z.string().nullable().optional(),
+  git_ssh_key_path: z.string().nullable().optional(),
   status: z.string(),
   last_checked_at: z.string().nullable().optional(),
   created_at: z.string().nullable().optional(),
+  // Daemon fields
+  daemon_port: z.number().int().nullable().optional(),
+  daemon_pid: z.number().int().nullable().optional(),
+  daemon_last_seen: z.string().nullable().optional(),
 });
 
 export const RemoteAgentStartRequestSchema = z.object({

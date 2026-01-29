@@ -161,6 +161,7 @@ export const remoteMachines = sqliteTable('remote_machines', {
   port: integer('port').notNull().default(22),
   username: text('username', { length: 100 }).notNull().default('root'),
   sshKeyPath: text('ssh_key_path', { length: 500 }),
+  gitSshKeyPath: text('git_ssh_key_path', { length: 500 }), // Path to SSH key for git clone on remote
   status: text('status', { length: 20 }).notNull().default('unknown'), // 'online' | 'offline' | 'unknown'
   lastCheckedAt: text('last_checked_at'), // ISO timestamp
   createdAt: text('created_at').notNull(), // ISO timestamp

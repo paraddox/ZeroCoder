@@ -22,6 +22,7 @@ import {
   updateRemoteMachineStatus,
   RegistryError,
 } from '../db/crud.js';
+import { deployDaemon } from '../services/remote-machine-manager.js';
 
 // =============================================================================
 // Router Setup
@@ -243,6 +244,14 @@ remoteMachinesRouter.post('/', async (c) => {
     }
   }
 
+  // Validate Git SSH key path if provided
+  if (request.git_ssh_key_path) {
+    const gitKeyPath = request.git_ssh_key_path.replace(/^~/, homedir());
+    if (!existsSync(gitKeyPath)) {
+      throw new HTTPException(400, { message: `Git SSH key not found: ${request.git_ssh_key_path}` });
+    }
+  }
+
   // Test connectivity before adding
   try {
     const whoamiResult = await testSSHConnection(
@@ -265,7 +274,8 @@ remoteMachinesRouter.post('/', async (c) => {
       request.host,
       request.port,
       request.username,
-      request.ssh_key_path ?? undefined
+      request.ssh_key_path ?? undefined,
+      request.git_ssh_key_path ?? undefined
     );
   } catch (e) {
     if (e instanceof RegistryError) {
@@ -282,7 +292,30 @@ remoteMachinesRouter.post('/', async (c) => {
     throw new HTTPException(500, { message: 'Failed to retrieve created machine' });
   }
 
-  return c.json(machine);
+  // Auto-deploy daemon after machine add
+  let daemonDeployed = false;
+  let daemonError: string | null = null;
+  try {
+    // Use the ZeroCoder repo URL from environment or default to GitHub
+    const zerocoderRepoUrl = process.env['ZEROCODER_REPO_URL'] ?? 'https://github.com/your-org/ZeroCoder.git';
+    const deployResult = await deployDaemon(machineId, zerocoderRepoUrl);
+    daemonDeployed = deployResult.success;
+    if (!deployResult.success) {
+      daemonError = deployResult.message;
+      console.warn(`Failed to auto-deploy daemon to ${request.name}: ${deployResult.message}`);
+    } else {
+      console.log(`Daemon deployed to ${request.name} on port ${deployResult.port}`);
+    }
+  } catch (e) {
+    daemonError = e instanceof Error ? e.message : String(e);
+    console.warn(`Exception deploying daemon to ${request.name}: ${daemonError}`);
+  }
+
+  return c.json({
+    ...machine,
+    daemon_deployed: daemonDeployed,
+    daemon_error: daemonError,
+  });
 });
 
 // DELETE /api/remote-machines/:machineId - Remove a remote machine

@@ -978,6 +978,7 @@ export interface RemoteMachineInfo {
   port: number;
   username: string;
   sshKeyPath: string | null;
+  gitSshKeyPath: string | null;
   status: string;
   lastCheckedAt: string | null;
   createdAt: string | null;
@@ -995,7 +996,8 @@ export function addRemoteMachine(
   host: string,
   port: number = 22,
   username: string = 'root',
-  sshKeyPath?: string
+  sshKeyPath?: string,
+  gitSshKeyPath?: string
 ): number {
   const existing = db.select().from(remoteMachines).where(eq(remoteMachines.name, name)).get();
   if (existing) {
@@ -1010,6 +1012,7 @@ export function addRemoteMachine(
       port,
       username,
       sshKeyPath: sshKeyPath ?? null,
+      gitSshKeyPath: gitSshKeyPath ?? null,
       status: 'unknown',
       createdAt: new Date().toISOString(),
     })
@@ -1038,6 +1041,7 @@ export function listRemoteMachines(): RemoteMachineInfo[] {
     port: m.port,
     username: m.username,
     sshKeyPath: m.sshKeyPath,
+    gitSshKeyPath: m.gitSshKeyPath,
     status: m.status,
     lastCheckedAt: m.lastCheckedAt,
     createdAt: m.createdAt,
@@ -1062,6 +1066,7 @@ export function getRemoteMachine(machineId: number): RemoteMachineInfo | null {
     port: m.port,
     username: m.username,
     sshKeyPath: m.sshKeyPath,
+    gitSshKeyPath: m.gitSshKeyPath,
     status: m.status,
     lastCheckedAt: m.lastCheckedAt,
     createdAt: m.createdAt,

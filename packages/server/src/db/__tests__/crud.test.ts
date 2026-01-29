@@ -118,6 +118,7 @@ beforeAll(() => {
       port INTEGER NOT NULL DEFAULT 22,
       username TEXT NOT NULL DEFAULT 'root',
       ssh_key_path TEXT,
+      git_ssh_key_path TEXT,
       status TEXT NOT NULL DEFAULT 'unknown',
       last_checked_at TEXT,
       created_at TEXT NOT NULL,

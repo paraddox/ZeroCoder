@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { X, Plus, Trash2, Wifi, WifiOff, Loader2, Server } from 'lucide-react'
+import { X, Plus, Trash2, Wifi, WifiOff, Loader2, Server, CheckCircle, AlertCircle, Clock } from 'lucide-react'
 import { useRemoteMachines, useAddRemoteMachine, useRemoveRemoteMachine, useTestRemoteMachine } from '../hooks/useRemoteMachines'
 
 interface AppSettingsModalProps {
@@ -19,7 +19,9 @@ export function AppSettingsModal({ isOpen, onClose }: AppSettingsModalProps) {
   const [formPort, setFormPort] = useState('22')
   const [formUsername, setFormUsername] = useState('root')
   const [formKeyPath, setFormKeyPath] = useState('')
+  const [formGitKeyPath, setFormGitKeyPath] = useState('')
   const [addError, setAddError] = useState<string | null>(null)
+  const [deploymentResult, setDeploymentResult] = useState<{ deployed: boolean; error: string | null } | null>(null)
 
   if (!isOpen) return null
 
@@ -29,21 +31,33 @@ export function AppSettingsModal({ isOpen, onClose }: AppSettingsModalProps) {
     setFormPort('22')
     setFormUsername('root')
     setFormKeyPath('')
+    setFormGitKeyPath('')
     setAddError(null)
+    setDeploymentResult(null)
     setShowAddForm(false)
   }
 
   const handleAdd = async () => {
     setAddError(null)
+    setDeploymentResult(null)
     try {
-      await addMachine.mutateAsync({
+      const result = await addMachine.mutateAsync({
         name: formName,
         host: formHost,
         port: parseInt(formPort, 10) || 22,
         username: formUsername || 'root',
         ssh_key_path: formKeyPath || null,
+        git_ssh_key_path: formGitKeyPath || null,
       })
-      resetForm()
+      // Show deployment result
+      setDeploymentResult({
+        deployed: result.daemon_deployed,
+        error: result.daemon_error,
+      })
+      // Reset form after short delay to show result
+      if (result.daemon_deployed) {
+        setTimeout(() => resetForm(), 2000)
+      }
     } catch (err: unknown) {
       setAddError(err instanceof Error ? err.message : 'Failed to add machine')
     }
@@ -101,48 +115,71 @@ export function AppSettingsModal({ isOpen, onClose }: AppSettingsModalProps) {
               </div>
             ) : machines && machines.length > 0 ? (
               <div className="space-y-2 mb-4">
-                {machines.map((machine) => (
-                  <div
-                    key={machine.id}
-                    className="flex items-center justify-between p-3 bg-[var(--color-bg-subtle)] border border-[var(--color-border)] rounded-md"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="flex items-center gap-1.5">
-                        {machine.status === 'online' ? (
-                          <Wifi size={14} className="text-[var(--color-done)]" />
-                        ) : (
-                          <WifiOff size={14} className="text-[var(--color-text-muted)]" />
-                        )}
-                        <span className="font-medium text-[var(--color-text)]">
-                          {machine.name}
+                {machines.map((machine) => {
+                  // Determine daemon status based on daemon_last_seen
+                  const hasDaemon = !!machine.daemon_port
+                  const daemonRecent = machine.daemon_last_seen
+                    ? (Date.now() - new Date(machine.daemon_last_seen).getTime()) < 60000 // within 1 minute
+                    : false
+
+                  return (
+                    <div
+                      key={machine.id}
+                      className="flex items-center justify-between p-3 bg-[var(--color-bg-subtle)] border border-[var(--color-border)] rounded-md"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-1.5">
+                          {machine.status === 'online' ? (
+                            <Wifi size={14} className="text-[var(--color-done)]" />
+                          ) : (
+                            <WifiOff size={14} className="text-[var(--color-text-muted)]" />
+                          )}
+                          <span className="font-medium text-[var(--color-text)]">
+                            {machine.name}
+                          </span>
+                        </div>
+                        <span className="text-sm text-[var(--color-text-secondary)]">
+                          {machine.username}@{machine.host}:{machine.port}
                         </span>
-                      </div>
-                      <span className="text-sm text-[var(--color-text-secondary)]">
-                        {machine.username}@{machine.host}:{machine.port}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => handleTest(machine.id)}
-                        className="btn btn-secondary btn-sm"
-                        disabled={testMachine.isPending}
-                      >
-                        {testMachine.isPending ? (
-                          <Loader2 size={12} className="animate-spin" />
-                        ) : (
-                          'Test'
+                        {/* Daemon status indicator */}
+                        {hasDaemon && (
+                          <span className={`flex items-center gap-1 text-xs px-1.5 py-0.5 rounded ${
+                            daemonRecent
+                              ? 'bg-green-500/10 text-green-400'
+                              : 'bg-yellow-500/10 text-yellow-400'
+                          }`}>
+                            {daemonRecent ? (
+                              <CheckCircle size={10} />
+                            ) : (
+                              <Clock size={10} />
+                            )}
+                            Daemon :{machine.daemon_port}
+                          </span>
                         )}
-                      </button>
-                      <button
-                        onClick={() => handleRemove(machine.id)}
-                        className="btn btn-ghost btn-icon text-[var(--color-danger)]"
-                        title="Remove machine"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleTest(machine.id)}
+                          className="btn btn-secondary btn-sm"
+                          disabled={testMachine.isPending}
+                        >
+                          {testMachine.isPending ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : (
+                            'Test'
+                          )}
+                        </button>
+                        <button
+                          onClick={() => handleRemove(machine.id)}
+                          className="btn btn-ghost btn-icon text-[var(--color-danger)]"
+                          title="Remove machine"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             ) : (
               <p className="text-sm text-[var(--color-text-muted)] py-4">
@@ -222,10 +259,42 @@ export function AppSettingsModal({ isOpen, onClose }: AppSettingsModalProps) {
                     placeholder="~/.ssh/id_ed25519"
                     className="input w-full"
                   />
+                  <span className="text-xs text-[var(--color-text-muted)]">For connecting to machine</span>
+                </div>
+                <div>
+                  <label className="block text-xs text-[var(--color-text-secondary)] mb-1">Git SSH Key Path (optional)</label>
+                  <input
+                    type="text"
+                    value={formGitKeyPath}
+                    onChange={(e) => setFormGitKeyPath(e.target.value)}
+                    placeholder="~/.ssh/github_deploy"
+                    className="input w-full"
+                  />
+                  <span className="text-xs text-[var(--color-text-muted)]">For cloning repos on remote</span>
                 </div>
 
                 {addError && (
                   <p className="text-sm text-[var(--color-danger)]">{addError}</p>
+                )}
+
+                {deploymentResult && (
+                  <div className={`p-2 rounded-md text-sm flex items-center gap-2 ${
+                    deploymentResult.deployed
+                      ? 'bg-green-500/10 border border-green-500/30 text-green-400'
+                      : 'bg-yellow-500/10 border border-yellow-500/30 text-yellow-400'
+                  }`}>
+                    {deploymentResult.deployed ? (
+                      <>
+                        <CheckCircle size={14} />
+                        Daemon deployed successfully
+                      </>
+                    ) : (
+                      <>
+                        <AlertCircle size={14} />
+                        Machine added, but daemon deployment failed: {deploymentResult.error}
+                      </>
+                    )}
+                  </div>
                 )}
 
                 <div className="flex items-center gap-2 pt-1">

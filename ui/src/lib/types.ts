@@ -131,6 +131,8 @@ export interface AgentActionResponse {
 }
 
 // Remote Machine types
+export type DaemonStatus = 'deploying' | 'running' | 'stopped' | 'error' | null
+
 export interface RemoteMachine {
   id: number
   name: string
@@ -138,9 +140,14 @@ export interface RemoteMachine {
   port: number
   username: string
   ssh_key_path: string | null
+  git_ssh_key_path: string | null
   status: 'online' | 'offline' | 'unknown'
   last_checked_at: string | null
   created_at: string | null
+  // Daemon fields
+  daemon_port: number | null
+  daemon_pid: number | null
+  daemon_last_seen: string | null
 }
 
 export interface RemoteMachineCreate {
@@ -149,6 +156,7 @@ export interface RemoteMachineCreate {
   port?: number
   username?: string
   ssh_key_path?: string | null
+  git_ssh_key_path?: string | null
 }
 
 export interface RemoteAgentInfo {
