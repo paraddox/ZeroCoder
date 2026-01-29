@@ -36,7 +36,8 @@ type LogLevel = 'error' | 'warn' | 'debug' | 'info'
  * Determines if a log line is an agent "thought" (narrative text)
  * vs. tool mechanics that should be hidden
  */
-function isAgentThought(line: string): boolean {
+function isAgentThought(line: string | null | undefined): boolean {
+  if (!line) return false
   const trimmed = line.trim()
 
   // Skip tool mechanics
@@ -74,7 +75,8 @@ function getLatestThought(logs: Array<{ line: string; timestamp: string }>): str
 /**
  * Parse log level from line content
  */
-function getLogLevel(line: string): LogLevel {
+function getLogLevel(line: string | null | undefined): LogLevel {
+  if (!line) return 'info'
   const lowerLine = line.toLowerCase()
   if (lowerLine.includes('error') || lowerLine.includes('exception') || lowerLine.includes('traceback')) {
     return 'error'

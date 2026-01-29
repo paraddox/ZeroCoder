@@ -76,8 +76,8 @@ describe('AgentLogViewer', () => {
     it('should display log lines when expanded', () => {
       render(<AgentLogViewer {...defaultProps} isExpanded={true} />)
 
-      // Should show log content
-      expect(screen.getByText(/Log line 1/)).toBeInTheDocument()
+      // Should show log content (using getAllByText since Log line 1 matches Log line 10)
+      expect(screen.getAllByText(/Log line 1/).length).toBeGreaterThanOrEqual(1)
     })
 
     it('should display timestamps with logs', () => {
@@ -245,14 +245,14 @@ describe('AgentLogViewer', () => {
         <AgentLogViewer {...defaultProps} isExpanded={true} />
       )
 
-      // Verify logs are shown
-      expect(screen.getByText(/Log line 1/)).toBeInTheDocument()
+      // Verify logs are shown (using getAllByText since Log line 1 matches Log line 10)
+      expect(screen.getAllByText(/Log line 1/).length).toBeGreaterThanOrEqual(1)
 
       // Rerender with empty logs (simulating clear)
       rerender(<AgentLogViewer {...defaultProps} logs={[]} isExpanded={true} />)
 
       // Should show empty state
-      expect(screen.queryByText(/Log line 1/)).not.toBeInTheDocument()
+      expect(screen.queryAllByText(/Log line 1/).length).toBe(0)
     })
   })
 

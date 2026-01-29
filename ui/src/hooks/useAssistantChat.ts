@@ -44,6 +44,7 @@ export function useAssistantChat({
   const maxReconnectAttempts = 3
   const pingIntervalRef = useRef<number | null>(null)
   const reconnectTimeoutRef = useRef<number | null>(null)
+  const checkAndSendTimeoutRef = useRef<number | null>(null)
 
   // Clean up on unmount
   useEffect(() => {
@@ -53,6 +54,9 @@ export function useAssistantChat({
       }
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current)
+      }
+      if (checkAndSendTimeoutRef.current) {
+        clearTimeout(checkAndSendTimeoutRef.current)
       }
       if (wsRef.current) {
         wsRef.current.close()
@@ -230,20 +234,21 @@ export function useAssistantChat({
 
     // Wait for connection then send start message
     const checkAndSend = () => {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
+      const ws = wsRef.current
+      if (ws && ws.readyState === WebSocket.OPEN) {
         setIsLoading(true)
         const payload: { type: string; conversation_id?: number } = { type: 'start' }
         if (existingConversationId) {
           payload.conversation_id = existingConversationId
           setConversationId(existingConversationId)
         }
-        wsRef.current.send(JSON.stringify(payload))
-      } else if (wsRef.current?.readyState === WebSocket.CONNECTING) {
-        setTimeout(checkAndSend, 100)
+        ws.send(JSON.stringify(payload))
+      } else if (ws && ws.readyState === WebSocket.CONNECTING) {
+        checkAndSendTimeoutRef.current = window.setTimeout(checkAndSend, 100)
       }
     }
 
-    setTimeout(checkAndSend, 100)
+    checkAndSendTimeoutRef.current = window.setTimeout(checkAndSend, 100)
   }, [connect])
 
   const sendMessage = useCallback((content: string) => {
@@ -279,6 +284,10 @@ export function useAssistantChat({
     if (pingIntervalRef.current) {
       clearInterval(pingIntervalRef.current)
       pingIntervalRef.current = null
+    }
+    if (checkAndSendTimeoutRef.current) {
+      clearTimeout(checkAndSendTimeoutRef.current)
+      checkAndSendTimeoutRef.current = null
     }
     if (wsRef.current) {
       wsRef.current.close()

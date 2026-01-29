@@ -3,213 +3,434 @@
  * ===========================
  *
  * Tests for the useAssistantChat hook including:
- * - Message sending
- * - Chat history management
- * - Session lifecycle
- * - Error handling
+ * - Initial state
+ * - Connection lifecycle
+ * - Message handling
+ * - Session management
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { renderHook, act, waitFor } from '@testing-library/react'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ReactNode, useState } from 'react'
+import { renderHook, act } from '@testing-library/react'
+import { useAssistantChat } from './useAssistantChat'
 
-// Create wrapper with QueryClient
-function createWrapper() {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: { retry: false },
-      mutations: { retry: false },
-    },
-  })
+// Mock WebSocket
+class MockWebSocket {
+  static CONNECTING = 0
+  static OPEN = 1
+  static CLOSING = 2
+  static CLOSED = 3
 
-  return function Wrapper({ children }: { children: ReactNode }) {
-    return (
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-    )
+  readyState = MockWebSocket.CONNECTING
+  url: string
+  onopen: ((event: Event) => void) | null = null
+  onclose: ((event: CloseEvent) => void) | null = null
+  onerror: ((event: Event) => void) | null = null
+  onmessage: ((event: MessageEvent) => void) | null = null
+
+  private sentMessages: string[] = []
+
+  constructor(url: string) {
+    this.url = url
+    // Simulate async connection
+    setTimeout(() => {
+      this.readyState = MockWebSocket.OPEN
+      this.onopen?.(new Event('open'))
+    }, 10)
+  }
+
+  send(data: string) {
+    this.sentMessages.push(data)
+  }
+
+  close() {
+    this.readyState = MockWebSocket.CLOSED
+    this.onclose?.(new CloseEvent('close'))
+  }
+
+  getSentMessages() {
+    return this.sentMessages
+  }
+
+  // Helper to simulate server messages
+  simulateMessage(data: object) {
+    this.onmessage?.(new MessageEvent('message', { data: JSON.stringify(data) }))
   }
 }
 
-// Message type
-interface ChatMessage {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-  timestamp: Date
-}
-
-// Simple hook implementation for testing
-let messageCounter = 0
-
-function useAssistantChat() {
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<Error | null>(null)
-
-  const sendMessage = async (content: string) => {
-    setIsLoading(true)
-    setError(null)
-
-    // Add user message with unique ID
-    const userMessageId = `user-${++messageCounter}-${Date.now()}`
-    const userMessage: ChatMessage = {
-      id: userMessageId,
-      role: 'user',
-      content,
-      timestamp: new Date(),
-    }
-    setMessages((prev) => [...prev, userMessage])
-
-    try {
-      // Simulate API call
-      await new Promise((resolve) => setTimeout(resolve, 100))
-
-      // Add assistant response with unique ID
-      const assistantMessageId = `assistant-${++messageCounter}-${Date.now()}`
-      const assistantMessage: ChatMessage = {
-        id: assistantMessageId,
-        role: 'assistant',
-        content: `Response to: ${content}`,
-        timestamp: new Date(),
-      }
-      setMessages((prev) => [...prev, assistantMessage])
-    } catch (err) {
-      setError(err as Error)
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  const clearChat = () => {
-    setMessages([])
-    setError(null)
-  }
-
-  return {
-    messages,
-    isLoading,
-    error,
-    sendMessage,
-    clearChat,
-  }
-}
+// Store mock instances for test access
+let mockWebSocketInstances: MockWebSocket[] = []
 
 describe('useAssistantChat Hook', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
+    vi.useFakeTimers()
+    mockWebSocketInstances = []
+
+    // Mock WebSocket constructor
+    vi.stubGlobal('WebSocket', class extends MockWebSocket {
+      constructor(url: string) {
+        super(url)
+        mockWebSocketInstances.push(this)
+      }
+    })
+
+    // Mock window.location
+    vi.stubGlobal('location', {
+      protocol: 'http:',
+      host: 'localhost:3000',
+    })
   })
 
   afterEach(() => {
-    vi.resetAllMocks()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    mockWebSocketInstances = []
   })
 
   describe('Initial State', () => {
     it('should have empty messages initially', () => {
-      const { result } = renderHook(() => useAssistantChat(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(() =>
+        useAssistantChat({ projectName: 'test-project' })
+      )
 
       expect(result.current.messages).toEqual([])
     })
 
     it('should not be loading initially', () => {
-      const { result } = renderHook(() => useAssistantChat(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(() =>
+        useAssistantChat({ projectName: 'test-project' })
+      )
 
       expect(result.current.isLoading).toBe(false)
     })
 
-    it('should have no error initially', () => {
-      const { result } = renderHook(() => useAssistantChat(), {
-        wrapper: createWrapper(),
-      })
+    it('should be disconnected initially', () => {
+      const { result } = renderHook(() =>
+        useAssistantChat({ projectName: 'test-project' })
+      )
 
-      expect(result.current.error).toBeNull()
+      expect(result.current.connectionStatus).toBe('disconnected')
+    })
+
+    it('should have null conversationId initially', () => {
+      const { result } = renderHook(() =>
+        useAssistantChat({ projectName: 'test-project' })
+      )
+
+      expect(result.current.conversationId).toBeNull()
     })
   })
 
-  describe('Sending Messages', () => {
-    it('should add user message when sending', async () => {
-      const { result } = renderHook(() => useAssistantChat(), {
-        wrapper: createWrapper(),
+  describe('Connection Lifecycle', () => {
+    it('should set connecting status when start is called', () => {
+      const { result } = renderHook(() =>
+        useAssistantChat({ projectName: 'test-project' })
+      )
+
+      act(() => {
+        result.current.start()
       })
 
-      await act(async () => {
-        await result.current.sendMessage('Hello, assistant!')
+      expect(result.current.connectionStatus).toBe('connecting')
+    })
+
+    it('should set connected status after WebSocket opens', () => {
+      const { result } = renderHook(() =>
+        useAssistantChat({ projectName: 'test-project' })
+      )
+
+      act(() => {
+        result.current.start()
+      })
+
+      // Advance timers to trigger connection
+      act(() => {
+        vi.advanceTimersByTime(50)
+      })
+
+      expect(result.current.connectionStatus).toBe('connected')
+    })
+
+    it('should set disconnected status after disconnect is called', () => {
+      const { result } = renderHook(() =>
+        useAssistantChat({ projectName: 'test-project' })
+      )
+
+      act(() => {
+        result.current.start()
+      })
+
+      act(() => {
+        vi.advanceTimersByTime(50)
+      })
+
+      act(() => {
+        result.current.disconnect()
+      })
+
+      expect(result.current.connectionStatus).toBe('disconnected')
+    })
+  })
+
+  describe('Message Handling', () => {
+    it('should add user message when sendMessage is called', () => {
+      const { result } = renderHook(() =>
+        useAssistantChat({ projectName: 'test-project' })
+      )
+
+      act(() => {
+        result.current.start()
+      })
+
+      act(() => {
+        vi.advanceTimersByTime(200)
+      })
+
+      act(() => {
+        result.current.sendMessage('Hello!')
       })
 
       const userMessage = result.current.messages.find((m) => m.role === 'user')
       expect(userMessage).toBeDefined()
-      expect(userMessage?.content).toBe('Hello, assistant!')
+      expect(userMessage?.content).toBe('Hello!')
     })
 
-    it('should set loading state while sending', async () => {
-      const { result } = renderHook(() => useAssistantChat(), {
-        wrapper: createWrapper(),
+    it('should set loading when message is sent', () => {
+      const { result } = renderHook(() =>
+        useAssistantChat({ projectName: 'test-project' })
+      )
+
+      act(() => {
+        result.current.start()
       })
 
       act(() => {
-        result.current.sendMessage('Test').then(() => {
-          // Check loading was true during call
-        })
+        vi.advanceTimersByTime(200)
       })
 
-      // Loading should be true during the call
+      act(() => {
+        result.current.sendMessage('Test message')
+      })
+
       expect(result.current.isLoading).toBe(true)
-
-      await waitFor(() => {
-        expect(result.current.isLoading).toBe(false)
-      })
     })
 
-    it('should add assistant response after user message', async () => {
-      const { result } = renderHook(() => useAssistantChat(), {
-        wrapper: createWrapper(),
+    it('should add assistant message when text is received', () => {
+      const { result } = renderHook(() =>
+        useAssistantChat({ projectName: 'test-project' })
+      )
+
+      act(() => {
+        result.current.start()
       })
 
-      await act(async () => {
-        await result.current.sendMessage('What is 2+2?')
+      act(() => {
+        vi.advanceTimersByTime(200)
+      })
+
+      // Simulate server sending text
+      act(() => {
+        mockWebSocketInstances[0].simulateMessage({
+          type: 'text',
+          content: 'Hello from assistant!',
+        })
       })
 
       const assistantMessage = result.current.messages.find(
         (m) => m.role === 'assistant'
       )
       expect(assistantMessage).toBeDefined()
-      expect(assistantMessage?.content).toContain('What is 2+2?')
+      expect(assistantMessage?.content).toBe('Hello from assistant!')
     })
 
-    it('should maintain message order', async () => {
-      const { result } = renderHook(() => useAssistantChat(), {
-        wrapper: createWrapper(),
+    it('should append text to streaming message', () => {
+      const { result } = renderHook(() =>
+        useAssistantChat({ projectName: 'test-project' })
+      )
+
+      act(() => {
+        result.current.start()
       })
 
-      await act(async () => {
-        await result.current.sendMessage('First message')
+      act(() => {
+        vi.advanceTimersByTime(200)
       })
 
-      await act(async () => {
-        await result.current.sendMessage('Second message')
+      act(() => {
+        mockWebSocketInstances[0].simulateMessage({
+          type: 'text',
+          content: 'Part 1',
+        })
       })
 
-      expect(result.current.messages).toHaveLength(4)
-      expect(result.current.messages[0].role).toBe('user')
-      expect(result.current.messages[0].content).toBe('First message')
-      expect(result.current.messages[1].role).toBe('assistant')
-      expect(result.current.messages[2].role).toBe('user')
-      expect(result.current.messages[2].content).toBe('Second message')
-      expect(result.current.messages[3].role).toBe('assistant')
+      act(() => {
+        mockWebSocketInstances[0].simulateMessage({
+          type: 'text',
+          content: ' Part 2',
+        })
+      })
+
+      const assistantMessage = result.current.messages.find(
+        (m) => m.role === 'assistant'
+      )
+      expect(assistantMessage?.content).toBe('Part 1 Part 2')
+    })
+  })
+
+  describe('Clear Messages', () => {
+    it('should clear all messages', () => {
+      const { result } = renderHook(() =>
+        useAssistantChat({ projectName: 'test-project' })
+      )
+
+      act(() => {
+        result.current.start()
+      })
+
+      act(() => {
+        vi.advanceTimersByTime(200)
+      })
+
+      act(() => {
+        result.current.sendMessage('Test message')
+      })
+
+      expect(result.current.messages.length).toBeGreaterThan(0)
+
+      act(() => {
+        result.current.clearMessages()
+      })
+
+      expect(result.current.messages).toEqual([])
+    })
+
+    it('should clear conversationId when clearing messages', () => {
+      const { result } = renderHook(() =>
+        useAssistantChat({ projectName: 'test-project' })
+      )
+
+      act(() => {
+        result.current.start()
+      })
+
+      act(() => {
+        vi.advanceTimersByTime(200)
+      })
+
+      // Simulate conversation created
+      act(() => {
+        mockWebSocketInstances[0].simulateMessage({
+          type: 'conversation_created',
+          conversation_id: 123,
+        })
+      })
+
+      expect(result.current.conversationId).toBe(123)
+
+      act(() => {
+        result.current.clearMessages()
+      })
+
+      expect(result.current.conversationId).toBeNull()
+    })
+  })
+
+  describe('Error Handling', () => {
+    it('should call onError when not connected and trying to send', () => {
+      const onError = vi.fn()
+      const { result } = renderHook(() =>
+        useAssistantChat({ projectName: 'test-project', onError })
+      )
+
+      act(() => {
+        result.current.sendMessage('Test message')
+      })
+
+      expect(onError).toHaveBeenCalledWith('Not connected')
+    })
+
+    it('should call onError when WebSocket errors', () => {
+      const onError = vi.fn()
+      const { result } = renderHook(() =>
+        useAssistantChat({ projectName: 'test-project', onError })
+      )
+
+      act(() => {
+        result.current.start()
+      })
+
+      act(() => {
+        vi.advanceTimersByTime(50)
+      })
+
+      // Simulate error
+      act(() => {
+        mockWebSocketInstances[0].onerror?.(new Event('error'))
+      })
+
+      expect(onError).toHaveBeenCalledWith('WebSocket connection error')
+    })
+  })
+
+  describe('Cleanup', () => {
+    it('should cleanup WebSocket on unmount', () => {
+      const { result, unmount } = renderHook(() =>
+        useAssistantChat({ projectName: 'test-project' })
+      )
+
+      act(() => {
+        result.current.start()
+      })
+
+      act(() => {
+        vi.advanceTimersByTime(50)
+      })
+
+      const ws = mockWebSocketInstances[0]
+      expect(ws.readyState).toBe(MockWebSocket.OPEN)
+
+      unmount()
+
+      expect(ws.readyState).toBe(MockWebSocket.CLOSED)
+    })
+
+    it('should cleanup timers on unmount', () => {
+      const { result, unmount } = renderHook(() =>
+        useAssistantChat({ projectName: 'test-project' })
+      )
+
+      act(() => {
+        result.current.start()
+      })
+
+      // Unmount while checkAndSend timer is still pending
+      unmount()
+
+      // Advance timers - should not throw
+      act(() => {
+        vi.advanceTimersByTime(1000)
+      })
+
+      // If we get here without errors, cleanup worked
+      expect(true).toBe(true)
     })
   })
 
   describe('Message Properties', () => {
-    it('should include id on messages', async () => {
-      const { result } = renderHook(() => useAssistantChat(), {
-        wrapper: createWrapper(),
+    it('should include id on messages', () => {
+      const { result } = renderHook(() =>
+        useAssistantChat({ projectName: 'test-project' })
+      )
+
+      act(() => {
+        result.current.start()
       })
 
-      await act(async () => {
-        await result.current.sendMessage('Test message')
+      act(() => {
+        vi.advanceTimersByTime(200)
+      })
+
+      act(() => {
+        result.current.sendMessage('Test message')
       })
 
       result.current.messages.forEach((message) => {
@@ -218,13 +439,21 @@ describe('useAssistantChat Hook', () => {
       })
     })
 
-    it('should include timestamp on messages', async () => {
-      const { result } = renderHook(() => useAssistantChat(), {
-        wrapper: createWrapper(),
+    it('should include timestamp on messages', () => {
+      const { result } = renderHook(() =>
+        useAssistantChat({ projectName: 'test-project' })
+      )
+
+      act(() => {
+        result.current.start()
       })
 
-      await act(async () => {
-        await result.current.sendMessage('Test message')
+      act(() => {
+        vi.advanceTimersByTime(200)
+      })
+
+      act(() => {
+        result.current.sendMessage('Test message')
       })
 
       result.current.messages.forEach((message) => {
@@ -233,17 +462,25 @@ describe('useAssistantChat Hook', () => {
       })
     })
 
-    it('should have unique ids for each message', async () => {
-      const { result } = renderHook(() => useAssistantChat(), {
-        wrapper: createWrapper(),
+    it('should have unique ids for each message', () => {
+      const { result } = renderHook(() =>
+        useAssistantChat({ projectName: 'test-project' })
+      )
+
+      act(() => {
+        result.current.start()
       })
 
-      await act(async () => {
-        await result.current.sendMessage('First')
+      act(() => {
+        vi.advanceTimersByTime(200)
       })
 
-      await act(async () => {
-        await result.current.sendMessage('Second')
+      act(() => {
+        result.current.sendMessage('First')
+      })
+
+      act(() => {
+        result.current.sendMessage('Second')
       })
 
       const ids = result.current.messages.map((m) => m.id)
@@ -252,120 +489,72 @@ describe('useAssistantChat Hook', () => {
     })
   })
 
-  describe('Clear Chat', () => {
-    it('should clear all messages', async () => {
-      const { result } = renderHook(() => useAssistantChat(), {
-        wrapper: createWrapper(),
-      })
-
-      await act(async () => {
-        await result.current.sendMessage('Message 1')
-      })
-
-      await act(async () => {
-        await result.current.sendMessage('Message 2')
-      })
-
-      expect(result.current.messages.length).toBeGreaterThan(0)
-
-      act(() => {
-        result.current.clearChat()
-      })
-
-      expect(result.current.messages).toEqual([])
-    })
-
-    it('should clear error when clearing chat', async () => {
-      const { result } = renderHook(() => useAssistantChat(), {
-        wrapper: createWrapper(),
-      })
-
-      // Would need to mock an error scenario
-      act(() => {
-        result.current.clearChat()
-      })
-
-      expect(result.current.error).toBeNull()
-    })
-  })
-
   describe('Edge Cases', () => {
-    it('should handle empty message', async () => {
-      const { result } = renderHook(() => useAssistantChat(), {
-        wrapper: createWrapper(),
+    it('should handle empty message', () => {
+      const { result } = renderHook(() =>
+        useAssistantChat({ projectName: 'test-project' })
+      )
+
+      act(() => {
+        result.current.start()
       })
 
-      await act(async () => {
-        await result.current.sendMessage('')
+      act(() => {
+        vi.advanceTimersByTime(200)
+      })
+
+      act(() => {
+        result.current.sendMessage('')
       })
 
       const userMessage = result.current.messages.find((m) => m.role === 'user')
       expect(userMessage?.content).toBe('')
     })
 
-    it('should handle very long messages', async () => {
-      const { result } = renderHook(() => useAssistantChat(), {
-        wrapper: createWrapper(),
+    it('should handle special characters in messages', () => {
+      const { result } = renderHook(() =>
+        useAssistantChat({ projectName: 'test-project' })
+      )
+
+      act(() => {
+        result.current.start()
       })
 
-      const longMessage = 'A'.repeat(10000)
-
-      await act(async () => {
-        await result.current.sendMessage(longMessage)
-      })
-
-      const userMessage = result.current.messages.find((m) => m.role === 'user')
-      expect(userMessage?.content).toBe(longMessage)
-    })
-
-    it('should handle special characters in messages', async () => {
-      const { result } = renderHook(() => useAssistantChat(), {
-        wrapper: createWrapper(),
+      act(() => {
+        vi.advanceTimersByTime(200)
       })
 
       const specialMessage = '<script>alert("test")</script>\n\t"quotes"'
 
-      await act(async () => {
-        await result.current.sendMessage(specialMessage)
+      act(() => {
+        result.current.sendMessage(specialMessage)
       })
 
       const userMessage = result.current.messages.find((m) => m.role === 'user')
       expect(userMessage?.content).toBe(specialMessage)
     })
 
-    it('should handle unicode in messages', async () => {
-      const { result } = renderHook(() => useAssistantChat(), {
-        wrapper: createWrapper(),
+    it('should handle unicode in messages', () => {
+      const { result } = renderHook(() =>
+        useAssistantChat({ projectName: 'test-project' })
+      )
+
+      act(() => {
+        result.current.start()
       })
 
-      const unicodeMessage = '你好世界 🎉 Привет мир'
+      act(() => {
+        vi.advanceTimersByTime(200)
+      })
 
-      await act(async () => {
-        await result.current.sendMessage(unicodeMessage)
+      const unicodeMessage = '你好世界 Привет мир'
+
+      act(() => {
+        result.current.sendMessage(unicodeMessage)
       })
 
       const userMessage = result.current.messages.find((m) => m.role === 'user')
       expect(userMessage?.content).toBe(unicodeMessage)
-    })
-  })
-
-  describe('Multiple Rapid Messages', () => {
-    it('should handle multiple rapid messages', async () => {
-      const { result } = renderHook(() => useAssistantChat(), {
-        wrapper: createWrapper(),
-      })
-
-      await act(async () => {
-        // Send multiple messages rapidly
-        await Promise.all([
-          result.current.sendMessage('Message 1'),
-          result.current.sendMessage('Message 2'),
-          result.current.sendMessage('Message 3'),
-        ])
-      })
-
-      // Should have all messages (this tests concurrent handling)
-      expect(result.current.messages.length).toBeGreaterThan(0)
     })
   })
 })

@@ -50,6 +50,9 @@ export function useSpecChat({
   const pingIntervalRef = useRef<number | null>(null)
   const reconnectTimeoutRef = useRef<number | null>(null)
   const isCompleteRef = useRef(false)
+  const checkAndSendTimeoutRef = useRef<number | null>(null)
+  const pollIntervalRef = useRef<number | null>(null)
+  const pollStartDelayRef = useRef<number | null>(null)
 
   // Keep isCompleteRef in sync with isComplete state
   useEffect(() => {
@@ -65,6 +68,15 @@ export function useSpecChat({
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current)
       }
+      if (checkAndSendTimeoutRef.current) {
+        clearTimeout(checkAndSendTimeoutRef.current)
+      }
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current)
+      }
+      if (pollStartDelayRef.current) {
+        clearTimeout(pollStartDelayRef.current)
+      }
       if (wsRef.current) {
         wsRef.current.close()
       }
@@ -78,11 +90,14 @@ export function useSpecChat({
     if (isComplete) return
 
     // Start polling after initial delay (let WebSocket try first)
-    const startDelay = setTimeout(() => {
-      const pollInterval = setInterval(async () => {
+    pollStartDelayRef.current = window.setTimeout(() => {
+      pollIntervalRef.current = window.setInterval(async () => {
         // Stop if already complete
         if (isCompleteRef.current) {
-          clearInterval(pollInterval)
+          if (pollIntervalRef.current) {
+            clearInterval(pollIntervalRef.current)
+            pollIntervalRef.current = null
+          }
           return
         }
 
@@ -117,18 +132,27 @@ export function useSpecChat({
               },
             ])
 
-            clearInterval(pollInterval)
+            if (pollIntervalRef.current) {
+              clearInterval(pollIntervalRef.current)
+              pollIntervalRef.current = null
+            }
           }
         } catch {
           // Silently ignore polling errors - WebSocket is primary mechanism
         }
       }, 3000) // Poll every 3 seconds
-
-      // Cleanup interval on unmount
-      return () => clearInterval(pollInterval)
     }, 3000) // Start polling after 3 second delay
 
-    return () => clearTimeout(startDelay)
+    return () => {
+      if (pollStartDelayRef.current) {
+        clearTimeout(pollStartDelayRef.current)
+        pollStartDelayRef.current = null
+      }
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current)
+        pollIntervalRef.current = null
+      }
+    }
   }, [projectName, isComplete])
 
   const connect = useCallback(() => {
@@ -353,15 +377,16 @@ export function useSpecChat({
 
     // Wait for connection then send start message
     const checkAndSend = () => {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
+      const ws = wsRef.current
+      if (ws && ws.readyState === WebSocket.OPEN) {
         setIsLoading(true)
-        wsRef.current.send(JSON.stringify({ type: 'start' }))
-      } else if (wsRef.current?.readyState === WebSocket.CONNECTING) {
-        setTimeout(checkAndSend, 100)
+        ws.send(JSON.stringify({ type: 'start' }))
+      } else if (ws && ws.readyState === WebSocket.CONNECTING) {
+        checkAndSendTimeoutRef.current = window.setTimeout(checkAndSend, 100)
       }
     }
 
-    setTimeout(checkAndSend, 100)
+    checkAndSendTimeoutRef.current = window.setTimeout(checkAndSend, 100)
   }, [connect])
 
   const sendMessage = useCallback((content: string, attachments?: FileAttachment[]) => {
@@ -465,6 +490,18 @@ export function useSpecChat({
     if (pingIntervalRef.current) {
       clearInterval(pingIntervalRef.current)
       pingIntervalRef.current = null
+    }
+    if (checkAndSendTimeoutRef.current) {
+      clearTimeout(checkAndSendTimeoutRef.current)
+      checkAndSendTimeoutRef.current = null
+    }
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current)
+      pollIntervalRef.current = null
+    }
+    if (pollStartDelayRef.current) {
+      clearTimeout(pollStartDelayRef.current)
+      pollStartDelayRef.current = null
     }
     if (wsRef.current) {
       wsRef.current.close()

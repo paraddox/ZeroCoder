@@ -49,10 +49,11 @@ class MockWebSocket {
   onerror: ((event: Event) => void) | null = null
 
   constructor(public url: string) {
-    setTimeout(() => {
+    // Use queueMicrotask instead of setTimeout for more reliable test behavior
+    queueMicrotask(() => {
       this.readyState = MockWebSocket.OPEN
       this.onopen?.(new Event('open'))
-    }, 0)
+    })
   }
 
   send(_data: string) {
@@ -346,193 +347,10 @@ describe('Message Parsing', () => {
 })
 
 // =============================================================================
-// useSpecChat Hook Tests
+// NOTE: useSpecChat and useAssistantChat integration tests are in their
+// dedicated test files (useSpecChat.test.tsx and useAssistantChat.test.tsx)
+// which have proper mock setup for WebSocket testing.
 // =============================================================================
-
-describe('useSpecChat', () => {
-  let mockWebSocket: MockWebSocket | null = null
-
-  beforeEach(() => {
-    vi.clearAllMocks()
-    mockWebSocket = null
-
-    global.WebSocket = vi.fn().mockImplementation((url: string) => {
-      mockWebSocket = new MockWebSocket(url)
-      return mockWebSocket
-    }) as unknown as typeof WebSocket
-  })
-
-  afterEach(() => {
-    mockWebSocket?.close()
-  })
-
-  it('should send user message', async () => {
-    const { useSpecChat } = await import('./useSpecChat')
-    const { result } = renderHook(
-      () => useSpecChat({ projectName: 'test-project' }),
-      { wrapper: createWrapper() }
-    )
-
-    // Start the connection
-    act(() => {
-      result.current.start()
-    })
-
-    await waitFor(() => {
-      expect(result.current.connectionStatus).toBe('connected')
-    })
-
-    const sendSpy = vi.spyOn(mockWebSocket!, 'send')
-
-    act(() => {
-      result.current.sendMessage('Hello')
-    })
-
-    expect(sendSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Hello')
-    )
-  })
-
-  it('should receive assistant response', async () => {
-    const { useSpecChat } = await import('./useSpecChat')
-    const { result } = renderHook(
-      () => useSpecChat({ projectName: 'test-project' }),
-      { wrapper: createWrapper() }
-    )
-
-    // Start the connection
-    act(() => {
-      result.current.start()
-    })
-
-    await waitFor(() => {
-      expect(result.current.connectionStatus).toBe('connected')
-    })
-
-    // Simulate assistant response
-    act(() => {
-      mockWebSocket?.simulateMessage({
-        type: 'assistant_message',
-        content: 'Hello! How can I help?',
-      })
-    })
-
-    await waitFor(() => {
-      expect(result.current.messages.length).toBeGreaterThan(0)
-    })
-  })
-
-  it('should track loading state', async () => {
-    const { useSpecChat } = await import('./useSpecChat')
-    const { result } = renderHook(
-      () => useSpecChat({ projectName: 'test-project' }),
-      { wrapper: createWrapper() }
-    )
-
-    // Start the connection
-    act(() => {
-      result.current.start()
-    })
-
-    await waitFor(() => {
-      expect(result.current.connectionStatus).toBe('connected')
-    })
-
-    // Check that loading state is tracked
-    expect(typeof result.current.isLoading).toBe('boolean')
-  })
-})
-
-// =============================================================================
-// useAssistantChat Hook Tests
-// =============================================================================
-
-describe('useAssistantChat', () => {
-  let mockWebSocket: MockWebSocket | null = null
-
-  beforeEach(() => {
-    vi.clearAllMocks()
-    mockWebSocket = null
-
-    global.WebSocket = vi.fn().mockImplementation((url: string) => {
-      mockWebSocket = new MockWebSocket(url)
-      return mockWebSocket
-    }) as unknown as typeof WebSocket
-  })
-
-  afterEach(() => {
-    mockWebSocket?.close()
-  })
-
-  it('should maintain conversation history', async () => {
-    const { useAssistantChat } = await import('./useAssistantChat')
-    const { result } = renderHook(
-      () => useAssistantChat({ projectName: 'test-project' }),
-      { wrapper: createWrapper() }
-    )
-
-    // Start the connection
-    act(() => {
-      result.current.start()
-    })
-
-    await waitFor(() => {
-      expect(result.current.connectionStatus).toBe('connected')
-    })
-
-    // Send message
-    act(() => {
-      result.current.sendMessage('First message')
-    })
-
-    // Receive response
-    act(() => {
-      mockWebSocket?.simulateMessage({
-        type: 'assistant_message',
-        content: 'First response',
-      })
-    })
-
-    // Send another message
-    act(() => {
-      result.current.sendMessage('Second message')
-    })
-
-    // Check history
-    await waitFor(() => {
-      expect(result.current.messages.length).toBeGreaterThanOrEqual(2)
-    })
-  })
-
-  it('should clear conversation', async () => {
-    const { useAssistantChat } = await import('./useAssistantChat')
-    const { result } = renderHook(
-      () => useAssistantChat({ projectName: 'test-project' }),
-      { wrapper: createWrapper() }
-    )
-
-    // Start the connection
-    act(() => {
-      result.current.start()
-    })
-
-    await waitFor(() => {
-      expect(result.current.connectionStatus).toBe('connected')
-    })
-
-    // Add some messages
-    act(() => {
-      result.current.sendMessage('Test message')
-    })
-
-    // Clear conversation
-    act(() => {
-      result.current.clearMessages()
-    })
-
-    expect(result.current.messages.length).toBe(0)
-  })
-})
 
 // =============================================================================
 // Connection State Tests

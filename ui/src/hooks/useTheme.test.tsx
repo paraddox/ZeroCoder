@@ -92,7 +92,7 @@ describe('useTheme Hook', () => {
 
   describe('Toggle Theme', () => {
     it('should toggle from light to dark', () => {
-      localStorage.setItem('theme', 'light')
+      localStorage.setItem('zerocoder-theme', 'light')
 
       const { result } = renderHook(() => useTheme(), { wrapper })
 
@@ -104,7 +104,7 @@ describe('useTheme Hook', () => {
     })
 
     it('should toggle from dark to light', () => {
-      localStorage.setItem('theme', 'dark')
+      localStorage.setItem('zerocoder-theme', 'dark')
 
       const { result } = renderHook(() => useTheme(), { wrapper })
 
@@ -143,12 +143,12 @@ describe('useTheme Hook', () => {
         result.current.toggleTheme()
       })
 
-      const storedTheme = localStorage.getItem('theme')
+      const storedTheme = localStorage.getItem('zerocoder-theme')
       expect(storedTheme).toBe(result.current.theme)
     })
 
     it('should restore theme from localStorage', () => {
-      localStorage.setItem('theme', 'dark')
+      localStorage.setItem('zerocoder-theme', 'dark')
 
       const { result } = renderHook(() => useTheme(), { wrapper })
 
@@ -156,18 +156,18 @@ describe('useTheme Hook', () => {
     })
 
     it('should handle invalid localStorage value', () => {
-      localStorage.setItem('theme', 'invalid-value')
+      localStorage.setItem('zerocoder-theme', 'invalid-value')
 
       const { result } = renderHook(() => useTheme(), { wrapper })
 
-      // Should fall back to valid theme
+      // Should fall back to valid theme (defaults to 'dark')
       expect(['light', 'dark']).toContain(result.current.theme)
     })
   })
 
   describe('CSS Class Updates', () => {
     it('should add dark class to document in dark mode', () => {
-      localStorage.setItem('theme', 'dark')
+      localStorage.setItem('zerocoder-theme', 'dark')
 
       renderHook(() => useTheme(), { wrapper })
 
@@ -176,7 +176,7 @@ describe('useTheme Hook', () => {
 
     it('should remove dark class in light mode', () => {
       document.documentElement.classList.add('dark')
-      localStorage.setItem('theme', 'light')
+      localStorage.setItem('zerocoder-theme', 'light')
 
       renderHook(() => useTheme(), { wrapper })
 
@@ -184,7 +184,7 @@ describe('useTheme Hook', () => {
     })
 
     it('should update classes when toggling', () => {
-      localStorage.setItem('theme', 'light')
+      localStorage.setItem('zerocoder-theme', 'light')
 
       const { result } = renderHook(() => useTheme(), { wrapper })
 

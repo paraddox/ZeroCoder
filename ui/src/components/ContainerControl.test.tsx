@@ -4,321 +4,292 @@
  *
  * Tests for the ContainerControl component including:
  * - Start/Stop button states
- * - Status display
- * - Loading states
- * - Error handling
+ * - Button disabled states
+ * - Loading states during actions
+ * - Progress display
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ContainerControl } from './ContainerControl'
-import * as api from '../lib/api'
-import type { AgentStatusResponse } from '../lib/types'
 
-// Mock the API module
-vi.mock('../lib/api', () => ({
-  getAgentStatus: vi.fn(),
-  startAgent: vi.fn(),
-  stopAgent: vi.fn(),
-  gracefulStopAgent: vi.fn(),
-}))
+// =============================================================================
+// Test Fixtures
+// =============================================================================
 
-function createWrapper() {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: { retry: false },
-      mutations: { retry: false },
-    },
-  })
-
-  return function Wrapper({ children }: { children: React.ReactNode }) {
-    return (
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-    )
-  }
+const defaultProps = {
+  projectName: 'test-project',
+  agentRunning: false,
+  gracefulStopRequested: false,
+  progress: { passing: 0, total: 10, percentage: 0 },
+  isConnected: true,
+  onStart: vi.fn(),
+  onStopNow: vi.fn(),
+  onGracefulStop: vi.fn(),
+  onEditTasks: vi.fn(),
+  onAddFeature: vi.fn(),
+  onSettings: vi.fn(),
+  onDelete: vi.fn(),
 }
 
-const notCreatedStatus: AgentStatusResponse = {
-  status: 'not_created',
-  container_name: 'zerocoder-test-1',
-  started_at: null,
-  idle_seconds: 0,
-  yolo_mode: false,
-  agent_running: false,
-}
-
-const runningStatus: AgentStatusResponse = {
-  status: 'running',
-  container_name: 'zerocoder-test-1',
-  started_at: '2024-01-01T00:00:00Z',
-  idle_seconds: 100,
-  yolo_mode: false,
-  agent_running: true,
-}
-
-const stoppedStatus: AgentStatusResponse = {
-  status: 'stopped',
-  container_name: 'zerocoder-test-1',
-  started_at: '2024-01-01T00:00:00Z',
-  idle_seconds: 0,
-  yolo_mode: false,
-  agent_running: false,
-}
+// =============================================================================
+// Component Tests
+// =============================================================================
 
 describe('ContainerControl', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  describe('Status Display', () => {
-    it('should display not_created status', async () => {
-      vi.mocked(api.getAgentStatus).mockResolvedValue(notCreatedStatus)
+  describe('Button States', () => {
+    it('should enable start button when agent is not running', () => {
+      render(<ContainerControl {...defaultProps} agentRunning={false} />)
 
-      render(<ContainerControl projectName="test-project" />, {
-        wrapper: createWrapper(),
-      })
-
-      await waitFor(() => {
-        expect(api.getAgentStatus).toHaveBeenCalledWith('test-project')
-      })
+      const startButton = screen.getByRole('button', { name: /start/i })
+      expect(startButton).not.toBeDisabled()
     })
 
-    it('should display running status', async () => {
-      vi.mocked(api.getAgentStatus).mockResolvedValue(runningStatus)
+    it('should disable start button when agent is running', () => {
+      render(<ContainerControl {...defaultProps} agentRunning={true} />)
 
-      render(<ContainerControl projectName="test-project" />, {
-        wrapper: createWrapper(),
-      })
-
-      await waitFor(() => {
-        expect(api.getAgentStatus).toHaveBeenCalled()
-      })
-
-      // Should show running indicator
+      const startButton = screen.getByRole('button', { name: /start/i })
+      expect(startButton).toBeDisabled()
     })
 
-    it('should display stopped status', async () => {
-      vi.mocked(api.getAgentStatus).mockResolvedValue(stoppedStatus)
+    it('should enable stop button when agent is running', () => {
+      render(<ContainerControl {...defaultProps} agentRunning={true} />)
 
-      render(<ContainerControl projectName="test-project" />, {
-        wrapper: createWrapper(),
-      })
-
-      await waitFor(() => {
-        expect(api.getAgentStatus).toHaveBeenCalled()
-      })
-
-      // Should show stopped indicator
-    })
-  })
-
-  describe('Start Button', () => {
-    it('should show start button when not running', async () => {
-      vi.mocked(api.getAgentStatus).mockResolvedValue(stoppedStatus)
-
-      render(<ContainerControl projectName="test-project" />, {
-        wrapper: createWrapper(),
-      })
-
-      await waitFor(() => {
-        expect(api.getAgentStatus).toHaveBeenCalled()
-      })
-
-      // Should have a start button
-      const startButton = screen.queryByRole('button', { name: /start/i })
-      // Button presence depends on implementation
+      const stopButton = screen.getByRole('button', { name: /stop now/i })
+      expect(stopButton).not.toBeDisabled()
     })
 
-    it('should call startAgent when start button clicked', async () => {
-      const user = userEvent.setup()
-      vi.mocked(api.getAgentStatus).mockResolvedValue(stoppedStatus)
-      vi.mocked(api.startAgent).mockResolvedValue({
-        success: true,
-        status: 'running',
-        message: 'Started',
-      })
+    it('should disable stop button when agent is not running', () => {
+      render(<ContainerControl {...defaultProps} agentRunning={false} />)
 
-      render(<ContainerControl projectName="test-project" />, {
-        wrapper: createWrapper(),
-      })
+      const stopButton = screen.getByRole('button', { name: /stop now/i })
+      expect(stopButton).toBeDisabled()
+    })
 
-      await waitFor(() => {
-        expect(api.getAgentStatus).toHaveBeenCalled()
-      })
+    it('should enable graceful stop button when agent is running', () => {
+      render(<ContainerControl {...defaultProps} agentRunning={true} />)
 
-      // Find and click start button if present
-      const startButton = screen.queryByRole('button', { name: /start/i })
-      if (startButton) {
-        await user.click(startButton)
-        expect(api.startAgent).toHaveBeenCalledWith('test-project', expect.anything())
-      }
+      const gracefulStopButton = screen.getByRole('button', { name: /complete & stop/i })
+      expect(gracefulStopButton).not.toBeDisabled()
+    })
+
+    it('should disable graceful stop when already requested', () => {
+      render(
+        <ContainerControl
+          {...defaultProps}
+          agentRunning={true}
+          gracefulStopRequested={true}
+        />
+      )
+
+      const gracefulStopButton = screen.getByRole('button', { name: /stopping/i })
+      expect(gracefulStopButton).toBeDisabled()
     })
   })
 
-  describe('Stop Button', () => {
-    it('should show stop button when running', async () => {
-      vi.mocked(api.getAgentStatus).mockResolvedValue(runningStatus)
+  describe('Button Actions', () => {
+    it('should call onStart when start button clicked', async () => {
+      const user = userEvent.setup()
+      const onStart = vi.fn().mockResolvedValue(undefined)
+      render(<ContainerControl {...defaultProps} onStart={onStart} />)
 
-      render(<ContainerControl projectName="test-project" />, {
-        wrapper: createWrapper(),
-      })
+      const startButton = screen.getByRole('button', { name: /start/i })
+      await user.click(startButton)
 
-      await waitFor(() => {
-        expect(api.getAgentStatus).toHaveBeenCalled()
-      })
-
-      // Should have a stop button
-      const stopButton = screen.queryByRole('button', { name: /stop/i })
-      // Button presence depends on implementation
+      expect(onStart).toHaveBeenCalled()
     })
 
-    it('should call stopAgent when stop button clicked', async () => {
+    it('should call onStopNow when stop button clicked', async () => {
       const user = userEvent.setup()
-      vi.mocked(api.getAgentStatus).mockResolvedValue(runningStatus)
-      vi.mocked(api.stopAgent).mockResolvedValue({
-        success: true,
-        status: 'stopped',
-        message: 'Stopped',
-      })
+      const onStopNow = vi.fn().mockResolvedValue(undefined)
+      render(
+        <ContainerControl
+          {...defaultProps}
+          agentRunning={true}
+          onStopNow={onStopNow}
+        />
+      )
 
-      render(<ContainerControl projectName="test-project" />, {
-        wrapper: createWrapper(),
-      })
+      const stopButton = screen.getByRole('button', { name: /stop now/i })
+      await user.click(stopButton)
 
-      await waitFor(() => {
-        expect(api.getAgentStatus).toHaveBeenCalled()
-      })
+      expect(onStopNow).toHaveBeenCalled()
+    })
 
-      // Find and click stop button if present
-      const stopButton = screen.queryByRole('button', { name: /stop/i })
-      if (stopButton) {
-        await user.click(stopButton)
-        expect(api.stopAgent).toHaveBeenCalledWith('test-project')
-      }
+    it('should call onGracefulStop when graceful stop clicked', async () => {
+      const user = userEvent.setup()
+      const onGracefulStop = vi.fn()
+      render(
+        <ContainerControl
+          {...defaultProps}
+          agentRunning={true}
+          onGracefulStop={onGracefulStop}
+        />
+      )
+
+      const gracefulStopButton = screen.getByRole('button', { name: /complete & stop/i })
+      await user.click(gracefulStopButton)
+
+      expect(onGracefulStop).toHaveBeenCalled()
+    })
+
+    it('should call onEditTasks when edit tasks button clicked', async () => {
+      const user = userEvent.setup()
+      const onEditTasks = vi.fn()
+      render(<ContainerControl {...defaultProps} onEditTasks={onEditTasks} />)
+
+      const editButton = screen.getByRole('button', { name: /edit tasks/i })
+      await user.click(editButton)
+
+      expect(onEditTasks).toHaveBeenCalled()
+    })
+
+    it('should disable edit tasks when agent is running', () => {
+      render(<ContainerControl {...defaultProps} agentRunning={true} />)
+
+      const editButton = screen.getByRole('button', { name: /edit tasks/i })
+      expect(editButton).toBeDisabled()
     })
   })
 
   describe('Loading States', () => {
-    it('should show loading while fetching status', async () => {
-      let resolveStatus: (value: AgentStatusResponse) => void
-      const statusPromise = new Promise<AgentStatusResponse>((resolve) => {
-        resolveStatus = resolve
+    it('should show starting state while action in progress', async () => {
+      const user = userEvent.setup()
+      let resolveStart: () => void
+      const startPromise = new Promise<void>((resolve) => {
+        resolveStart = resolve
       })
-      vi.mocked(api.getAgentStatus).mockReturnValue(statusPromise)
+      const onStart = vi.fn().mockReturnValue(startPromise)
 
-      render(<ContainerControl projectName="test-project" />, {
-        wrapper: createWrapper(),
+      render(<ContainerControl {...defaultProps} onStart={onStart} />)
+
+      const startButton = screen.getByRole('button', { name: /start/i })
+      await user.click(startButton)
+
+      // Button should show loading state
+      await waitFor(() => {
+        expect(screen.getByText(/starting/i)).toBeInTheDocument()
       })
 
-      // Should be in loading state
-      // Resolve to clean up
-      resolveStatus!(stoppedStatus)
+      // Clean up
+      resolveStart!()
     })
 
-    it('should disable buttons while action in progress', async () => {
+    it('should show stopping state while stop action in progress', async () => {
       const user = userEvent.setup()
+      let resolveStop: () => void
+      const stopPromise = new Promise<void>((resolve) => {
+        resolveStop = resolve
+      })
+      const onStopNow = vi.fn().mockReturnValue(stopPromise)
 
-      let resolveStart: (value: { success: boolean; status: string; message: string }) => void
-      const startPromise = new Promise<{ success: boolean; status: string; message: string }>(
-        (resolve) => {
-          resolveStart = resolve
-        }
+      render(
+        <ContainerControl
+          {...defaultProps}
+          agentRunning={true}
+          onStopNow={onStopNow}
+        />
       )
 
-      vi.mocked(api.getAgentStatus).mockResolvedValue(stoppedStatus)
-      vi.mocked(api.startAgent).mockReturnValue(startPromise)
+      const stopButton = screen.getByRole('button', { name: /stop now/i })
+      await user.click(stopButton)
 
-      render(<ContainerControl projectName="test-project" />, {
-        wrapper: createWrapper(),
-      })
-
+      // Button should show loading state
       await waitFor(() => {
-        expect(api.getAgentStatus).toHaveBeenCalled()
+        expect(screen.getByText(/stopping/i)).toBeInTheDocument()
       })
 
-      // Click start if available
-      const startButton = screen.queryByRole('button', { name: /start/i })
-      if (startButton) {
-        await user.click(startButton)
-        // Button should be disabled while loading
-      }
-
-      // Resolve to clean up
-      resolveStart!({ success: true, status: 'running', message: 'Started' })
+      // Clean up
+      resolveStop!()
     })
   })
 
-  describe('Error Handling', () => {
-    it('should handle start error', async () => {
+  describe('Progress Display', () => {
+    it('should render progress component', () => {
+      render(
+        <ContainerControl
+          {...defaultProps}
+          progress={{ passing: 5, total: 10, percentage: 50 }}
+        />
+      )
+
+      // Progress should be visible (CompactProgress component)
+      // The specific rendering depends on CompactProgress implementation
+    })
+  })
+
+  describe('Additional Actions', () => {
+    it('should call onAddFeature when add feature button clicked', async () => {
       const user = userEvent.setup()
-      vi.mocked(api.getAgentStatus).mockResolvedValue(stoppedStatus)
-      vi.mocked(api.startAgent).mockRejectedValue(new Error('Docker not available'))
+      const onAddFeature = vi.fn()
+      render(<ContainerControl {...defaultProps} onAddFeature={onAddFeature} />)
 
-      render(<ContainerControl projectName="test-project" />, {
-        wrapper: createWrapper(),
-      })
+      const addButton = screen.getByRole('button', { name: /add feature/i })
+      await user.click(addButton)
 
-      await waitFor(() => {
-        expect(api.getAgentStatus).toHaveBeenCalled()
-      })
-
-      const startButton = screen.queryByRole('button', { name: /start/i })
-      if (startButton) {
-        await user.click(startButton)
-        // Should handle error gracefully
-      }
+      expect(onAddFeature).toHaveBeenCalled()
     })
 
-    it('should handle status fetch error', async () => {
-      vi.mocked(api.getAgentStatus).mockRejectedValue(new Error('Network error'))
+    it('should hide add feature button when agent is running', () => {
+      render(<ContainerControl {...defaultProps} agentRunning={true} />)
 
-      render(<ContainerControl projectName="test-project" />, {
-        wrapper: createWrapper(),
-      })
-
-      await waitFor(() => {
-        expect(api.getAgentStatus).toHaveBeenCalled()
-      })
-
-      // Should handle error and still render
+      const addButton = screen.queryByRole('button', { name: /add feature/i })
+      expect(addButton).not.toBeInTheDocument()
     })
-  })
 
-  describe('Idle Time Display', () => {
-    it('should display idle time when running', async () => {
-      vi.mocked(api.getAgentStatus).mockResolvedValue(runningStatus)
+    it('should call onSettings when settings button clicked', async () => {
+      const user = userEvent.setup()
+      const onSettings = vi.fn()
+      render(<ContainerControl {...defaultProps} onSettings={onSettings} />)
 
-      render(<ContainerControl projectName="test-project" />, {
-        wrapper: createWrapper(),
-      })
+      const settingsButton = screen.getByTitle(/project settings/i)
+      await user.click(settingsButton)
 
-      await waitFor(() => {
-        expect(api.getAgentStatus).toHaveBeenCalled()
-      })
+      expect(onSettings).toHaveBeenCalled()
+    })
 
-      // Idle seconds (100) might be displayed
+    it('should call onDelete when delete button clicked', async () => {
+      const user = userEvent.setup()
+      const onDelete = vi.fn()
+      render(<ContainerControl {...defaultProps} onDelete={onDelete} />)
+
+      const deleteButton = screen.getByTitle(/delete project/i)
+      await user.click(deleteButton)
+
+      expect(onDelete).toHaveBeenCalled()
     })
   })
 
-  describe('Polling', () => {
-    it('should poll for status updates', async () => {
-      vi.useFakeTimers()
-      vi.mocked(api.getAgentStatus).mockResolvedValue(runningStatus)
+  describe('Remote Button', () => {
+    it('should show remote button when onRemote provided', () => {
+      const onRemote = vi.fn()
+      render(<ContainerControl {...defaultProps} onRemote={onRemote} />)
 
-      render(<ContainerControl projectName="test-project" />, {
-        wrapper: createWrapper(),
-      })
+      const remoteButton = screen.getByRole('button', { name: /remote/i })
+      expect(remoteButton).toBeInTheDocument()
+    })
 
-      await waitFor(() => {
-        expect(api.getAgentStatus).toHaveBeenCalled()
-      })
+    it('should not show remote button when onRemote not provided', () => {
+      render(<ContainerControl {...defaultProps} />)
 
-      // Fast-forward time to trigger polling
-      // Note: Actual polling depends on implementation
+      const remoteButton = screen.queryByRole('button', { name: /remote/i })
+      expect(remoteButton).not.toBeInTheDocument()
+    })
 
-      vi.useRealTimers()
+    it('should call onRemote when remote button clicked', async () => {
+      const user = userEvent.setup()
+      const onRemote = vi.fn()
+      render(<ContainerControl {...defaultProps} onRemote={onRemote} />)
+
+      const remoteButton = screen.getByRole('button', { name: /remote/i })
+      await user.click(remoteButton)
+
+      expect(onRemote).toHaveBeenCalled()
     })
   })
 })
