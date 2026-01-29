@@ -47,8 +47,8 @@ RUN apt-get update && apt-get install -y \
     python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
-# Install pnpm and yarn globally
-RUN npm install -g pnpm yarn
+# Install pnpm globally (yarn is already included in node:22-slim)
+RUN npm install -g pnpm
 
 # Create non-root user (required for Claude Code --dangerously-skip-permissions)
 # Use a different UID to avoid conflicts with existing ubuntu user
