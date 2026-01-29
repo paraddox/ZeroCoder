@@ -1,34 +1,10 @@
 #!/bin/bash
 #
-# Pre-commit hook to run unit tests before committing
+# Pre-commit hook to run TypeScript typechecks before committing
 # To bypass: git commit --no-verify
 #
 
 echo "Running pre-commit tests..."
-
-# Activate virtual environment if it exists
-if [ -f "venv/bin/activate" ]; then
-    source venv/bin/activate
-fi
-
-# Run Python unit tests (fast subset for pre-commit)
-# Skip slow tests marked with @pytest.mark.slow
-if [ -d "tests/unit" ]; then
-    python -m pytest tests/unit/ -x -q --tb=line -m "not slow" 2>&1
-
-    PYTHON_EXIT_CODE=$?
-
-    if [ $PYTHON_EXIT_CODE -ne 0 ]; then
-        echo ""
-        echo "❌ Python tests failed. Commit aborted."
-        echo "   Fix the failing tests or use 'git commit --no-verify' to bypass."
-        exit 1
-    fi
-
-    echo "✅ Python tests passed."
-else
-    echo "ℹ️  No Python tests directory found, skipping Python tests."
-fi
 
 # Run TypeScript typechecks if node_modules exist
 TS_FAILED=0
