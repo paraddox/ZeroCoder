@@ -303,11 +303,11 @@ remoteAgentRouter.post('/machines/:machine_id/daemon/deploy', async (c) => {
     throw new HTTPException(404, { message: 'Remote machine not found' });
   }
 
-  // Get ZeroCoder repo URL from environment or use default
-  const zerocoderRepoUrl = process.env['ZEROCODER_REPO_URL'] ?? 'git@github.com:your-org/zerocoder.git';
+  // Daemon secret for auth (optional)
   const daemonSecret = process.env['DAEMON_SECRET'];
 
-  const result = await deployDaemon(machineId, zerocoderRepoUrl, daemonSecret);
+  // Deploy daemon by SCP-ing pre-built files (no longer needs ZEROCODER_REPO_URL)
+  const result = await deployDaemon(machineId, undefined, daemonSecret);
 
   if (!result.success) {
     throw new HTTPException(500, { message: result.message });

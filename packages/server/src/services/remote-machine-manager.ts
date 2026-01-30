@@ -10,10 +10,14 @@
 
 import { Client as SSHClient, type ClientChannel } from 'ssh2';
 import { Mutex } from 'async-mutex';
-import { homedir } from 'os';
-import { readFileSync } from 'fs';
+import { homedir, tmpdir } from 'os';
+import { readFileSync, existsSync, mkdirSync, cpSync, rmSync, createWriteStream } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { execSync } from 'child_process';
+import { createGzip } from 'zlib';
+import { pack } from 'tar-fs';
+import { pipeline } from 'stream/promises';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -651,13 +655,159 @@ export async function cleanupAllRemoteManagers(): Promise<void> {
 // Daemon Deployment & API Functions
 // =============================================================================
 
+/** Cache for daemon tarball path to avoid rebuilding on every deploy */
+let _cachedDaemonTarball: string | null = null;
+
+/**
+ * Get the path to the daemon package directory.
+ * Works both in development (src/) and production (dist/).
+ */
+function getDaemonPackageDir(): string {
+  // __dirname is packages/server/src/services or packages/server/dist/services
+  // We need packages/daemon
+  return join(__dirname, '../../../daemon');
+}
+
+/**
+ * Create a tarball of the daemon package for deployment.
+ * Includes dist/, package.json, and production node_modules.
+ *
+ * @returns Path to the created tarball
+ */
+async function createDaemonTarball(): Promise<string> {
+  // Return cached tarball if it exists and is recent
+  if (_cachedDaemonTarball && existsSync(_cachedDaemonTarball)) {
+    return _cachedDaemonTarball;
+  }
+
+  const daemonDir = getDaemonPackageDir();
+  const distDir = join(daemonDir, 'dist');
+
+  // Verify daemon is built
+  if (!existsSync(distDir)) {
+    throw new Error(
+      'Daemon not built. Run: pnpm --filter @zerocoder/daemon build'
+    );
+  }
+
+  console.log('[daemon] Creating deployment tarball...');
+
+  // Create temp directory for bundle
+  const bundleDir = join(tmpdir(), `zerocoder-daemon-bundle-${Date.now()}`);
+  const daemonBundleDir = join(bundleDir, 'zerocoder-daemon');
+  mkdirSync(daemonBundleDir, { recursive: true });
+
+  // Copy dist/ directory
+  cpSync(distDir, join(daemonBundleDir, 'dist'), { recursive: true });
+
+  // Copy package.json
+  cpSync(join(daemonDir, 'package.json'), join(daemonBundleDir, 'package.json'));
+
+  // Install production dependencies
+  console.log('[daemon] Installing production dependencies...');
+  execSync('npm install --omit=dev', {
+    cwd: daemonBundleDir,
+    stdio: 'pipe',
+  });
+
+  // Create tarball
+  const tarballPath = join(tmpdir(), `zerocoder-daemon-${Date.now()}.tar.gz`);
+  const tarStream = pack(bundleDir);
+  const gzipStream = createGzip();
+  const outputStream = createWriteStream(tarballPath);
+
+  await pipeline(tarStream, gzipStream, outputStream);
+
+  // Clean up bundle dir
+  rmSync(bundleDir, { recursive: true, force: true });
+
+  // Cache the tarball path
+  _cachedDaemonTarball = tarballPath;
+
+  console.log(`[daemon] Tarball created: ${tarballPath}`);
+  return tarballPath;
+}
+
+/**
+ * Transfer a file to remote machine via SFTP.
+ */
+async function scpFile(
+  client: SSHClient,
+  localPath: string,
+  remotePath: string
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    client.sftp((err, sftp) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+
+      sftp.fastPut(localPath, remotePath, (err) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        resolve();
+      });
+    });
+  });
+}
+
+/**
+ * Execute a command on remote machine via SSH.
+ */
+async function execRemoteCommand(
+  client: SSHClient,
+  command: string,
+  machineName: string,
+  timeout: number = 300000
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    let stdout = '';
+    let stderr = '';
+
+    const timeoutId = setTimeout(() => {
+      reject(new Error(`Command timed out after ${timeout}ms`));
+    }, timeout);
+
+    client.exec(command, (err, stream) => {
+      if (err) {
+        clearTimeout(timeoutId);
+        reject(err);
+        return;
+      }
+
+      stream.on('data', (data: Buffer) => {
+        stdout += data.toString();
+        console.log(`[daemon:${machineName}] ${data.toString().trim()}`);
+      });
+
+      stream.stderr.on('data', (data: Buffer) => {
+        stderr += data.toString();
+        console.log(`[daemon:${machineName}:err] ${data.toString().trim()}`);
+      });
+
+      stream.on('close', (exitCode: number) => {
+        clearTimeout(timeoutId);
+        resolve({ exitCode, stdout, stderr });
+      });
+    });
+  });
+}
+
 /**
  * Deploy the daemon to a remote machine via SSH.
- * Runs the install.sh script to set up all dependencies and start the daemon.
+ * Copies pre-built daemon files directly instead of cloning the repo.
+ *
+ * New deployment flow:
+ * 1. Build daemon tarball locally (if not cached)
+ * 2. SCP tarball to remote machine
+ * 3. Extract tarball, install Node.js (via nvm), start daemon
  */
 export async function deployDaemon(
   machineId: number,
-  zerocoderRepoUrl: string,
+  _zerocoderRepoUrl?: string, // Kept for backwards compatibility, no longer used
   daemonSecret?: string
 ): Promise<{ success: boolean; message: string; port?: number }> {
   const machine = getRemoteMachine(machineId);
@@ -669,98 +819,90 @@ export async function deployDaemon(
 
   console.log(`[daemon] Deploying to ${machine.name} (${machine.host}:${machine.port})...`);
 
+  // Step 1: Create daemon tarball locally
+  let tarballPath: string;
+  try {
+    tarballPath = await createDaemonTarball();
+  } catch (e) {
+    return {
+      success: false,
+      message: `Failed to create daemon tarball: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+
   // Create SSH connection
   const client = new SSHClient();
 
   return new Promise((resolve) => {
     client.on('ready', async () => {
       try {
-        // Read the install script
-        const installScriptPath = join(__dirname, '../../daemon/scripts/install.sh');
-        let installScript: string;
-        try {
-          installScript = readFileSync(installScriptPath, 'utf8');
-        } catch {
-          // Fallback: use inline minimal install script
-          installScript = `
+        console.log(`[daemon:${machine.name}] Uploading daemon tarball...`);
+
+        // Step 2: SCP tarball to remote
+        const remoteTarball = '~/zerocoder-daemon.tar.gz';
+        await scpFile(client, tarballPath, remoteTarball);
+        console.log(`[daemon:${machine.name}] Tarball uploaded`);
+
+        // Step 3: Extract and start daemon
+        const installScript = `
 #!/bin/bash
 set -e
-echo "Installing ZeroCoder daemon..."
 
-# Install nvm if needed
+echo "=== Installing ZeroCoder daemon ==="
+
+# Install nvm if not present
 if [ ! -d "$HOME/.nvm" ]; then
+  echo "Installing nvm..."
   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
 fi
 
+# Load nvm
 export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && \\. "$NVM_DIR/nvm.sh"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
 
-# Install Node.js if needed
+# Install Node.js 24 if needed
 if ! command -v node &> /dev/null || [ $(node --version | sed 's/v//' | cut -d. -f1) -lt 20 ]; then
+  echo "Installing Node.js 24..."
   nvm install 24
   nvm use 24
+  nvm alias default 24
 fi
 
-# Clone/update repo
-DAEMON_DIR="$HOME/zerocoder-daemon"
-if [ -d "$DAEMON_DIR" ]; then
-  cd "$DAEMON_DIR" && git fetch --all && git reset --hard origin/main
-else
-  git clone "${zerocoderRepoUrl}" "$DAEMON_DIR"
-fi
+echo "Node.js version: $(node --version)"
 
-# Install pnpm and build
-cd "$DAEMON_DIR"
-npm install -g pnpm 2>/dev/null || true
-pnpm install
-pnpm --filter @zerocoder/daemon build
+# Stop existing daemon
+echo "Stopping existing daemon..."
+pkill -f "node.*zerocoder-daemon.*index.js" 2>/dev/null || true
+
+# Extract tarball
+echo "Extracting daemon files..."
+cd ~
+rm -rf zerocoder-daemon
+tar -xzf zerocoder-daemon.tar.gz
+rm zerocoder-daemon.tar.gz
 
 # Start daemon
-pkill -f "node.*daemon.*index.js" 2>/dev/null || true
-cd "$DAEMON_DIR/packages/daemon"
+echo "Starting daemon on port ${port}..."
+cd ~/zerocoder-daemon
 export DAEMON_PORT=${port}
 ${daemonSecret ? `export DAEMON_SECRET="${daemonSecret}"` : ''}
-nohup node dist/index.js > "$HOME/zerocoder-daemon.log" 2>&1 &
+nohup node dist/index.js > ~/zerocoder-daemon.log 2>&1 &
 sleep 2
-echo "Daemon started on port ${port}"
+
+# Verify daemon started
+if pgrep -f "node.*zerocoder-daemon.*index.js" > /dev/null; then
+  echo "=== Daemon started successfully on port ${port} ==="
+else
+  echo "ERROR: Daemon failed to start. Check ~/zerocoder-daemon.log"
+  exit 1
+fi
 `;
-        }
 
-        // Execute install script on remote
-        const execResult = await new Promise<{ exitCode: number; stdout: string; stderr: string }>((res, rej) => {
-          let stdout = '';
-          let stderr = '';
-
-          client.exec(`bash -s`, { env: { ZEROCODER_REPO: zerocoderRepoUrl, DAEMON_PORT: String(port) } }, (err, stream) => {
-            if (err) {
-              rej(err);
-              return;
-            }
-
-            stream.on('data', (data: Buffer) => {
-              stdout += data.toString();
-              console.log(`[daemon:${machine.name}] ${data.toString().trim()}`);
-            });
-
-            stream.stderr.on('data', (data: Buffer) => {
-              stderr += data.toString();
-              console.log(`[daemon:${machine.name}:err] ${data.toString().trim()}`);
-            });
-
-            stream.on('close', (exitCode: number) => {
-              res({ exitCode, stdout, stderr });
-            });
-
-            // Write install script to stdin
-            stream.write(installScript);
-            stream.end();
-          });
-        });
+        const result = await execRemoteCommand(client, `bash -s <<'EOFSCRIPT'\n${installScript}\nEOFSCRIPT`, machine.name);
 
         client.end();
 
-        if (execResult.exitCode === 0) {
-          // Update machine record with daemon info
+        if (result.exitCode === 0) {
           updateRemoteMachine(machineId, {
             daemonPort: port,
             daemonLastSeen: new Date().toISOString(),
@@ -774,7 +916,7 @@ echo "Daemon started on port ${port}"
         } else {
           resolve({
             success: false,
-            message: `Deployment failed: ${execResult.stderr.trim() || execResult.stdout.trim()}`,
+            message: `Deployment failed: ${result.stderr.trim() || result.stdout.trim()}`,
           });
         }
       } catch (e) {
@@ -816,10 +958,19 @@ echo "Daemon started on port ${port}"
       username: machine.username,
       privateKey,
       readyTimeout: 30000,
-      // Auto-accept host keys (equivalent to StrictHostKeyChecking=no)
       hostVerifier: () => true,
     });
   });
+}
+
+/**
+ * Clear the cached daemon tarball (call when daemon code changes).
+ */
+export function clearDaemonTarballCache(): void {
+  if (_cachedDaemonTarball && existsSync(_cachedDaemonTarball)) {
+    rmSync(_cachedDaemonTarball, { force: true });
+  }
+  _cachedDaemonTarball = null;
 }
 
 /**

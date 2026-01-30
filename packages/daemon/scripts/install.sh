@@ -3,14 +3,23 @@
 # ZeroCoder Daemon Installation Script
 # =====================================
 #
-# Installs all dependencies and sets up the daemon on a remote machine.
-# Run with: curl -fsSL <url>/install.sh | bash
+# This script has two modes:
+#
+# 1. TARBALL MODE (default for automated deployments):
+#    - Expects pre-built daemon files to be uploaded as tarball
+#    - Only installs Node.js and extracts files
+#    - Fastest deployment (~30 seconds)
+#
+# 2. CLONE MODE (for manual setup or debugging):
+#    - Clones the ZeroCoder repo and builds daemon locally
+#    - Requires git access and build tools
+#    - Run with: ./install.sh clone
 #
 # What this script does:
 # 1. Install Node.js via nvm (if not installed)
 # 2. Install Rust and beads CLI (if not installed)
 # 3. Install Claude Code CLI (if not installed)
-# 4. Clone/update ZeroCoder repo and build daemon
+# 4. Extract tarball OR clone/build repo
 # 5. Start the daemon
 
 set -e
@@ -142,11 +151,45 @@ install_claude_code() {
 }
 
 # =============================================================================
-# Step 4: Clone/update ZeroCoder and build daemon
+# Step 4a: Extract tarball (default mode)
 # =============================================================================
 
-install_daemon() {
-    log_info "Setting up ZeroCoder daemon..."
+extract_daemon() {
+    log_info "Setting up daemon from tarball..."
+
+    # Ensure we're using the right Node.js
+    export NVM_DIR="$HOME/.nvm"
+    # shellcheck source=/dev/null
+    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
+    # Check for tarball
+    local tarball="$HOME/zerocoder-daemon.tar.gz"
+    if [ ! -f "$tarball" ]; then
+        log_error "Tarball not found at $tarball"
+        log_error "For automated deployment, upload the tarball first."
+        log_error "For manual setup, use: $0 clone"
+        exit 1
+    fi
+
+    # Stop existing daemon
+    stop_daemon
+
+    # Extract tarball
+    log_info "Extracting daemon files..."
+    cd "$HOME"
+    rm -rf zerocoder-daemon
+    tar -xzf "$tarball"
+    rm "$tarball"
+
+    log_info "Daemon extracted successfully"
+}
+
+# =============================================================================
+# Step 4b: Clone/update ZeroCoder and build daemon (clone mode)
+# =============================================================================
+
+install_daemon_from_repo() {
+    log_info "Setting up ZeroCoder daemon from repo..."
 
     # Ensure we're using the right Node.js
     export NVM_DIR="$HOME/.nvm"
@@ -187,10 +230,10 @@ install_daemon() {
 start_daemon() {
     log_info "Starting daemon on port $DAEMON_PORT..."
 
-    cd "$DAEMON_DIR/packages/daemon"
+    cd "$DAEMON_DIR"
 
     # Check if daemon is already running
-    if pgrep -f "node.*daemon.*index.js" > /dev/null; then
+    if pgrep -f "node.*zerocoder-daemon.*index.js" > /dev/null; then
         log_warn "Daemon appears to be already running"
         return 0
     fi
@@ -238,7 +281,7 @@ stop_daemon() {
     fi
 
     # Also kill any orphaned processes
-    pkill -f "node.*daemon.*index.js" 2>/dev/null || true
+    pkill -f "node.*zerocoder-daemon.*index.js" 2>/dev/null || true
 }
 
 # =============================================================================
@@ -250,11 +293,22 @@ main() {
 
     case "$action" in
         install)
-            log_info "=== ZeroCoder Daemon Installation ==="
+            # Default mode: extract tarball (for automated deployment)
+            log_info "=== ZeroCoder Daemon Installation (Tarball Mode) ==="
             install_nodejs
             install_beads
             install_claude_code
-            install_daemon
+            extract_daemon
+            start_daemon
+            log_info "=== Installation complete ==="
+            ;;
+        clone)
+            # Manual mode: clone from repo and build
+            log_info "=== ZeroCoder Daemon Installation (Clone Mode) ==="
+            install_nodejs
+            install_beads
+            install_claude_code
+            install_daemon_from_repo
             start_daemon
             log_info "=== Installation complete ==="
             ;;
@@ -271,11 +325,19 @@ main() {
             ;;
         update)
             stop_daemon
-            install_daemon
+            install_daemon_from_repo
             start_daemon
             ;;
         *)
-            echo "Usage: $0 {install|start|stop|restart|update}"
+            echo "Usage: $0 {install|clone|start|stop|restart|update}"
+            echo ""
+            echo "Modes:"
+            echo "  install - Extract pre-uploaded tarball and start (default)"
+            echo "  clone   - Clone from git repo, build, and start (manual setup)"
+            echo "  start   - Start the daemon"
+            echo "  stop    - Stop the daemon"
+            echo "  restart - Restart the daemon"
+            echo "  update  - Update from git and restart"
             exit 1
             ;;
     esac

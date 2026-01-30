@@ -392,23 +392,17 @@ remoteMachinesRouter.post('/', async (c) => {
   }
 
   // Auto-deploy daemon after machine add
+  // Auto-deploy daemon by SCP-ing pre-built files (no longer needs ZEROCODER_REPO_URL)
   let daemonDeployed = false;
   let daemonError: string | null = null;
   try {
-    // Use the ZeroCoder repo URL from environment (should be SSH URL for auth)
-    const zerocoderRepoUrl = process.env['ZEROCODER_REPO_URL'];
-    if (!zerocoderRepoUrl) {
-      daemonError = 'ZEROCODER_REPO_URL not set in environment';
-      console.warn('Cannot deploy daemon: ZEROCODER_REPO_URL not configured');
+    const deployResult = await deployDaemon(machineId);
+    daemonDeployed = deployResult.success;
+    if (!deployResult.success) {
+      daemonError = deployResult.message;
+      console.warn(`Failed to auto-deploy daemon to ${request.name}: ${deployResult.message}`);
     } else {
-      const deployResult = await deployDaemon(machineId, zerocoderRepoUrl);
-      daemonDeployed = deployResult.success;
-      if (!deployResult.success) {
-        daemonError = deployResult.message;
-        console.warn(`Failed to auto-deploy daemon to ${request.name}: ${deployResult.message}`);
-      } else {
-        console.log(`Daemon deployed to ${request.name} on port ${deployResult.port}`);
-      }
+      console.log(`Daemon deployed to ${request.name} on port ${deployResult.port}`);
     }
   } catch (e) {
     daemonError = e instanceof Error ? e.message : String(e);
