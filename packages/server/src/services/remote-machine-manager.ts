@@ -27,6 +27,8 @@ import {
   updateRemoteAgent,
   updateRemoteMachine,
   getRemoteAgent,
+  listRemoteMachines,
+  getAllActiveRemoteAgents,
   type RemoteMachineInfo,
 } from '../db/crud.js';
 
@@ -49,6 +51,11 @@ export interface DaemonStatus {
 export interface DaemonHealthResponse {
   healthy: boolean;
   timestamp: string;
+}
+
+export interface DaemonVersionResponse {
+  version: string;
+  name: string;
 }
 
 export interface DaemonWorkRequest {
@@ -755,6 +762,90 @@ async function scpFile(
 }
 
 /**
+ * Upload file content to remote machine via SFTP.
+ * Creates parent directories as needed.
+ */
+async function uploadFileContent(
+  client: SSHClient,
+  content: string,
+  remotePath: string
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    client.sftp((err, sftp) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+
+      // Ensure .ssh directory exists (mode 700)
+      sftp.mkdir('.ssh', { mode: 0o700 }, () => {
+        // Ignore error if directory already exists
+        const writeStream = sftp.createWriteStream(remotePath, { mode: 0o600 });
+        writeStream.on('error', reject);
+        writeStream.on('close', () => resolve());
+        writeStream.end(content);
+      });
+    });
+  });
+}
+
+/**
+ * Setup git SSH key on remote machine.
+ * Copies the configured gitSshKeyPath to the remote and configures git to use it.
+ */
+async function setupGitSshKey(
+  client: SSHClient,
+  machine: RemoteMachineInfo
+): Promise<void> {
+  if (!machine.gitSshKeyPath) {
+    console.log(`[daemon:${machine.name}] No gitSshKeyPath configured, skipping SSH key setup`);
+    return;
+  }
+
+  // Read SSH key from local machine
+  const keyPath = machine.gitSshKeyPath.replace(/^~/, homedir());
+  let sshKeyContent: string;
+  try {
+    sshKeyContent = readFileSync(keyPath, 'utf8');
+  } catch (e) {
+    console.warn(`[daemon:${machine.name}] Cannot read git SSH key from ${keyPath}: ${e}`);
+    return;
+  }
+
+  console.log(`[daemon:${machine.name}] Setting up git SSH key...`);
+
+  // Upload SSH key via SFTP
+  const remoteKeyPath = '.ssh/zerocoder-git';
+  await uploadFileContent(client, sshKeyContent, remoteKeyPath);
+
+  // Configure SSH and git
+  const setupScript = `
+    # Set key permissions
+    chmod 600 ~/.ssh/zerocoder-git
+
+    # Add common git hosts to known_hosts
+    ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+    ssh-keyscan -t ed25519 gitlab.com >> ~/.ssh/known_hosts 2>/dev/null
+    ssh-keyscan -t ed25519 bitbucket.org >> ~/.ssh/known_hosts 2>/dev/null
+
+    # Configure SSH to use this key for git hosts
+    cat >> ~/.ssh/config << 'SSHCONFIG'
+
+# ZeroCoder git SSH key
+Host github.com gitlab.com bitbucket.org
+  IdentityFile ~/.ssh/zerocoder-git
+  IdentitiesOnly yes
+  StrictHostKeyChecking no
+SSHCONFIG
+
+    echo "Git SSH key configured"
+  `;
+
+  await execRemoteCommand(client, setupScript, machine.name);
+  console.log(`[daemon:${machine.name}] Git SSH key setup complete`);
+}
+
+/**
  * Execute a command on remote machine via SSH.
  */
 async function execRemoteCommand(
@@ -836,6 +927,9 @@ export async function deployDaemon(
   return new Promise((resolve) => {
     client.on('ready', async () => {
       try {
+        // Setup git SSH key first (if configured)
+        await setupGitSshKey(client, machine);
+
         console.log(`[daemon:${machine.name}] Uploading daemon tarball...`);
 
         // Step 2: SCP tarball to remote
@@ -1163,4 +1257,139 @@ export async function shutdownDaemon(machineId: number): Promise<{ success: bool
     success: false,
     message: result.error ?? 'Unknown error',
   };
+}
+
+// =============================================================================
+// Remote Machine Checkup Functions
+// =============================================================================
+
+/**
+ * Get local daemon version from package.json.
+ */
+function getLocalDaemonVersion(): string {
+  const daemonPkgPath = join(getDaemonPackageDir(), 'package.json');
+  try {
+    const pkg = JSON.parse(readFileSync(daemonPkgPath, 'utf-8'));
+    return pkg.version ?? '0.0.0';
+  } catch {
+    console.warn('[checkup] Could not read daemon package.json, defaulting to 0.0.0');
+    return '0.0.0';
+  }
+}
+
+/**
+ * Get daemon version from a remote machine.
+ */
+export async function getDaemonVersion(machineId: number): Promise<string | null> {
+  const result = await callDaemonApi<DaemonVersionResponse>(
+    machineId,
+    'GET',
+    '/version',
+    undefined,
+    5000
+  );
+  return result.success ? result.data?.version ?? null : null;
+}
+
+/**
+ * Check if a remote machine is idle (safe to update).
+ * A machine is idle when:
+ * - Daemon status is 'idle' or daemon is unreachable
+ * - No current_feature in progress
+ * - No remote agents with status 'running' on that machine
+ */
+export async function isMachineIdle(machineId: number): Promise<boolean> {
+  // Check daemon status
+  const status = await getDaemonStatus(machineId);
+  if (status) {
+    // Daemon is reachable - check if it's busy
+    if (status.status !== 'idle') {
+      return false; // Daemon is busy
+    }
+    if (status.current_feature) {
+      return false; // Feature in progress
+    }
+  }
+  // If daemon is unreachable, we still consider it idle (can be updated)
+
+  // Check for running agents on this machine
+  const agents = getAllActiveRemoteAgents();
+  const hasRunningAgent = agents.some(
+    (a) => a.machineId === machineId && a.status === 'running'
+  );
+
+  return !hasRunningAgent;
+}
+
+export interface CheckupResult {
+  checked: string[];
+  updated: string[];
+  skipped: string[];
+  errors: string[];
+}
+
+/**
+ * Run checkup on all remote machines at server startup.
+ * Only updates idle machines. Checks:
+ * - Daemon version (updates if outdated)
+ * - Git SSH key (deployed during deployDaemon)
+ * - Prerequisites (installed during deployDaemon)
+ */
+export async function checkupRemoteMachines(): Promise<CheckupResult> {
+  const machines = listRemoteMachines();
+  const results: CheckupResult = {
+    checked: [],
+    updated: [],
+    skipped: [],
+    errors: [],
+  };
+
+  if (machines.length === 0) {
+    console.log('[checkup] No remote machines configured');
+    return results;
+  }
+
+  const localVersion = getLocalDaemonVersion();
+  console.log(`[checkup] Starting remote machine checkup (${machines.length} machines, local daemon v${localVersion})...`);
+
+  // Process machines sequentially to avoid overwhelming network
+  for (const machine of machines) {
+    results.checked.push(machine.name);
+
+    try {
+      // Check if machine is idle
+      const idle = await isMachineIdle(machine.id);
+      if (!idle) {
+        console.log(`[checkup:${machine.name}] Busy, skipping update`);
+        results.skipped.push(machine.name);
+        continue;
+      }
+
+      // Check daemon version
+      const remoteVersion = await getDaemonVersion(machine.id);
+      const needsUpdate = !remoteVersion || remoteVersion !== localVersion;
+
+      if (needsUpdate) {
+        console.log(`[checkup:${machine.name}] Updating daemon (${remoteVersion ?? 'not installed'} → ${localVersion})`);
+        const result = await deployDaemon(machine.id);
+        if (result.success) {
+          updateRemoteMachine(machine.id, { daemonVersion: localVersion });
+          results.updated.push(machine.name);
+          console.log(`[checkup:${machine.name}] Update complete`);
+        } else {
+          results.errors.push(`${machine.name}: ${result.message}`);
+          console.error(`[checkup:${machine.name}] Update failed: ${result.message}`);
+        }
+      } else {
+        console.log(`[checkup:${machine.name}] Up to date (v${remoteVersion})`);
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`[checkup:${machine.name}] Error: ${msg}`);
+      results.errors.push(`${machine.name}: ${msg}`);
+    }
+  }
+
+  console.log(`[checkup] Complete. Updated: ${results.updated.length}, Skipped: ${results.skipped.length}, Errors: ${results.errors.length}`);
+  return results;
 }

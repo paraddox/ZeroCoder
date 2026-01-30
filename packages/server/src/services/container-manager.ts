@@ -2201,6 +2201,13 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 export function initializeBackgroundMonitors(): void {
   _shutdownController = new AbortController();
 
+  // Run remote machine checkup at startup (non-blocking)
+  import('./remote-machine-manager.js')
+    .then(({ checkupRemoteMachines }) => checkupRemoteMachines())
+    .catch((err) => {
+      console.error('Remote machine checkup failed:', err);
+    });
+
   // Start both monitors (they run as background promises)
   startAgentHealthMonitor().catch((err) => {
     if (err?.name !== 'AbortError') {

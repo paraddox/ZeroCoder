@@ -89,6 +89,35 @@ controlRouter.get('/health', async (c) => {
 });
 
 /**
+ * GET /version
+ *
+ * Return daemon version from package.json.
+ */
+controlRouter.get('/version', async (c) => {
+  // Read package.json version using fs
+  const { readFileSync } = await import('fs');
+  const { dirname, join } = await import('path');
+  const { fileURLToPath } = await import('url');
+
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+  const pkgPath = join(__dirname, '../../package.json');
+
+  try {
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+    return c.json({
+      version: pkg.version ?? '0.0.0',
+      name: pkg.name ?? '@zerocoder/daemon',
+    });
+  } catch {
+    return c.json({
+      version: '0.0.0',
+      name: '@zerocoder/daemon',
+    });
+  }
+});
+
+/**
  * POST /shutdown
  *
  * Graceful daemon shutdown.

@@ -986,6 +986,7 @@ export interface RemoteMachineInfo {
   daemonPort: number | null;
   daemonPid: number | null;
   daemonLastSeen: string | null;
+  daemonVersion: string | null;
 }
 
 /**
@@ -1048,6 +1049,7 @@ export function listRemoteMachines(): RemoteMachineInfo[] {
     daemonPort: m.daemonPort,
     daemonPid: m.daemonPid,
     daemonLastSeen: m.daemonLastSeen,
+    daemonVersion: m.daemonVersion,
   }));
 }
 
@@ -1073,6 +1075,7 @@ export function getRemoteMachine(machineId: number): RemoteMachineInfo | null {
     daemonPort: m.daemonPort,
     daemonPid: m.daemonPid,
     daemonLastSeen: m.daemonLastSeen,
+    daemonVersion: m.daemonVersion,
   };
 }
 
@@ -1098,6 +1101,7 @@ export function updateRemoteMachine(
     daemonPort?: number;
     daemonPid?: number | null;
     daemonLastSeen?: string;
+    daemonVersion?: string | null;
   }
 ): boolean {
   const setValues: Record<string, unknown> = {};
@@ -1114,6 +1118,9 @@ export function updateRemoteMachine(
   }
   if (updates.daemonLastSeen !== undefined) {
     setValues['daemonLastSeen'] = updates.daemonLastSeen;
+  }
+  if (updates.daemonVersion !== undefined) {
+    setValues['daemonVersion'] = updates.daemonVersion;
   }
 
   if (Object.keys(setValues).length === 0) {

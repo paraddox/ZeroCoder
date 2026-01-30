@@ -124,7 +124,8 @@ beforeAll(() => {
       created_at TEXT NOT NULL,
       daemon_port INTEGER DEFAULT 9999,
       daemon_pid INTEGER,
-      daemon_last_seen TEXT
+      daemon_last_seen TEXT,
+      daemon_version TEXT
     );
 
     CREATE TABLE IF NOT EXISTS remote_agents (

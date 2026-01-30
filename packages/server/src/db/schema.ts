@@ -169,6 +169,7 @@ export const remoteMachines = sqliteTable('remote_machines', {
   daemonPort: integer('daemon_port').default(9999),
   daemonPid: integer('daemon_pid'),
   daemonLastSeen: text('daemon_last_seen'), // ISO timestamp
+  daemonVersion: text('daemon_version', { length: 50 }), // Version of deployed daemon
 });
 
 export const remoteMachinesRelations = relations(remoteMachines, ({ many }) => ({
