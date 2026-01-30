@@ -27,8 +27,10 @@ vi.mock('node:fs', () => ({
 
 // Mock child_process for beads CLI
 const mockExecSync = vi.fn();
+const mockExec = vi.fn();
 vi.mock('node:child_process', () => ({
   execSync: (...args: unknown[]) => mockExecSync(...args),
+  exec: (...args: unknown[]) => mockExec(...args),
 }));
 
 // Mock crud module
@@ -41,10 +43,31 @@ const mockCrudModule = {
 vi.mock('../../db/crud.js', () => mockCrudModule);
 
 // =============================================================================
+// Test Data Types
+// =============================================================================
+
+interface MockTask {
+  id: string;
+  title: string;
+  status: string;
+  priority: number;
+  labels: string[];
+  description: string;
+}
+
+// Mock project-sync service
+const mockProjectSyncModule = {
+  getProjectTasks: vi.fn((): MockTask[] => []),
+  getInProgressFeatureIds: vi.fn((): Set<string> => new Set<string>()),
+};
+
+vi.mock('../../services/project-sync.js', () => mockProjectSyncModule);
+
+// =============================================================================
 // Test Data
 // =============================================================================
 
-const sampleTasks = [
+const sampleTasks: MockTask[] = [
   {
     id: 'feat-1',
     title: 'Add user authentication',
@@ -106,6 +129,8 @@ beforeEach(() => {
   mockCrudModule.getProjectPath.mockReturnValue('/test/projects/my-project');
   mockCrudModule.getProjectGitUrl.mockReturnValue('https://github.com/test/repo');
   mockCrudModule.listProjectContainers.mockReturnValue([]);
+  mockProjectSyncModule.getProjectTasks.mockReturnValue([]);
+  mockProjectSyncModule.getInProgressFeatureIds.mockReturnValue(new Set<string>());
 });
 
 // =============================================================================
@@ -114,8 +139,14 @@ beforeEach(() => {
 
 /**
  * Setup mock for beads list command.
+ * Also sets up project-sync mock since features list uses getProjectTasks.
  */
-function setupBeadsListMock(tasks: typeof sampleTasks): void {
+function setupBeadsListMock(tasks: MockTask[], inProgressIds?: Set<string>): void {
+  // Mock the project-sync service (used by GET /features endpoint)
+  mockProjectSyncModule.getProjectTasks.mockReturnValue(tasks);
+  mockProjectSyncModule.getInProgressFeatureIds.mockReturnValue(inProgressIds || new Set<string>());
+
+  // Also mock execSync for other beads operations (create, update, delete, etc.)
   mockExecSync.mockImplementation((cmd: string) => {
     if (cmd.includes('bd') && cmd.includes('list')) {
       return Buffer.from(JSON.stringify(tasks));
@@ -197,10 +228,9 @@ describe('GET /api/projects/:name/features', () => {
   });
 
   it('marks features being worked on by containers as in_progress', async () => {
-    mockCrudModule.listProjectContainers.mockReturnValue([
-      { currentFeature: 'feat-1' } as never,
-    ]);
-    setupBeadsListMock([{ ...sampleTasks[0]!, status: 'open' }]);
+    // Set up in-progress feature IDs (from containers and/or remote agents)
+    const inProgressIds = new Set<string>(['feat-1']);
+    setupBeadsListMock([{ ...sampleTasks[0]!, status: 'open' }], inProgressIds);
 
     const res = await testRequest(app, 'GET', '/api/projects/my-project/features');
 

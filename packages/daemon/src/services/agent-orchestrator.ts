@@ -275,6 +275,14 @@ async function orchestrationLoop(projectPath: string): Promise<void> {
     // Run the agent
     const shouldContinue = await runAgentSession(nextAgent, projectPath);
 
+    // Sync beads changes to git remote after each session
+    try {
+      await execAsync('bd sync', { cwd: projectPath, timeout: 30000 });
+      log.info('Beads synced to remote');
+    } catch (err) {
+      log.warn('Failed to sync beads', { error: err instanceof Error ? err.message : String(err) });
+    }
+
     if (!shouldContinue) {
       log.info('Agent interrupted, stopping');
       break;

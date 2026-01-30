@@ -21,8 +21,11 @@ import {
 import {
   getProjectPath,
   getProjectGitUrl,
-  listProjectContainers,
 } from '../db/crud.js';
+import {
+  getProjectTasks,
+  getInProgressFeatureIds,
+} from '../services/project-sync.js';
 
 // =============================================================================
 // Types
@@ -180,24 +183,6 @@ function beadsTaskToFeature(task: BeadsTask): FeatureResponse {
   };
 }
 
-/**
- * Get feature IDs currently being worked on by containers.
- */
-function getInProgressFeaturesFromContainers(projectName: string): Set<string> {
-  try {
-    const containers = listProjectContainers(projectName);
-    const inProgress = new Set<string>();
-    for (const c of containers) {
-      if (c.currentFeature) {
-        inProgress.add(c.currentFeature);
-      }
-    }
-    return inProgress;
-  } catch {
-    return new Set();
-  }
-}
-
 // =============================================================================
 // Route Handlers
 // =============================================================================
@@ -215,12 +200,12 @@ featuresRouter.get('/:name/features', async (c) => {
     throw new HTTPException(404, { message: 'Project directory not found' });
   }
 
-  // Get features from beads
-  const tasks = getBeadsTasks(projectDir);
+  // Get features from beads (syncs from remote if project has remote agents)
+  const tasks = getProjectTasks(projectName);
   const features = tasks.map(beadsTaskToFeature);
 
-  // Get features currently being worked on from containers
-  const inProgressIds = getInProgressFeaturesFromContainers(projectName);
+  // Get features currently being worked on (containers + remote agents)
+  const inProgressIds = getInProgressFeatureIds(projectName);
 
   const pending: FeatureResponse[] = [];
   const inProgress: FeatureResponse[] = [];

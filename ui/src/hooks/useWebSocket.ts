@@ -3,7 +3,8 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import type { WSMessage, AgentStatus } from '@zerocoder/shared'
+// TODO: Re-enable WSMessage import when WebSocket endpoint is implemented
+import type { WSMessage as _WSMessage, AgentStatus } from '@zerocoder/shared'
 
 export interface LogEntry {
   line: string
@@ -33,7 +34,8 @@ interface WebSocketState {
   containerUpdateCounter: number // Increments when container_update received
 }
 
-const MAX_LOGS = 1000 // Keep last 1000 log lines (full-screen viewer needs more capacity)
+// MAX_LOGS = 1000 - Keep last 1000 log lines (full-screen viewer needs more capacity)
+// Defined in commented WebSocket code below
 
 export function useWebSocket(projectName: string | null) {
   const [state, setState] = useState<WebSocketState>({
@@ -56,9 +58,10 @@ export function useWebSocket(projectName: string | null) {
 
   const connect = useCallback(() => {
     // WebSocket server not implemented yet - disable connection attempts
-    // TODO: Remove this early return when WebSocket endpoint is implemented
+    // TODO: Remove this early return and uncomment the code below when WebSocket endpoint is implemented
     return
 
+    /*
     if (!projectName || !shouldReconnectRef.current) return
 
     // Build WebSocket URL
@@ -197,6 +200,7 @@ export function useWebSocket(projectName: string | null) {
     } catch {
       // Failed to connect, will retry via onclose
     }
+    */
   }, [projectName])
 
   // Send ping to keep connection alive
