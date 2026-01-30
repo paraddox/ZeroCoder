@@ -2,15 +2,10 @@
  * WebSocket Module
  * ================
  *
- * Exports WebSocket connection management, handlers, and callback system.
+ * Exports callback system for container output/status streaming.
+ * Note: WebSocket endpoint handlers are not yet implemented.
  */
 
-export { ConnectionManager, manager, validateProjectName } from './connection-manager.js';
-export {
-  handleProjectWebSocket,
-  extractProjectName,
-  isProjectWebSocketRequest,
-} from './project-socket.js';
 export {
   CallbackManager,
   createContainerCallbackManager,
