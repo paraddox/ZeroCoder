@@ -879,9 +879,16 @@ async function execRemoteCommand(
         console.log(`[daemon:${machineName}:err] ${data.toString().trim()}`);
       });
 
-      stream.on('close', (exitCode: number) => {
+      // Listen to 'exit' event for the exit code (ssh2 provides it here, not in 'close')
+      let exitCodeValue: number | null = null;
+      stream.on('exit', (code: number | null) => {
+        exitCodeValue = code;
+      });
+
+      stream.on('close', () => {
         clearTimeout(timeoutId);
-        resolve({ exitCode, stdout, stderr });
+        // Use 0 as default if exit code was null (shouldn't happen but be safe)
+        resolve({ exitCode: exitCodeValue ?? 0, stdout, stderr });
       });
     });
   });
@@ -996,6 +1003,7 @@ sleep 2
 # Verify daemon started
 if pgrep -f "zerocoder-daemon/dist/index.js" > /dev/null; then
   echo "=== Daemon started successfully on port ${port} ==="
+  exit 0
 else
   echo "ERROR: Daemon failed to start. Check ~/zerocoder-daemon.log"
   exit 1
