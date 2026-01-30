@@ -255,36 +255,58 @@ remoteAgentRouter.post('/:project_name/remote-agent/daemon/start', async (c) => 
 
 /**
  * POST /api/projects/:project_name/remote-agent/daemon/stop
- * Stop daemon-based agent (hard stop).
+ * Stop daemon-based agents for a project (hard stop).
+ * Stops all daemons on machines that have agents for this project.
  */
 remoteAgentRouter.post('/:project_name/remote-agent/daemon/stop', async (c) => {
-  // projectName intentionally unused - endpoint is per-machine, not per-project
-  const request = await parseBody(c, RemoteAgentStartRequestSchema);
+  const projectName = c.req.param('project_name');
 
-  const machine = getRemoteMachine(request.machine_id);
-  if (!machine) {
-    throw new HTTPException(404, { message: 'Remote machine not found' });
+  // Get all remote agents for this project
+  const agents = getRemoteAgentsForProject(projectName);
+  if (agents.length === 0) {
+    throw new HTTPException(404, { message: 'No remote agents found for project' });
   }
 
-  const result = await stopDaemon(request.machine_id, true);
-  return c.json(result);
+  // Stop daemon on each machine that has an agent for this project
+  const results = [];
+  const stoppedMachines = new Set<number>();
+  for (const agent of agents) {
+    if (!stoppedMachines.has(agent.machineId)) {
+      const result = await stopDaemon(agent.machineId, true);
+      results.push({ machine_id: agent.machineId, ...result });
+      stoppedMachines.add(agent.machineId);
+    }
+  }
+
+  return c.json({ success: true, results });
 });
 
 /**
  * POST /api/projects/:project_name/remote-agent/daemon/graceful-stop
- * Graceful stop daemon-based agent.
+ * Graceful stop daemon-based agents for a project.
+ * Gracefully stops all daemons on machines that have agents for this project.
  */
 remoteAgentRouter.post('/:project_name/remote-agent/daemon/graceful-stop', async (c) => {
-  // projectName intentionally unused - endpoint is per-machine, not per-project
-  const request = await parseBody(c, RemoteAgentStartRequestSchema);
+  const projectName = c.req.param('project_name');
 
-  const machine = getRemoteMachine(request.machine_id);
-  if (!machine) {
-    throw new HTTPException(404, { message: 'Remote machine not found' });
+  // Get all remote agents for this project
+  const agents = getRemoteAgentsForProject(projectName);
+  if (agents.length === 0) {
+    throw new HTTPException(404, { message: 'No remote agents found for project' });
   }
 
-  const result = await stopDaemon(request.machine_id, false);
-  return c.json(result);
+  // Graceful stop daemon on each machine
+  const results = [];
+  const stoppedMachines = new Set<number>();
+  for (const agent of agents) {
+    if (!stoppedMachines.has(agent.machineId)) {
+      const result = await stopDaemon(agent.machineId, false);
+      results.push({ machine_id: agent.machineId, ...result });
+      stoppedMachines.add(agent.machineId);
+    }
+  }
+
+  return c.json({ success: true, results });
 });
 
 // =============================================================================
