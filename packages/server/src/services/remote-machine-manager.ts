@@ -968,7 +968,7 @@ echo "Node.js version: $(node --version)"
 
 # Stop existing daemon
 echo "Stopping existing daemon..."
-pkill -f "node.*zerocoder-daemon.*index.js" 2>/dev/null || true
+pkill -f "zerocoder-daemon/dist/index.js" 2>/dev/null || true
 
 # Extract tarball
 echo "Extracting daemon files..."
@@ -982,11 +982,15 @@ echo "Starting daemon on port ${port}..."
 cd ~/zerocoder-daemon
 export DAEMON_PORT=${port}
 ${daemonSecret ? `export DAEMON_SECRET="${daemonSecret}"` : ''}
-nohup node dist/index.js > ~/zerocoder-daemon.log 2>&1 &
+# Get full path to node since nohup won't have nvm in PATH
+NODE_PATH=$(which node)
+echo "Using node at: $NODE_PATH"
+# Use full path to index.js so pgrep can find it
+nohup $NODE_PATH ~/zerocoder-daemon/dist/index.js > ~/zerocoder-daemon.log 2>&1 &
 sleep 2
 
 # Verify daemon started
-if pgrep -f "node.*zerocoder-daemon.*index.js" > /dev/null; then
+if pgrep -f "zerocoder-daemon/dist/index.js" > /dev/null; then
   echo "=== Daemon started successfully on port ${port} ==="
 else
   echo "ERROR: Daemon failed to start. Check ~/zerocoder-daemon.log"
