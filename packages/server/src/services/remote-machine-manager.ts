@@ -933,7 +933,9 @@ export async function deployDaemon(
         console.log(`[daemon:${machine.name}] Uploading daemon tarball...`);
 
         // Step 2: SCP tarball to remote
-        const remoteTarball = '~/zerocoder-daemon.tar.gz';
+        // Note: SFTP starts in user's home directory by default, so no path prefix needed
+        // Do NOT use ~/... as SFTP doesn't expand tilde (it's a shell feature, not SFTP)
+        const remoteTarball = 'zerocoder-daemon.tar.gz';
         await scpFile(client, tarballPath, remoteTarball);
         console.log(`[daemon:${machine.name}] Tarball uploaded`);
 
