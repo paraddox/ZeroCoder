@@ -966,9 +966,13 @@ fi
 
 echo "Node.js version: $(node --version)"
 
-# Stop existing daemon
+# Stop existing daemon (use fuser to kill by port, more reliable than pattern matching)
 echo "Stopping existing daemon..."
+fuser -k ${port}/tcp 2>/dev/null || true
+# Also try pkill as backup for processes that might not have bound to port yet
 pkill -f "zerocoder-daemon/dist/index.js" 2>/dev/null || true
+pkill -f "node.*dist/index.js" 2>/dev/null || true
+sleep 1
 
 # Extract tarball
 echo "Extracting daemon files..."
