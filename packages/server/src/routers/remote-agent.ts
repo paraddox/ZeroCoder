@@ -275,6 +275,20 @@ remoteAgentRouter.post('/:project_name/remote-agent/daemon/stop', async (c) => {
       const result = await stopDaemon(agent.machineId, true);
       results.push({ machine_id: agent.machineId, ...result });
       stoppedMachines.add(agent.machineId);
+
+      // Verify daemon is actually stopped by checking status
+      // If daemon is unreachable or status is idle/stopped, the stop succeeded
+      const status = await getDaemonStatus(agent.machineId);
+      const isStopped = !status || status.status === 'idle' || status.status === 'stopped';
+
+      if (isStopped) {
+        // Update all agents on this machine to stopped
+        for (const a of agents) {
+          if (a.machineId === agent.machineId) {
+            updateRemoteAgent(a.id, { status: 'stopped', pid: null });
+          }
+        }
+      }
     }
   }
 
@@ -303,6 +317,24 @@ remoteAgentRouter.post('/:project_name/remote-agent/daemon/graceful-stop', async
       const result = await stopDaemon(agent.machineId, false);
       results.push({ machine_id: agent.machineId, ...result });
       stoppedMachines.add(agent.machineId);
+
+      // For graceful stop, mark as gracefulStopRequested
+      // Also check daemon status to update DB accordingly
+      const status = await getDaemonStatus(agent.machineId);
+      const isStopped = !status || status.status === 'idle' || status.status === 'stopped';
+
+      // Update all agents on this machine
+      for (const a of agents) {
+        if (a.machineId === agent.machineId) {
+          if (isStopped) {
+            // Already stopped
+            updateRemoteAgent(a.id, { status: 'stopped', pid: null });
+          } else {
+            // Still running, mark as graceful stop requested
+            updateRemoteAgent(a.id, { gracefulStopRequested: true });
+          }
+        }
+      }
     }
   }
 
