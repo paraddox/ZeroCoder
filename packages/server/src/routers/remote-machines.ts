@@ -20,6 +20,7 @@ import {
   listRemoteMachines,
   getRemoteMachine,
   updateRemoteMachineStatus,
+  getAllActiveRemoteAgents,
   RegistryError,
 } from '../db/crud.js';
 import { deployDaemon } from '../services/remote-machine-manager.js';
@@ -232,6 +233,27 @@ async function testMachineWithDependencies(
 remoteMachinesRouter.get('/', async (c) => {
   const machines = listRemoteMachines();
   return c.json(machines);
+});
+
+// GET /api/remote-machines/agents/all - Get all active remote agents across all projects
+remoteMachinesRouter.get('/agents/all', async (c) => {
+  const agents = getAllActiveRemoteAgents();
+  // Convert to snake_case for API response
+  return c.json(
+    agents.map((a) => ({
+      id: a.id,
+      project_name: a.projectName,
+      machine_id: a.machineId,
+      machine_name: a.machineName,
+      agent_number: a.agentNumber,
+      status: a.status,
+      current_feature: a.currentFeature,
+      pid: a.pid,
+      graceful_stop_requested: a.gracefulStopRequested,
+      restarting: a.restarting,
+      last_activity_at: a.lastActivityAt,
+    }))
+  );
 });
 
 // POST /api/remote-machines - Add a new remote machine

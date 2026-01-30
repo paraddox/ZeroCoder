@@ -361,6 +361,10 @@ export async function testRemoteMachine(machineId: number): Promise<{
   })
 }
 
+export async function getAllRemoteAgents(): Promise<RemoteAgentInfo[]> {
+  return fetchJSON('/remote-machines/agents/all')
+}
+
 // ============================================================================
 // Remote Agent API
 // ============================================================================

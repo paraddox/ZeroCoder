@@ -6,7 +6,7 @@
  * remote machine, and remote agent management.
  */
 
-import { eq, and, inArray, lt } from 'drizzle-orm';
+import { eq, and, or, inArray, lt } from 'drizzle-orm';
 import { db } from './index.js';
 import {
   projects,
@@ -1282,4 +1282,38 @@ export function getRemoteAgent(agentId: number): RemoteAgentInfo | null {
 export function deleteRemoteAgent(agentId: number): boolean {
   const result = db.delete(remoteAgents).where(eq(remoteAgents.id, agentId)).run();
   return result.changes > 0;
+}
+
+/**
+ * Get all active remote agents across all projects.
+ * Returns agents with status 'running' or 'created'.
+ */
+export function getAllActiveRemoteAgents(): RemoteAgentInfo[] {
+  const agents = db
+    .select()
+    .from(remoteAgents)
+    .where(
+      or(
+        eq(remoteAgents.status, 'running'),
+        eq(remoteAgents.status, 'created')
+      )
+    )
+    .all();
+
+  return agents.map((a) => {
+    const machine = db.select().from(remoteMachines).where(eq(remoteMachines.id, a.machineId)).get();
+    return {
+      id: a.id,
+      projectName: a.projectName,
+      machineId: a.machineId,
+      machineName: machine?.name ?? 'unknown',
+      agentNumber: a.agentNumber,
+      status: a.status,
+      currentFeature: a.currentFeature,
+      pid: a.pid,
+      gracefulStopRequested: a.gracefulStopRequested,
+      restarting: a.restarting,
+      lastActivityAt: a.lastActivityAt,
+    };
+  });
 }

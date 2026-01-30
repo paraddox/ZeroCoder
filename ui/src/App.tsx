@@ -26,6 +26,7 @@ import { ContainerControl } from './components/ContainerControl'
 import { ContainerList } from './components/ContainerList'
 import { AppSettingsModal } from './components/AppSettingsModal'
 import { RemoteMachineModal } from './components/RemoteMachineModal'
+import { ProjectRemoteMachinesPanel } from './components/ProjectRemoteMachinesPanel'
 import { Loader2, Sun, Moon, Settings } from 'lucide-react'
 import type { Feature, ProjectSummary, WizardStatus } from './lib/types'
 
@@ -406,6 +407,9 @@ function App() {
                 onTargetChange={handleContainerCountChange}
               />
             )}
+
+            {/* Remote Machines Panel - show available remote machines with start/stop */}
+            <ProjectRemoteMachinesPanel projectName={selectedProject} />
 
             {/* Agent Log Viewer - replaces both AgentThought and DebugLogViewer */}
             <AgentLogViewer
