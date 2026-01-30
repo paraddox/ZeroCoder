@@ -55,6 +55,10 @@ export function useWebSocket(projectName: string | null) {
   const currentProjectRef = useRef<string | null>(null) // Track current project to ignore stale messages
 
   const connect = useCallback(() => {
+    // WebSocket server not implemented yet - disable connection attempts
+    // TODO: Remove this early return when WebSocket endpoint is implemented
+    return
+
     if (!projectName || !shouldReconnectRef.current) return
 
     // Build WebSocket URL
