@@ -100,22 +100,87 @@ async function testSSHConnection(
       reject(err);
     });
 
-    const connectConfig: {
-      host: string;
-      port: number;
-      username: string;
-      privateKey?: Buffer;
-    } = {
+    client.connect({
       host,
       port,
       username,
-    };
+      privateKey,
+      readyTimeout: 30000,
+      // Auto-accept host keys (equivalent to StrictHostKeyChecking=no)
+      hostVerifier: () => true,
+    });
+  });
+}
 
-    if (privateKey) {
-      connectConfig.privateKey = privateKey;
-    }
+/**
+ * Setup Claude config on remote machine to skip onboarding.
+ * Creates ~/.claude.json with hasCompletedOnboarding: true
+ */
+async function setupClaudeConfig(
+  host: string,
+  port: number,
+  username: string,
+  sshKeyPath?: string | null
+): Promise<void> {
+  const expandedKeyPath = sshKeyPath ? sshKeyPath.replace(/^~/, homedir()) : undefined;
+  const privateKey = expandedKeyPath ? readFileSync(expandedKeyPath) : undefined;
 
-    client.connect(connectConfig);
+  return new Promise((resolve, reject) => {
+    const client = new SSHClient();
+
+    const timeout = setTimeout(() => {
+      client.end();
+      reject(new Error('Timeout setting up Claude config'));
+    }, 15000);
+
+    client.on('ready', () => {
+      clearTimeout(timeout);
+      // Install jq if needed, then merge hasCompletedOnboarding into existing config
+      const cmd = `
+        # Install jq if not available
+        if ! command -v jq >/dev/null 2>&1; then
+          if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq jq >/dev/null 2>&1
+          elif command -v yum >/dev/null 2>&1; then
+            sudo yum install -y -q jq >/dev/null 2>&1
+          elif command -v brew >/dev/null 2>&1; then
+            brew install -q jq >/dev/null 2>&1
+          fi
+        fi
+
+        # Merge or create config
+        if [ -f ~/.claude.json ]; then
+          tmp=$(mktemp) && jq '. + {"hasCompletedOnboarding": true}' ~/.claude.json > "$tmp" && mv "$tmp" ~/.claude.json
+        else
+          echo '{"hasCompletedOnboarding": true}' > ~/.claude.json
+        fi
+      `;
+      client.exec(cmd, (err, stream) => {
+        if (err) {
+          client.end();
+          reject(err);
+          return;
+        }
+        stream.on('exit', () => {
+          client.end();
+          resolve();
+        });
+      });
+    });
+
+    client.on('error', (err: Error) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+
+    client.connect({
+      host,
+      port,
+      username,
+      privateKey,
+      readyTimeout: 15000,
+      hostVerifier: () => true,
+    });
   });
 }
 
@@ -152,12 +217,24 @@ async function testMachineWithDependencies(
   return new Promise((resolve) => {
     const client = new SSHClient();
 
+    // Set a timeout to prevent hanging forever
+    const timeout = setTimeout(() => {
+      console.log('[Test] Connection timeout after 30s');
+      result.error = 'Connection timeout (30s)';
+      client.end();
+      resolve(result);
+    }, 30000);
+
     client.on('ready', () => {
+      clearTimeout(timeout);
+      console.log('[Test] SSH connected, running checks...');
       result.connected = true;
 
-      // Run whoami
-      client.exec('whoami', (err, stream) => {
+      // Run all checks in one command (check common paths for claude)
+      const cmd = 'echo "USER:$(whoami)" && echo "GIT:$(which git 2>/dev/null || echo missing)" && echo "CLAUDE:$(which claude 2>/dev/null || (test -x ~/.local/bin/claude && echo ~/.local/bin/claude) || echo missing)"';
+      client.exec(cmd, (err, stream) => {
         if (err) {
+          console.log('[Test] exec error:', err.message);
           result.error = err.message;
           client.end();
           resolve(result);
@@ -169,59 +246,43 @@ async function testMachineWithDependencies(
           stdout += data.toString();
         });
 
-        stream.on('close', () => {
-          result.user = stdout.trim();
+        stream.on('exit', () => {
+          console.log('[Test] Output:', stdout.trim());
+          client.end();
 
-          // Check git
-          client.exec('which git', (gitErr, gitStream) => {
-            if (gitErr) {
-              result.gitInstalled = false;
-            } else {
-              gitStream.on('close', (gitCode: number) => {
-                result.gitInstalled = gitCode === 0;
-
-                // Check claude
-                client.exec('which claude', (claudeErr, claudeStream) => {
-                  if (claudeErr) {
-                    result.claudeInstalled = false;
-                    client.end();
-                    resolve(result);
-                  } else {
-                    claudeStream.on('close', (claudeCode: number) => {
-                      result.claudeInstalled = claudeCode === 0;
-                      client.end();
-                      resolve(result);
-                    });
-                  }
-                });
-              });
+          // Parse results
+          const lines = stdout.trim().split('\n');
+          for (const line of lines) {
+            if (line.startsWith('USER:')) {
+              result.user = line.substring(5);
+            } else if (line.startsWith('GIT:')) {
+              result.gitInstalled = !line.includes('missing');
+            } else if (line.startsWith('CLAUDE:')) {
+              result.claudeInstalled = !line.includes('missing');
             }
-          });
+          }
+          resolve(result);
         });
       });
     });
 
     client.on('error', (err: Error) => {
+      clearTimeout(timeout);
+      console.log('[Test] SSH error:', err.message);
       result.error = err.message;
       resolve(result);
     });
 
-    const connectConfig: {
-      host: string;
-      port: number;
-      username: string;
-      privateKey?: Buffer;
-    } = {
+    console.log(`[Test] Connecting to ${machine.host}:${machine.port} as ${machine.username}...`);
+    client.connect({
       host: machine.host,
       port: machine.port,
       username: machine.username,
-    };
-
-    if (privateKey) {
-      connectConfig.privateKey = privateKey;
-    }
-
-    client.connect(connectConfig);
+      privateKey,
+      readyTimeout: 30000,
+      // Auto-accept host keys (equivalent to StrictHostKeyChecking=no)
+      hostVerifier: () => true,
+    });
   });
 }
 
@@ -290,6 +351,20 @@ remoteMachinesRouter.post('/', async (c) => {
     throw new HTTPException(400, { message: `SSH connection failed: ${errorMsg}` });
   }
 
+  // Setup Claude config on remote machine (skip onboarding)
+  try {
+    await setupClaudeConfig(
+      request.host,
+      request.port,
+      request.username,
+      request.ssh_key_path
+    );
+    console.log(`Claude config created on ${request.host}`);
+  } catch (e) {
+    console.warn(`Failed to setup Claude config on ${request.host}:`, e);
+    // Non-fatal - continue with machine add
+  }
+
   // Add to registry
   let machineId: number;
   try {
@@ -320,15 +395,20 @@ remoteMachinesRouter.post('/', async (c) => {
   let daemonDeployed = false;
   let daemonError: string | null = null;
   try {
-    // Use the ZeroCoder repo URL from environment or default to GitHub
-    const zerocoderRepoUrl = process.env['ZEROCODER_REPO_URL'] ?? 'https://github.com/your-org/ZeroCoder.git';
-    const deployResult = await deployDaemon(machineId, zerocoderRepoUrl);
-    daemonDeployed = deployResult.success;
-    if (!deployResult.success) {
-      daemonError = deployResult.message;
-      console.warn(`Failed to auto-deploy daemon to ${request.name}: ${deployResult.message}`);
+    // Use the ZeroCoder repo URL from environment (should be SSH URL for auth)
+    const zerocoderRepoUrl = process.env['ZEROCODER_REPO_URL'];
+    if (!zerocoderRepoUrl) {
+      daemonError = 'ZEROCODER_REPO_URL not set in environment';
+      console.warn('Cannot deploy daemon: ZEROCODER_REPO_URL not configured');
     } else {
-      console.log(`Daemon deployed to ${request.name} on port ${deployResult.port}`);
+      const deployResult = await deployDaemon(machineId, zerocoderRepoUrl);
+      daemonDeployed = deployResult.success;
+      if (!deployResult.success) {
+        daemonError = deployResult.message;
+        console.warn(`Failed to auto-deploy daemon to ${request.name}: ${deployResult.message}`);
+      } else {
+        console.log(`Daemon deployed to ${request.name} on port ${deployResult.port}`);
+      }
     }
   } catch (e) {
     daemonError = e instanceof Error ? e.message : String(e);
@@ -363,6 +443,7 @@ remoteMachinesRouter.delete('/:machineId', async (c) => {
 remoteMachinesRouter.post('/:machineId/test', async (c) => {
   const machineIdParam = c.req.param('machineId');
   const machineId = parseInt(machineIdParam, 10);
+  console.log(`[Test] Starting test for machine ${machineId}`);
 
   if (isNaN(machineId)) {
     throw new HTTPException(400, { message: 'Invalid machine ID' });
@@ -373,7 +454,9 @@ remoteMachinesRouter.post('/:machineId/test', async (c) => {
     throw new HTTPException(404, { message: 'Machine not found' });
   }
 
+  console.log(`[Test] Testing ${machine.name} at ${machine.host}:${machine.port}`);
   const result = await testMachineWithDependencies(machine);
+  console.log(`[Test] Result:`, result);
 
   // Update status based on connection result
   if (result.connected) {

@@ -179,14 +179,14 @@ describe('POST /api/remote-machines', () => {
       createdAt: new Date().toISOString(),
     });
 
-    // Mock successful SSH connection
+    // Mock successful SSH connection (supports both 'close' and 'exit' events)
     mockSSHExec.mockImplementation((_cmd: string, callback: unknown) => {
       const stream = {
         on: vi.fn((event: string, handler: unknown) => {
           if (event === 'data') {
             // whoami returns 'root'
             (handler as (data: Buffer) => void)(Buffer.from('root\n'));
-          } else if (event === 'close') {
+          } else if (event === 'close' || event === 'exit') {
             (handler as (code: number) => void)(0);
           }
         }),
@@ -267,13 +267,13 @@ describe('POST /api/remote-machines', () => {
       throw new mockCrudModule.RegistryError("Remote machine 'existing-server' already exists");
     });
 
-    // Mock successful SSH connection
+    // Mock successful SSH connection (supports both 'close' and 'exit' events)
     mockSSHExec.mockImplementation((_cmd: string, callback: unknown) => {
       const stream = {
         on: vi.fn((event: string, handler: unknown) => {
           if (event === 'data') {
             (handler as (data: Buffer) => void)(Buffer.from('root\n'));
-          } else if (event === 'close') {
+          } else if (event === 'close' || event === 'exit') {
             (handler as (code: number) => void)(0);
           }
         }),
@@ -355,22 +355,15 @@ describe('POST /api/remote-machines/:machineId/test', () => {
       createdAt: new Date().toISOString(),
     });
 
-    // Mock successful SSH connection with dependency checks
-    mockSSHExec.mockImplementation((cmd: string, callback: unknown) => {
+    // Mock successful SSH connection - now uses single combined command with 'exit' event
+    mockSSHExec.mockImplementation((_cmd: string, callback: unknown) => {
       const stream = {
         on: vi.fn((event: string, handler: unknown) => {
           if (event === 'data') {
-            if (cmd === 'whoami') {
-              (handler as (data: Buffer) => void)(Buffer.from('root\n'));
-            }
-          } else if (event === 'close') {
-            if (cmd === 'which git') {
-              (handler as (code: number) => void)(0); // git installed
-            } else if (cmd === 'which claude') {
-              (handler as (code: number) => void)(1); // claude not installed
-            } else {
-              (handler as (code: number) => void)(0);
-            }
+            // Combined command output
+            (handler as (data: Buffer) => void)(Buffer.from('USER:root\nGIT:/usr/bin/git\nCLAUDE:missing\n'));
+          } else if (event === 'exit') {
+            (handler as (code: number) => void)(0);
           }
         }),
       };

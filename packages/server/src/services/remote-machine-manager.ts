@@ -214,22 +214,15 @@ export class RemoteMachineManager {
         reject(err);
       });
 
-      const connectConfig: {
-        host: string;
-        port: number;
-        username: string;
-        privateKeyPath?: string;
-      } = {
+      client.connect({
         host: machine.host,
         port: machine.port,
         username: machine.username,
-      };
-
-      if (privateKeyPath) {
-        connectConfig.privateKeyPath = privateKeyPath;
-      }
-
-      client.connect(connectConfig);
+        privateKey: privateKeyPath ? readFileSync(privateKeyPath.replace(/^~/, homedir())) : undefined,
+        readyTimeout: 30000,
+        // Auto-accept host keys (equivalent to StrictHostKeyChecking=no)
+        hostVerifier: () => true,
+      });
     });
   }
 
@@ -537,6 +530,12 @@ export class RemoteMachineManager {
       env['ANTHROPIC_API_KEY'] = apiKey;
     }
 
+    // Pass Claude Code OAuth token for authentication
+    const oauthToken = process.env['CLAUDE_CODE_OAUTH_TOKEN'] ?? '';
+    if (oauthToken) {
+      env['CLAUDE_CODE_OAUTH_TOKEN'] = oauthToken;
+    }
+
     // Project info
     env['PROJECT_NAME'] = this.projectName;
     env['CONTAINER_NUMBER'] = String(this.agentNumber);
@@ -798,20 +797,10 @@ echo "Daemon started on port ${port}"
       ? machine.sshKeyPath.replace(/^~/, homedir())
       : undefined;
 
-    const connectConfig: {
-      host: string;
-      port: number;
-      username: string;
-      privateKey?: Buffer;
-    } = {
-      host: machine.host,
-      port: machine.port,
-      username: machine.username,
-    };
-
+    let privateKey: Buffer | undefined;
     if (privateKeyPath) {
       try {
-        connectConfig.privateKey = readFileSync(privateKeyPath);
+        privateKey = readFileSync(privateKeyPath);
       } catch (e) {
         resolve({
           success: false,
@@ -821,7 +810,15 @@ echo "Daemon started on port ${port}"
       }
     }
 
-    client.connect(connectConfig);
+    client.connect({
+      host: machine.host,
+      port: machine.port,
+      username: machine.username,
+      privateKey,
+      readyTimeout: 30000,
+      // Auto-accept host keys (equivalent to StrictHostKeyChecking=no)
+      hostVerifier: () => true,
+    });
   });
 }
 
