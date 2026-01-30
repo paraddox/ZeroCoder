@@ -18,6 +18,7 @@ import { configureStaticFiles, isUIBuildAvailable } from './middleware/static.js
 import {
   projectsRouter,
   featuresRouter,
+  agentRouter,
   specCreationRouter,
   remoteMachinesRouter,
   remoteAgentRouter,
@@ -61,6 +62,10 @@ app.route('/api/spec', specCreationRouter);
 
 // Mount remote machines routes
 app.route('/api/remote-machines', remoteMachinesRouter);
+
+// Mount agent routes (nested under projects)
+// Agent routes are accessed via /api/projects/:name/agent/*
+app.route('/api/projects/:name/agent', agentRouter);
 
 // Mount remote agent routes (nested under projects)
 app.route('/api/projects', remoteAgentRouter);
