@@ -165,8 +165,8 @@ function isContainerRunning(containerName: string): boolean {
  */
 function isAgentRunning(containerName: string): boolean {
   try {
-    // Check if claude process is running in container
-    const result = execSync(`docker exec ${containerName} pgrep -f "claude"`, {
+    // Check if claude or opencode process is running in container
+    const result = execSync(`docker exec ${containerName} sh -c 'pgrep -f "claude" || pgrep -f "opencode"'`, {
       timeout: 5000,
       stdio: 'pipe',
     });
