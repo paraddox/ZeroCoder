@@ -537,9 +537,8 @@ agentRouter.post('/start-all', async (c) => {
       throw new HTTPException(400, { message: `Could not load initializer prompt: ${e}` });
     }
 
-    // Force Claude SDK with Opus 4.5 for initializer
+    // Force Claude SDK for initializer (daemon handles model selection)
     initManager['_forceClaudeSdk'] = true;
-    initManager['_forcedModel'] = 'claude-opus-4-5-20251101';
 
     // Start init container with instruction
     const [initSuccess, initMessage] = await initManager.start(initInstruction);

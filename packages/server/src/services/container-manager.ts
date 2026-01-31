@@ -11,9 +11,8 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { exec } from 'node:child_process';
-import { existsSync, writeFileSync, unlinkSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { Mutex } from 'async-mutex';
 
@@ -23,6 +22,10 @@ import {
   type OutputCallback,
   type StatusCallback,
 } from '../websocket/callback-system.js';
+import {
+  createContainerDaemonClient,
+  getContainerDaemonPort,
+} from './daemon-client.js';
 import {
   getProjectsDir,
   getContainer,
@@ -40,13 +43,9 @@ import {
   updateLastActivity,
   getLastActivity,
   setLastClosedFeature,
-  getLastClosedFeature,
   listContainers,
   listAllContainers,
-  setVerificationRunning,
   clearVerificationState,
-  getOverseerMilestone,
-  updateOverseerMilestone,
   getProjectGitUrl,
 } from '../db/crud.js';
 import { type ContainerType } from '../db/schema.js';
@@ -216,7 +215,6 @@ export class ContainerManager {
   private _currentAgentType: AgentType = 'coder';
   private _forceClaudeSdk: boolean = false;
   private _currentFeature: string | null = null;
-  private _forcedModel: string = 'claude-opus-4-5-20251101';
   private _agentDispatched: boolean = false;
 
   // Callback manager
@@ -418,13 +416,14 @@ export class ContainerManager {
 
   /**
    * Check if the agent process is running inside the container (sync version).
+   * Note: This uses a blocking HTTP call - avoid in performance-critical paths.
    */
   isAgentRunningSync(): boolean {
     if (this._status !== 'running') return false;
+    // For sync version, fall back to docker exec check
+    // TODO: Consider caching daemon status for sync access
     try {
-      const checkCmd = this._isOpenCodeModel()
-        ? ['docker', 'exec', this.containerName, 'pgrep', '-f', 'node.*opencode_agent_app']
-        : ['docker', 'exec', this.containerName, 'pgrep', '-f', 'node.*agent_app'];
+      const checkCmd = ['docker', 'exec', this.containerName, 'pgrep', '-f', 'node.*dist/index.js'];
       const cmd = checkCmd[0];
       if (!cmd) return false;
       const result = spawnSync(cmd, checkCmd.slice(1), { timeout: 5000 });
@@ -436,16 +435,16 @@ export class ContainerManager {
 
   /**
    * Check if the agent process is running inside the container (async version).
+   * Uses daemon API to check agent status.
    */
   async isAgentRunning(): Promise<boolean> {
     if (this._status !== 'running') return false;
     try {
-      const checkCmd = this._isOpenCodeModel()
-        ? `docker exec ${this.containerName} pgrep -f "node.*opencode_agent_app"`
-        : `docker exec ${this.containerName} pgrep -f "node.*agent_app"`;
-      await execAsync(checkCmd, { timeout: 5000 });
-      return true;
+      const daemonClient = createContainerDaemonClient(this.containerNumber);
+      const status = await daemonClient.getStatus();
+      return status.status === 'running';
     } catch {
+      // Daemon not responding - agent not running
       return false;
     }
   }
@@ -906,16 +905,18 @@ export class ContainerManager {
           return [false, imageMsg];
         }
 
-        // Create new standalone container
+        // Create new standalone container with daemon port exposed
+        const daemonPort = getContainerDaemonPort(this.containerNumber);
         const cmd = [
           'docker', 'run', '-d',
           '--name', this.containerName,
           '--add-host', 'host.docker.internal:host-gateway',
           '--memory', '64g',
           '--memory-swap', '64g',
+          '-p', `${daemonPort}:9999`, // Expose daemon API port
         ];
 
-        // Pass environment variables
+        // Pass environment variables (daemon handles git clone via POST /work)
         cmd.push('-e', `GIT_REMOTE_URL=${this.gitUrl}`);
         cmd.push('-e', `CONTAINER_TYPE=${this._isInitContainer ? 'init' : 'coding'}`);
         cmd.push('-e', `PROJECT_NAME=${this.projectName}`);
@@ -963,66 +964,39 @@ export class ContainerManager {
       this.status = 'running';
       this._userStarted = true;
 
-      // Start log streaming
+      // Start log streaming (still use docker logs for now)
       this._startLogStreaming();
 
-      // Wait for git clone to complete
-      for (let attempt = 0; attempt < 30; attempt++) {
-        await this._sleep(2000);
-        try {
-          await execAsync(`docker exec -u coder ${this.containerName} test -e /project/.git`);
-          console.log(`Container ${this.containerName}: repository cloned successfully`);
-          break;
-        } catch {
-          console.log(`Waiting for git clone (attempt ${attempt + 1}/30)`);
-          if (attempt === 29) {
-            return [false, 'Repository clone failed or timed out'];
-          }
-        }
+      // Wait for daemon to be healthy
+      const daemonClient = createContainerDaemonClient(this.containerNumber);
+      console.log(`Waiting for daemon at ${daemonClient.getBaseUrl()}...`);
+      const daemonReady = await daemonClient.waitForHealthy(60, 2000); // 2 min timeout
+      if (!daemonReady) {
+        return [false, 'Daemon health check failed after 2 minutes'];
       }
-
-      // Pre-agent sync
-      const [syncOk, syncMsg] = await this.preAgentSync();
-      if (!syncOk) {
-        console.warn(`Pre-agent sync failed: ${syncMsg}`);
-      }
-
-      // Recovery
-      const [recoveryOk, recoveryMsg] = await this.recoverStuckFeatures();
-      if (!recoveryOk) {
-        console.warn(`Feature recovery failed: ${recoveryMsg}`);
-      }
+      console.log(`Container ${this.containerName}: daemon is healthy`);
 
       if (instruction) {
-        // Wait for SDK to be ready
-        const useOpencode = this._isOpenCodeModel() && !this._forceClaudeSdk;
-        for (let attempt = 0; attempt < 10; attempt++) {
-          await this._sleep(2000);
-          try {
-            if (useOpencode) {
-              await execAsync(`docker exec -u coder ${this.containerName} test -f /app/dist/opencode_agent_app.js`);
-            } else {
-              await execAsync(`docker exec -u coder ${this.containerName} test -f /app/container_scripts_ts/dist/agent_app.js`);
-            }
-            break;
-          } catch {
-            const sdkName = useOpencode ? 'OpenCode SDK' : 'Claude SDK';
-            console.log(`Waiting for ${sdkName} to be ready (attempt ${attempt + 1}/10)`);
-            if (attempt === 9) {
-              return [false, `${sdkName} not available in container after 20 seconds`];
-            }
-          }
-        }
-
         if (this._agentDispatched) {
           console.warn(`Agent already dispatched for ${this.containerName}, skipping duplicate`);
           return [true, 'Agent already dispatched'];
         }
         this._agentDispatched = true;
 
-        // Start agent in background (non-blocking)
-        this._runAgentWithMonitoring(instruction);
-        return [true, 'Container started and agent spawned'];
+        // Start work via daemon API (daemon handles clone, sync, agent start)
+        try {
+          const workResult = await daemonClient.startWork(this.gitUrl, this.projectName);
+          if (!workResult.success) {
+            this._agentDispatched = false;
+            return [false, `Daemon work start failed: ${workResult.message}`];
+          }
+          console.log(`Container ${this.containerName}: daemon started work`);
+          return [true, 'Container started and daemon working'];
+        } catch (err) {
+          this._agentDispatched = false;
+          const msg = err instanceof Error ? err.message : String(err);
+          return [false, `Failed to start daemon work: ${msg}`];
+        }
       }
 
       return [true, `Container ${this.containerName} started`];
@@ -1062,6 +1036,16 @@ export class ContainerManager {
         clearVerificationState(this.projectName);
       }
 
+      // First, tell daemon to stop the agent (hard stop)
+      try {
+        const daemonClient = createContainerDaemonClient(this.containerNumber);
+        await daemonClient.stopHard();
+        console.log(`[STOP] Daemon agent stopped for ${this.containerName}`);
+      } catch (err) {
+        console.warn(`[STOP] Failed to stop daemon agent: ${err}`);
+      }
+
+      // Then stop the container
       console.log(`[STOP] Executing docker stop for ${this.containerName}`);
       await execAsync(`docker stop ${this.containerName}`, { timeout: 30000 });
 
@@ -1106,6 +1090,15 @@ export class ContainerManager {
       this._gracefulStopRequested = true;
       console.log(`Graceful stop requested for ${this.containerName}`);
       await this._broadcastOutput('[System] Graceful stop requested, completing current session...');
+
+      // Tell daemon to stop gracefully
+      try {
+        const daemonClient = createContainerDaemonClient(this.containerNumber);
+        await daemonClient.stopGraceful();
+        console.log(`Daemon graceful stop requested for ${this.containerName}`);
+      } catch (err) {
+        console.warn(`Failed to request daemon graceful stop: ${err}`);
+      }
 
       // Start monitoring with timeout
       this._monitorGracefulStop();
@@ -1155,16 +1148,18 @@ export class ContainerManager {
           return [false, imageMsg];
         }
 
-        // Create new standalone container
+        // Create new standalone container with daemon port exposed
+        const daemonPort = getContainerDaemonPort(this.containerNumber);
         const cmd = [
           'docker', 'run', '-d',
           '--name', this.containerName,
           '--add-host', 'host.docker.internal:host-gateway',
           '--memory', '64g',
           '--memory-swap', '64g',
+          '-p', `${daemonPort}:9999`, // Expose daemon API port
         ];
 
-        // Pass environment variables
+        // Pass environment variables (daemon handles git clone via POST /work)
         cmd.push('-e', `GIT_REMOTE_URL=${this.gitUrl}`);
         cmd.push('-e', `CONTAINER_TYPE=${this._isInitContainer ? 'init' : 'coding'}`);
         cmd.push('-e', `PROJECT_NAME=${this.projectName}`);
@@ -1212,29 +1207,17 @@ export class ContainerManager {
       this.status = 'running';
       this._userStarted = true;
 
-      // Start log streaming
+      // Start log streaming (still use docker logs for now)
       this._startLogStreaming();
 
-      // Wait for git clone to complete
-      for (let attempt = 0; attempt < 30; attempt++) {
-        await this._sleep(2000);
-        try {
-          await execAsync(`docker exec -u coder ${this.containerName} test -e /project/.git`);
-          console.log(`Container ${this.containerName}: repository cloned successfully`);
-          break;
-        } catch {
-          console.log(`Waiting for git clone (attempt ${attempt + 1}/30)`);
-          if (attempt === 29) {
-            return [false, 'Repository clone failed or timed out'];
-          }
-        }
+      // Wait for daemon to be healthy
+      const daemonClient = createContainerDaemonClient(this.containerNumber);
+      console.log(`Waiting for daemon at ${daemonClient.getBaseUrl()}...`);
+      const daemonReady = await daemonClient.waitForHealthy(60, 2000); // 2 min timeout
+      if (!daemonReady) {
+        return [false, 'Daemon health check failed after 2 minutes'];
       }
-
-      // Pre-agent sync
-      const [syncOk, syncMsg] = await this.preAgentSync();
-      if (!syncOk) {
-        console.warn(`Pre-agent sync failed: ${syncMsg}`);
-      }
+      console.log(`Container ${this.containerName}: daemon is healthy (agent not launched)`);
 
       return [true, `Container ${this.containerName} started (agent not launched)`];
     } catch (e) {
@@ -1267,8 +1250,10 @@ export class ContainerManager {
 
   /**
    * Send an instruction to the agent.
+   * Note: With daemon architecture, the daemon handles agent lifecycle.
+   * The instruction parameter is now ignored - daemon reads prompts from files.
    */
-  async sendInstruction(instruction: string): Promise<[boolean, string]> {
+  async sendInstruction(_instruction: string): Promise<[boolean, string]> {
     this._syncStatus();
 
     if (this._status !== 'running') {
@@ -1278,48 +1263,16 @@ export class ContainerManager {
     try {
       this._updateActivity();
 
-      // Write prompt to temp file
-      const promptFile = join(tmpdir(), `prompt-${Date.now()}.txt`);
-      writeFileSync(promptFile, instruction, 'utf-8');
+      // With daemon architecture, we just tell the daemon to start work
+      // The daemon handles prompt reading, agent selection, and orchestration
+      const daemonClient = createContainerDaemonClient(this.containerNumber);
+      const result = await daemonClient.startWork(this.gitUrl, this.projectName);
 
-      try {
-        const useOpencode = this._isOpenCodeModel() && !this._forceClaudeSdk;
-        const model = this._forceClaudeSdk ? this._forcedModel : this._getAgentModel();
-
-        let cmd: string[];
-        if (useOpencode) {
-          const agentType = this._currentAgentType;
-          console.log(`Using OpenCode agent (${agentType}, model=${model}) for ${this.containerName}`);
-          cmd = [
-            'docker', 'exec', '-i', '-u', 'coder',
-            '-e', `OPENCODE_AGENT_TYPE=${agentType}`,
-            '-e', `AGENT_MODEL=${model}`,
-            this.containerName,
-            'node', '/app/dist/opencode_agent_app.js',
-          ];
-        } else {
-          console.log(`Using Claude agent (model=${model}) for ${this.containerName}`);
-          cmd = [
-            'docker', 'exec', '-i', '-u', 'coder',
-            '-e', `AGENT_MODEL=${model}`,
-            this.containerName,
-            'node', '/app/container_scripts_ts/dist/agent_app.js',
-          ];
-        }
-
-        // Spawn process with stdin from file
-        const exitCode = await this._runAgentProcess(cmd, promptFile);
-        unlinkSync(promptFile);
-
-        return this._handleAgentExit(exitCode);
-      } catch (e) {
-        try {
-          unlinkSync(promptFile);
-        } catch {
-          // Ignore
-        }
-        throw e;
+      if (!result.success) {
+        return [false, `Daemon work failed: ${result.message}`];
       }
+
+      return [true, 'Work started via daemon'];
     } catch (e) {
       console.error(`Failed to send instruction: ${e}`);
       return [false, `Failed to send instruction: ${e}`];
@@ -1503,49 +1456,6 @@ export class ContainerManager {
     });
   }
 
-  private async _runAgentProcess(cmd: string[], promptFile: string): Promise<number> {
-    return new Promise((resolve) => {
-      const command = cmd[0];
-      if (!command) {
-        resolve(1);
-        return;
-      }
-
-      const proc = spawn(command, cmd.slice(1), {
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-
-      const promptContent = readFileSync(promptFile, 'utf-8');
-      proc.stdin?.write(promptContent);
-      proc.stdin?.end();
-
-      proc.stdout?.on('data', () => {
-        this._updateActivity();
-      });
-
-      proc.on('close', (code: number | null) => {
-        resolve(code || 0);
-      });
-
-      proc.on('error', () => {
-        resolve(1);
-      });
-    });
-  }
-
-  private async _runAgentWithMonitoring(instruction: string): Promise<void> {
-    try {
-      const [success, message] = await this.sendInstruction(instruction);
-      if (!success) {
-        console.error(`Agent instruction failed: ${message}`);
-        await this._broadcastOutput(`[System] Agent failed: ${message}`);
-      }
-    } catch (e) {
-      console.error(`Error running agent: ${e}`);
-      await this._broadcastOutput(`[System] Agent error: ${e}`);
-    }
-  }
-
   private async _monitorGracefulStop(): Promise<void> {
     const timeoutMs = 20 * 60 * 1000; // 20 minutes
     const pollInterval = 5000;
@@ -1564,218 +1474,6 @@ export class ContainerManager {
     console.warn(`Graceful stop timeout for ${this.containerName}, forcing shutdown`);
     await this._broadcastOutput('[System] Graceful stop timeout, forcing shutdown...');
     await this.stop();
-  }
-
-  private async _handleAgentExit(exitCode: number): Promise<[boolean, string]> {
-    // If container already stopped, don't process
-    if (this._status === 'stopped' || this._status === 'not_created') {
-      console.log(`[EXIT] Ignoring exit code ${exitCode} for ${this.containerName} (status=${this._status})`);
-      return [true, `Container already ${this._status}, ignoring exit`];
-    }
-
-    // Init containers never restart
-    if (this._isInitContainer) {
-      console.log(`Init container ${this.containerName} completed with exit code ${exitCode}`);
-      await this._broadcastOutput(`[System] Init container completed (exit code: ${exitCode})`);
-      await this.stop();
-      return exitCode === 0
-        ? [true, 'Init container completed successfully']
-        : [false, `Init container failed with exit code ${exitCode}`];
-    }
-
-    // Handle context limit (exit code 131)
-    if (exitCode === 131) {
-      console.log(`Context limit reached in ${this.containerName}, restarting with fresh context...`);
-      await this._broadcastOutput('[System] Context limit reached. Restarting with fresh context...');
-      this._lastAgentWasOverseer = false;
-      return this.restartAgent();
-    }
-
-    // Handle graceful stop (exit code 129 or flag)
-    if (exitCode === 129 || this._gracefulStopRequested) {
-      console.log(`Graceful stop completed for ${this.containerName}`);
-      await this._broadcastOutput('[System] Graceful stop completed');
-      this._gracefulStopRequested = false;
-      await this.stop();
-      return [true, 'Graceful stop completed'];
-    }
-
-    if (exitCode === 0) {
-      console.log(`[EXIT] Agent exited successfully (code 0) in ${this.containerName}`);
-
-      // Handle reviewer completion
-      if (this._currentAgentType === 'reviewer') {
-        setLastClosedFeature(this.projectName, this.containerNumber, null, this.containerType);
-        console.log(`[REVIEWER] Review complete in ${this.containerName}, switching to coder`);
-        this._currentAgentType = 'coder';
-      }
-
-      // Post-agent cleanup
-      await this.postAgentCleanup();
-
-      if (this.hasOpenFeatures() && !this._gracefulStopRequested) {
-        // Check for reviewer first
-        if (this._currentAgentType === 'coder') {
-          const closedFeatureId = getLastClosedFeature(this.projectName, this.containerNumber, this.containerType);
-          if (closedFeatureId) {
-            console.log(`[EXIT] Running reviewer for ${closedFeatureId} in ${this.containerName}`);
-            await this._broadcastOutput(`[System] Running review for ${closedFeatureId}...`);
-            return this.restartWithReviewer(closedFeatureId);
-          }
-        }
-
-        console.log(`[EXIT] Features remain in ${this.containerName}, restarting coding agent...`);
-        await this._broadcastOutput('[System] Session complete. Starting fresh context for next task...');
-
-        await this._checkOverseerMilestone();
-        this._lastAgentWasOverseer = false;
-        return this.restartAgent();
-      } else if (!this.hasOpenFeatures() && !this._gracefulStopRequested) {
-        if (this._lastAgentWasOverseer) {
-          clearVerificationState(this.projectName);
-
-          if (this._isMilestoneOverseer) {
-            console.log(`Milestone overseer completed in ${this.containerName}`);
-            await this._broadcastOutput('[System] Milestone verification complete.');
-            await this.stop();
-            this._isMilestoneOverseer = false;
-            return [true, 'Milestone verification complete'];
-          }
-
-          if (this.hasOpenFeatures()) {
-            console.log(`Overseer created new issues in ${this.projectName}, restarting containers...`);
-            await this._broadcastOutput('[System] Verification found issues. Restarting to fix them...');
-            await this._restartOtherContainers();
-            this._lastAgentWasOverseer = false;
-            return this.restartAgent();
-          } else {
-            console.log(`Verification complete in ${this.containerName}! All features verified.`);
-            await this._broadcastOutput('[System] Verification complete! All features verified.');
-            await this.stop();
-            this.status = 'completed';
-            await this._stopOtherContainers();
-            return [true, 'All features verified complete'];
-          }
-        } else {
-          if (setVerificationRunning(this.projectName, true)) {
-            console.log(`All features closed in ${this.containerName}, running overseer verification...`);
-            await this._broadcastOutput('[System] All features complete. Running final verification...');
-            return this.restartWithOverseer();
-          } else {
-            console.log(`Verification already running for ${this.projectName}, stopping ${this.containerName}`);
-            await this._broadcastOutput('[System] Verification running in another container. Waiting...');
-            await this.stop();
-            return [true, 'Stopped - verification running elsewhere'];
-          }
-        }
-      }
-
-      return [true, 'Instruction completed'];
-    } else if (exitCode === 130) {
-      console.log(`Agent interrupted in ${this.containerName}`);
-      await this._broadcastOutput('[System] Agent interrupted by user');
-      return [true, 'Agent interrupted'];
-    } else {
-      console.error(`Agent failed in ${this.containerName}: exit code ${exitCode}`);
-      await this._broadcastOutput(`[System] Agent failed: exit code ${exitCode}`);
-
-      if (this.hasOpenFeatures() && !this._gracefulStopRequested) {
-        await this._broadcastOutput('[System] Auto-restarting after error...');
-        await this._sleep(5000);
-        this._lastAgentWasOverseer = false;
-        return this.restartAgent();
-      }
-
-      return [false, `Agent failed: exit code ${exitCode}`];
-    }
-  }
-
-  private async _checkOverseerMilestone(): Promise<void> {
-    const stats = getCachedStats(this.projectName);
-    if (!stats || (stats.total || 0) === 0) return;
-
-    const percentage = stats.percentage || 0;
-    const currentMilestone = Math.floor(percentage / 10) * 10;
-    const lastMilestone = getOverseerMilestone(this.projectName);
-
-    if (currentMilestone > lastMilestone && currentMilestone > 0 && currentMilestone < 100) {
-      console.log(`[${this.projectName}] Hit ${currentMilestone}% milestone - spawning overseer`);
-      await this._spawnOverseerAtMilestone(currentMilestone);
-    }
-  }
-
-  private async _spawnOverseerAtMilestone(milestone: number): Promise<void> {
-    updateOverseerMilestone(this.projectName, milestone);
-
-    if (!setVerificationRunning(this.projectName, true)) {
-      console.log(`[${this.projectName}] Overseer already running, skipping milestone trigger`);
-      return;
-    }
-
-    try {
-      await this._broadcastOutput(`[System] ${milestone}% milestone reached - running quality verification...`);
-
-      const overseerManager = new ContainerManager(this.projectName, this.gitUrl, 0);
-      overseerManager._currentAgentType = 'overseer';
-      overseerManager._isMilestoneOverseer = true;
-      overseerManager._lastAgentWasOverseer = true;
-      overseerManager._userStarted = true;
-
-      let prompt: string;
-      try {
-        prompt = getOverseerPrompt(this.projectDir);
-      } catch {
-        console.warn(`[${this.projectName}] No overseer prompt found, skipping milestone verification`);
-        setVerificationRunning(this.projectName, false);
-        return;
-      }
-
-      // Run in background (don't await)
-      this._runMilestoneOverseer(overseerManager, prompt, milestone);
-    } catch (e) {
-      console.error(`[${this.projectName}] Failed to spawn overseer: ${e}`);
-      setVerificationRunning(this.projectName, false);
-    }
-  }
-
-  private async _runMilestoneOverseer(overseerManager: ContainerManager, prompt: string, milestone: number): Promise<void> {
-    try {
-      console.log(`[${this.projectName}] Starting milestone overseer at ${milestone}%`);
-      const [success, message] = await overseerManager.start(prompt);
-      if (!success) {
-        console.warn(`[${this.projectName}] Milestone overseer failed to start: ${message}`);
-      }
-    } catch (e) {
-      console.error(`[${this.projectName}] Milestone overseer error: ${e}`);
-    } finally {
-      if (overseerManager._status !== 'running') {
-        clearVerificationState(this.projectName);
-      }
-    }
-  }
-
-  private async _stopOtherContainers(): Promise<void> {
-    const allManagers = getAllContainerManagers(this.projectName);
-    for (const manager of allManagers) {
-      if (manager.containerNumber !== this.containerNumber && manager.status === 'running') {
-        console.log(`Stopping ${manager.containerName} (project complete)`);
-        await manager.stop();
-        manager.status = 'completed';
-      }
-    }
-  }
-
-  private async _restartOtherContainers(): Promise<void> {
-    const allManagers = getAllContainerManagers(this.projectName);
-    for (const manager of allManagers) {
-      if (manager.containerNumber !== this.containerNumber) {
-        if (manager.status === 'stopped' && manager._userStarted) {
-          console.log(`Restarting ${manager.containerName} (new issues to work on)`);
-          manager._lastAgentWasOverseer = false;
-          await manager.restartAgent();
-        }
-      }
-    }
   }
 }
 

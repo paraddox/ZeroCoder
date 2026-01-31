@@ -25,9 +25,19 @@ export interface RepoSetupResult {
 
 /**
  * Get the path to the SSH key file for a project.
+ * Falls back to default id_ed25519 key if project-specific key doesn't exist.
  */
 function getSshKeyPath(projectName: string): string {
-  return join(homedir(), '.ssh', `zerocoder_${projectName}`);
+  const projectKey = join(homedir(), '.ssh', `zerocoder_${projectName}`);
+  if (existsSync(projectKey)) {
+    return projectKey;
+  }
+  // Fall back to default key (used in Docker containers)
+  const defaultKey = join(homedir(), '.ssh', 'id_ed25519');
+  if (existsSync(defaultKey)) {
+    return defaultKey;
+  }
+  return projectKey; // Return project key path even if it doesn't exist
 }
 
 /**
@@ -149,21 +159,27 @@ async function onboardBeads(projectPath: string): Promise<void> {
 /**
  * Set up a repository for work.
  *
- * 1. Save SSH key
+ * 1. Save SSH key (if provided)
  * 2. Clone repo if not exists (or pull if exists)
  * 3. Configure git to use the SSH key
  * 4. Run bd onboard to sync beads
+ *
+ * @param sshKey - Optional SSH key. If not provided, uses default ~/.ssh/id_ed25519
  */
 export async function setupRepository(
   repoUrl: string,
   projectName: string,
-  sshKey: string
+  sshKey?: string
 ): Promise<RepoSetupResult> {
   const projectPath = getProjectPath(projectName);
 
   try {
-    // Step 1: Set up SSH key
-    await setupSshKey(projectName, sshKey);
+    // Step 1: Set up SSH key (only if provided)
+    if (sshKey) {
+      await setupSshKey(projectName, sshKey);
+    } else {
+      log.info('No SSH key provided, using default key');
+    }
 
     // Step 2: Clone or pull
     if (existsSync(join(projectPath, '.git'))) {

@@ -29,7 +29,7 @@ export function loadConfig(): DaemonConfig {
   const port = parseInt(process.env['DAEMON_PORT'] ?? '9999', 10);
   const secret = process.env['DAEMON_SECRET'] ?? '';
   const anthropicApiKey = process.env['ANTHROPIC_API_KEY'] ?? '';
-  const workspaceDir = process.env['WORKSPACE_DIR'] ?? `${process.env['HOME']}/zerocoder`;
+  const workspaceDir = process.env['DAEMON_WORKSPACE'] ?? process.env['WORKSPACE_DIR'] ?? `${process.env['HOME']}/zerocoder`;
   const logLevel = (process.env['LOG_LEVEL'] ?? 'info') as DaemonConfig['logLevel'];
 
   if (!anthropicApiKey) {

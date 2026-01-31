@@ -19,11 +19,13 @@ const workRouter = new Hono();
 
 /**
  * Request schema for POST /work
+ * ssh_key is optional - if not provided, uses default SSH key (~/.ssh/id_ed25519)
+ * This allows containers with baked-in SSH keys to work without passing the key.
  */
 const WorkRequestSchema = z.object({
   repo_url: z.string().min(1),
   project_name: z.string().min(1).max(50),
-  ssh_key: z.string().min(1),
+  ssh_key: z.string().optional(),
 });
 
 /**
@@ -54,9 +56,9 @@ workRouter.post('/work', async (c) => {
 
   const { repo_url, project_name, ssh_key } = parseResult.data;
 
-  log.info('Work request received', { project_name, repo_url });
+  log.info('Work request received', { project_name, repo_url, hasSshKey: !!ssh_key });
 
-  // Set up the repository
+  // Set up the repository (ssh_key is optional - uses default if not provided)
   const setupResult = await setupRepository(repo_url, project_name, ssh_key);
 
   if (!setupResult.success) {

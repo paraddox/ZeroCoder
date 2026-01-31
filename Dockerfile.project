@@ -144,6 +144,17 @@ COPY container_scripts_ts/ /app/container_scripts_ts/
 WORKDIR /app/container_scripts_ts
 RUN npm install && npm run build
 
+# =============================================================================
+# ZeroCoder Daemon Setup
+# =============================================================================
+
+# Copy daemon package source
+COPY packages/daemon/ /app/daemon/
+
+# Build daemon
+WORKDIR /app/daemon
+RUN npm install && npm run build
+
 # Reset working directory
 WORKDIR /app
 
@@ -186,7 +197,11 @@ WORKDIR /project
 # Make /project writable by coder user for git clone
 RUN chown coder:coder /project
 
+# Expose daemon port for HTTP API
+EXPOSE 9999
+
 # Create entrypoint script
+# The daemon handles git clone/pull and agent orchestration via HTTP API
 COPY <<EOF /entrypoint.sh
 #!/bin/bash
 set -e
@@ -207,91 +222,18 @@ export BUN_JSC_forceRAMSize="3221225472"  # 3GB in bytes
 umask 000
 
 # Update Claude Code to latest version at startup
-echo "Updating Claude Code to latest version..."
+echo "[\$(date -Iseconds)] Updating Claude Code to latest version..."
 su - coder -c "claude update" 2>/dev/null || true
 
-# Create agent log file (world-writable so coder user can write to it)
-# This file is tailed to show agent activity in docker logs
-touch /var/log/agent.log
-chmod 666 /var/log/agent.log
-echo "[\$(date -Iseconds)] Container started" >> /var/log/agent.log
+echo "[\$(date -Iseconds)] Starting ZeroCoder daemon on port 9999..."
 
-# =============================================================================
-# Clone repository from GIT_REMOTE_URL
-# =============================================================================
-if [ -z "\$GIT_REMOTE_URL" ]; then
-    echo "[\$(date -Iseconds)] ERROR: GIT_REMOTE_URL not set" >> /var/log/agent.log
-    echo "[\$(date -Iseconds)] Container requires GIT_REMOTE_URL environment variable" >> /var/log/agent.log
-    exit 1
-fi
-
-echo "[\$(date -Iseconds)] Cloning \$GIT_REMOTE_URL (branch: main)..." >> /var/log/agent.log
-
-# Clone as coder user (always clone main branch)
-if [ -d "/project/.git" ] || [ -f "/project/.git" ]; then
-    echo "[\$(date -Iseconds)] Project already exists, pulling latest..." >> /var/log/agent.log
-    # Clean up stale git lock files (from crashed git operations)
-    if [ -f "/project/.git/index.lock" ] || [ -f "/project/.git/HEAD.lock" ] || [ -f "/project/.git/config.lock" ]; then
-        echo "[\$(date -Iseconds)] Cleaning stale git locks..." >> /var/log/agent.log
-        rm -f /project/.git/index.lock
-        rm -f /project/.git/HEAD.lock
-        rm -f /project/.git/config.lock
-        find /project/.git/refs -name "*.lock" -delete 2>/dev/null || true
-    fi
-    su - coder -c "cd /project && git fetch origin && git reset --hard origin/main"
-else
-    # Clone into temp dir first, then move contents (can't clone into non-empty /project)
-    su - coder -c "git clone --branch main \$GIT_REMOTE_URL /tmp/project-clone"
-    # Move all files including hidden ones
-    su - coder -c "mv /tmp/project-clone/* /tmp/project-clone/.[!.]* /project/ 2>/dev/null || true"
-    rm -rf /tmp/project-clone
-fi
-
-if [ ! -e "/project/.git" ]; then
-    echo "[\$(date -Iseconds)] ERROR: Git clone failed - /project/.git not found" >> /var/log/agent.log
-    exit 1
-fi
-
-echo "[\$(date -Iseconds)] Repository cloned successfully" >> /var/log/agent.log
-
-# Clean up stale beads daemon lock files (prevents stack overflow bug)
-if [ -f "/project/.beads/daemon.lock" ]; then
-    rm -f /project/.beads/daemon.lock
-    echo "[\$(date -Iseconds)] Removed stale beads daemon.lock" >> /var/log/agent.log
-fi
-
-# Fix .beads directory permissions at startup (make world-writable)
-if [ -d "/project/.beads" ]; then
-    chmod -R a+rwX /project/.beads 2>/dev/null || true
-fi
-
-# Fix prompts directory permissions at startup (make world-writable)
-if [ -d "/project/prompts" ]; then
-    chmod -R a+rwX /project/prompts 2>/dev/null || true
-fi
-
-# Kill any running beads daemon (prevents sync conflicts)
-if [ -f "/project/.beads/daemon.pid" ]; then
-    DAEMON_PID=\$(cat /project/.beads/daemon.pid 2>/dev/null)
-    if [ -n "\$DAEMON_PID" ] && kill -0 "\$DAEMON_PID" 2>/dev/null; then
-        echo "[\$(date -Iseconds)] Stopping beads daemon (PID: \$DAEMON_PID)..." >> /var/log/agent.log
-        kill "\$DAEMON_PID" 2>/dev/null || true
-        sleep 1
-    fi
-    rm -f /project/.beads/daemon.pid /project/.beads/daemon.lock
-fi
-
-# Run repository setup script (syncs beads via host API)
-if [ -f "/app/setup_repo.sh" ]; then
-    echo "[\$(date -Iseconds)] Running repository setup (type: \${CONTAINER_TYPE:-coding})..." >> /var/log/agent.log
-    su - coder -c "cd /project && CONTAINER_TYPE=\${CONTAINER_TYPE:-coding} HOST_API_URL=\${HOST_API_URL:-} PROJECT_NAME=\${PROJECT_NAME:-} /app/setup_repo.sh"
-fi
-
-echo "[\$(date -Iseconds)] Container ready, waiting for agent..." >> /var/log/agent.log
-
-# Keep container running by tailing the agent log
-# Agent processes will write to this file, making output visible in docker logs
-exec tail -f /var/log/agent.log
+# Start the ZeroCoder daemon
+# The daemon:
+# - Exposes HTTP API on port 9999 for agent control
+# - Handles git clone/pull when POST /work is called
+# - Manages Claude Code agent lifecycle
+# - Provides /status, /stop, /health endpoints
+exec su - coder -c "cd /app/daemon && DAEMON_PORT=9999 DAEMON_WORKSPACE=/project node dist/index.js"
 EOF
 RUN chmod +x /entrypoint.sh
 
