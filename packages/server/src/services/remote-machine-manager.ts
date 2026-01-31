@@ -33,6 +33,87 @@ import {
 } from '../db/crud.js';
 
 // =============================================================================
+// SSH Config Parsing
+// =============================================================================
+
+interface SSHConfigHost {
+  host: string;
+  hostname?: string;
+  port?: number;
+  user?: string;
+  identityFile?: string;
+}
+
+/**
+ * Parse ~/.ssh/config to resolve SSH aliases.
+ * Returns resolved config if alias found, null otherwise.
+ *
+ * The ssh2 library doesn't read ~/.ssh/config, so SSH aliases like "cld2"
+ * won't work directly. This function resolves them to actual hostnames.
+ */
+function resolveSSHAlias(alias: string): SSHConfigHost | null {
+  const configPath = `${homedir()}/.ssh/config`;
+  try {
+    const content = readFileSync(configPath, 'utf-8');
+    const lines = content.split('\n');
+
+    let currentHost: SSHConfigHost | null = null;
+    let foundMatch = false;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('#') || !trimmed) continue;
+
+      const parts = trimmed.split(/\s+/);
+      const key = parts[0];
+      const value = parts.slice(1).join(' ');
+
+      if (!key) continue;
+
+      if (key.toLowerCase() === 'host') {
+        // Check if previous host was our match
+        if (foundMatch && currentHost) {
+          return currentHost;
+        }
+        // Start new host block
+        const patterns = value.split(/\s+/);
+        foundMatch = patterns.some(p => {
+          if (p.includes('*')) {
+            const regex = new RegExp('^' + p.replace(/\*/g, '.*') + '$');
+            return regex.test(alias);
+          }
+          return p === alias;
+        });
+        currentHost = foundMatch ? { host: alias } : null;
+      } else if (currentHost && foundMatch) {
+        switch (key.toLowerCase()) {
+          case 'hostname':
+            currentHost.hostname = value;
+            break;
+          case 'port':
+            currentHost.port = parseInt(value, 10);
+            break;
+          case 'user':
+            currentHost.user = value;
+            break;
+          case 'identityfile':
+            currentHost.identityFile = value.replace(/^~/, homedir());
+            break;
+        }
+      }
+    }
+
+    // Handle last host in file
+    if (foundMatch && currentHost) {
+      return currentHost;
+    }
+  } catch {
+    // SSH config doesn't exist or isn't readable
+  }
+  return null;
+}
+
+// =============================================================================
 // Daemon API Types
 // =============================================================================
 
@@ -209,9 +290,14 @@ export class RemoteMachineManager {
 
     this._machineConfig = machine;
 
-    const privateKeyPath = machine.sshKeyPath
-      ? machine.sshKeyPath.replace(/^~/, homedir())
-      : undefined;
+    // Try to resolve SSH alias from ~/.ssh/config
+    const sshConfig = resolveSSHAlias(machine.host);
+
+    const host = sshConfig?.hostname ?? machine.host;
+    const port = sshConfig?.port ?? machine.port ?? 22;
+    const username = sshConfig?.user ?? machine.username ?? 'root';
+    const privateKeyPath = sshConfig?.identityFile
+      ?? (machine.sshKeyPath ? machine.sshKeyPath.replace(/^~/, homedir()) : undefined);
 
     return new Promise((resolve, reject) => {
       const client = new SSHClient();
@@ -226,10 +312,10 @@ export class RemoteMachineManager {
       });
 
       client.connect({
-        host: machine.host,
-        port: machine.port,
-        username: machine.username,
-        privateKey: privateKeyPath ? readFileSync(privateKeyPath.replace(/^~/, homedir())) : undefined,
+        host,
+        port,
+        username,
+        privateKey: privateKeyPath ? readFileSync(privateKeyPath) : undefined,
         readyTimeout: 30000,
         // Auto-accept host keys (equivalent to StrictHostKeyChecking=no)
         hostVerifier: () => true,
@@ -1047,9 +1133,13 @@ fi
       });
     });
 
-    const privateKeyPath = machine.sshKeyPath
-      ? machine.sshKeyPath.replace(/^~/, homedir())
-      : undefined;
+    // Resolve SSH alias from ~/.ssh/config
+    const sshConfig = resolveSSHAlias(machine.host);
+    const host = sshConfig?.hostname ?? machine.host;
+    const sshPort = sshConfig?.port ?? machine.port ?? 22;
+    const username = sshConfig?.user ?? machine.username ?? 'root';
+    const privateKeyPath = sshConfig?.identityFile
+      ?? (machine.sshKeyPath ? machine.sshKeyPath.replace(/^~/, homedir()) : undefined);
 
     let privateKey: Buffer | undefined;
     if (privateKeyPath) {
@@ -1065,9 +1155,9 @@ fi
     }
 
     client.connect({
-      host: machine.host,
-      port: machine.port,
-      username: machine.username,
+      host,
+      port: sshPort,
+      username,
       privateKey,
       readyTimeout: 30000,
       hostVerifier: () => true,
@@ -1100,8 +1190,11 @@ export async function callDaemonApi<T>(
     return { success: false, error: `Machine ${machineId} not found` };
   }
 
+  // Resolve SSH alias to get actual hostname for daemon API calls
+  const sshConfig = resolveSSHAlias(machine.host);
+  const host = sshConfig?.hostname ?? machine.host;
   const port = machine.daemonPort ?? DEFAULT_DAEMON_PORT;
-  const url = `http://${machine.host}:${port}${endpoint}`;
+  const url = `http://${host}:${port}${endpoint}`;
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
