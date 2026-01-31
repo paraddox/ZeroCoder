@@ -380,13 +380,13 @@ export async function startRemoteAgent(
 }
 
 export async function stopRemoteAgent(projectName: string): Promise<AgentActionResponse> {
-  return fetchJSON(`/projects/${encodeURIComponent(projectName)}/remote-agent/daemon/stop`, {
+  return fetchJSON(`/projects/${encodeURIComponent(projectName)}/remote-agent/stop`, {
     method: 'POST',
   })
 }
 
 export async function gracefulStopRemoteAgent(projectName: string): Promise<AgentActionResponse> {
-  return fetchJSON(`/projects/${encodeURIComponent(projectName)}/remote-agent/daemon/graceful-stop`, {
+  return fetchJSON(`/projects/${encodeURIComponent(projectName)}/remote-agent/graceful-stop`, {
     method: 'POST',
   })
 }
