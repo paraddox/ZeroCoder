@@ -3,10 +3,10 @@
  * =======================
  *
  * TypeScript functions mirroring registry.py exports for project, container,
- * remote machine, and remote agent management.
+ * and remote machine management.
  */
 
-import { eq, and, or, inArray, lt } from 'drizzle-orm';
+import { eq, and, inArray, lt } from 'drizzle-orm';
 import { db } from './index.js';
 import {
   projects,
@@ -14,10 +14,8 @@ import {
   featureCache,
   featureStatsCache,
   remoteMachines,
-  remoteAgents,
   projectVerificationState,
   type Container,
-  type RemoteAgent,
   type ContainerType,
   type ContainerStatus,
 } from './schema.js';
@@ -560,7 +558,6 @@ export function listAllContainers(): Array<{
  */
 export function clearSessionState(): void {
   db.delete(containers).run();
-  db.delete(remoteAgents).run();
   db.delete(featureCache).run();
   db.delete(featureStatsCache).run();
   db.delete(projectVerificationState).run();
@@ -1135,192 +1132,3 @@ export function updateRemoteMachine(
   return result.changes > 0;
 }
 
-// =============================================================================
-// Remote Agent CRUD Functions
-// =============================================================================
-
-export interface RemoteAgentInfo {
-  id: number;
-  projectName: string;
-  machineId: number;
-  machineName: string;
-  agentNumber: number;
-  status: string;
-  currentFeature: string | null;
-  pid: number | null;
-  gracefulStopRequested: boolean;
-  restarting: boolean;
-  lastActivityAt: string | null;
-}
-
-/**
- * Create or get an existing remote agent record.
- */
-export function createRemoteAgent(projectName: string, machineId: number, agentNumber: number = 1): number {
-  const existing = db
-    .select()
-    .from(remoteAgents)
-    .where(
-      and(
-        eq(remoteAgents.projectName, projectName),
-        eq(remoteAgents.machineId, machineId),
-        eq(remoteAgents.agentNumber, agentNumber)
-      )
-    )
-    .get();
-
-  if (existing) {
-    db.update(remoteAgents)
-      .set({
-        status: 'created',
-        currentFeature: null,
-        pid: null,
-        gracefulStopRequested: false,
-        restarting: false,
-      })
-      .where(eq(remoteAgents.id, existing.id))
-      .run();
-    return existing.id;
-  }
-
-  const result = db
-    .insert(remoteAgents)
-    .values({
-      projectName,
-      machineId,
-      agentNumber,
-      status: 'created',
-      createdAt: new Date().toISOString(),
-    })
-    .run();
-
-  return Number(result.lastInsertRowid);
-}
-
-/**
- * Update a remote agent's state.
- */
-export function updateRemoteAgent(
-  agentId: number,
-  updates: {
-    status?: string;
-    currentFeature?: string | null;
-    pid?: number | null;
-    gracefulStopRequested?: boolean;
-    restarting?: boolean;
-  }
-): boolean {
-  const setValues: Partial<RemoteAgent> = {};
-
-  if (updates.status !== undefined) {
-    setValues.status = updates.status;
-  }
-  if (updates.currentFeature !== undefined) {
-    setValues.currentFeature = updates.currentFeature || null;
-  }
-  if (updates.pid !== undefined) {
-    setValues.pid = updates.pid;
-  }
-  if (updates.gracefulStopRequested !== undefined) {
-    setValues.gracefulStopRequested = updates.gracefulStopRequested;
-  }
-  if (updates.restarting !== undefined) {
-    setValues.restarting = updates.restarting;
-  }
-
-  setValues.lastActivityAt = new Date().toISOString();
-
-  const result = db.update(remoteAgents).set(setValues).where(eq(remoteAgents.id, agentId)).run();
-  return result.changes > 0;
-}
-
-/**
- * Get all remote agents for a project.
- */
-export function getRemoteAgentsForProject(projectName: string): RemoteAgentInfo[] {
-  const agents = db.select().from(remoteAgents).where(eq(remoteAgents.projectName, projectName)).all();
-
-  return agents.map((a) => {
-    const machine = db.select().from(remoteMachines).where(eq(remoteMachines.id, a.machineId)).get();
-    return {
-      id: a.id,
-      projectName: a.projectName,
-      machineId: a.machineId,
-      machineName: machine?.name ?? 'unknown',
-      agentNumber: a.agentNumber,
-      status: a.status,
-      currentFeature: a.currentFeature,
-      pid: a.pid,
-      gracefulStopRequested: a.gracefulStopRequested,
-      restarting: a.restarting,
-      lastActivityAt: a.lastActivityAt,
-    };
-  });
-}
-
-/**
- * Get a remote agent by ID.
- */
-export function getRemoteAgent(agentId: number): RemoteAgentInfo | null {
-  const a = db.select().from(remoteAgents).where(eq(remoteAgents.id, agentId)).get();
-  if (!a) {
-    return null;
-  }
-
-  const machine = db.select().from(remoteMachines).where(eq(remoteMachines.id, a.machineId)).get();
-  return {
-    id: a.id,
-    projectName: a.projectName,
-    machineId: a.machineId,
-    machineName: machine?.name ?? 'unknown',
-    agentNumber: a.agentNumber,
-    status: a.status,
-    currentFeature: a.currentFeature,
-    pid: a.pid,
-    gracefulStopRequested: a.gracefulStopRequested,
-    restarting: a.restarting,
-    lastActivityAt: a.lastActivityAt,
-  };
-}
-
-/**
- * Delete a remote agent record.
- */
-export function deleteRemoteAgent(agentId: number): boolean {
-  const result = db.delete(remoteAgents).where(eq(remoteAgents.id, agentId)).run();
-  return result.changes > 0;
-}
-
-/**
- * Get all active remote agents across all projects.
- * Returns agents with status 'running' or 'created'.
- */
-export function getAllActiveRemoteAgents(): RemoteAgentInfo[] {
-  const agents = db
-    .select()
-    .from(remoteAgents)
-    .where(
-      or(
-        eq(remoteAgents.status, 'running'),
-        eq(remoteAgents.status, 'created')
-      )
-    )
-    .all();
-
-  return agents.map((a) => {
-    const machine = db.select().from(remoteMachines).where(eq(remoteMachines.id, a.machineId)).get();
-    return {
-      id: a.id,
-      projectName: a.projectName,
-      machineId: a.machineId,
-      machineName: machine?.name ?? 'unknown',
-      agentNumber: a.agentNumber,
-      status: a.status,
-      currentFeature: a.currentFeature,
-      pid: a.pid,
-      gracefulStopRequested: a.gracefulStopRequested,
-      restarting: a.restarting,
-      lastActivityAt: a.lastActivityAt,
-    };
-  });
-}

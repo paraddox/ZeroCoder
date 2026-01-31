@@ -13,15 +13,23 @@ export * from './local-project-manager.js';
 export * from './task-cleanup.js';
 export * from './branch-cleanup.js';
 export {
-  RemoteMachineManager,
-  getOrCreateRemoteManager,
-  getExistingRemoteManager,
-  getAllRemoteManagers,
-  clearRemoteManager,
-  cleanupAllRemoteManagers,
-  type RemoteAgentStatus,
-  type RemoteOutputCallback,
-  type RemoteStatusCallback,
+  deployDaemon,
+  checkDaemonHealth,
+  getDaemonStatus,
+  assignWorkToDaemon,
+  assignWorkToDaemonWithMachineKey,
+  stopDaemon,
+  shutdownDaemon,
+  getDaemonVersion,
+  isMachineIdle,
+  checkupRemoteMachines,
+  clearDaemonTarballCache,
+  callDaemonApi,
+  type DaemonStatus,
+  type DaemonHealthResponse,
+  type DaemonVersionResponse,
+  type DaemonWorkRequest,
+  type CheckupResult,
 } from './remote-machine-manager.js';
 export {
   SpecChatSession,

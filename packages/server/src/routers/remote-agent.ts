@@ -2,8 +2,7 @@
  * Remote Agent Router
  * ===================
  *
- * Endpoints for controlling agents on remote machines.
- * Supports both legacy SSH-based agents and new daemon-based agents.
+ * Endpoints for controlling agents on remote machines via daemon.
  *
  * Routes:
  * - POST /api/projects/:project_name/remote-agent/start
@@ -26,21 +25,17 @@ import { RemoteAgentStartRequestSchema } from '@zerocoder/shared';
 import {
   getProjectInfo,
   getRemoteMachine,
-  createRemoteAgent,
-  updateRemoteAgent,
-  deleteRemoteAgent,
-  getRemoteAgentsForProject,
+  listRemoteMachines,
 } from '../db/crud.js';
 
 import {
-  getOrCreateRemoteManager,
-  getAllRemoteManagers,
   deployDaemon,
   checkDaemonHealth,
   getDaemonStatus,
   assignWorkToDaemon,
   stopDaemon,
   shutdownDaemon,
+  type DaemonStatus,
 } from '../services/remote-machine-manager.js';
 
 // =============================================================================
@@ -69,7 +64,7 @@ async function parseBody<T>(
 }
 
 // =============================================================================
-// Route Handlers
+// Agent Routes (daemon-based)
 // =============================================================================
 
 /**
@@ -77,139 +72,6 @@ async function parseBody<T>(
  * Start an agent on a remote machine for the given project.
  */
 remoteAgentRouter.post('/:project_name/remote-agent/start', async (c) => {
-  const projectName = c.req.param('project_name');
-  const request = await parseBody(c, RemoteAgentStartRequestSchema);
-
-  // Validate project exists
-  const projectInfo = getProjectInfo(projectName);
-  if (!projectInfo) {
-    throw new HTTPException(404, { message: 'Project not found' });
-  }
-
-  // Validate machine exists
-  const machine = getRemoteMachine(request.machine_id);
-  if (!machine) {
-    throw new HTTPException(404, { message: 'Remote machine not found' });
-  }
-
-  // Get git URL for the project
-  const gitUrl = projectInfo.gitUrl;
-  if (!gitUrl) {
-    throw new HTTPException(400, { message: 'Project has no git URL' });
-  }
-
-  // Determine agent number (find next available)
-  const existingAgents = getRemoteAgentsForProject(projectName);
-  const usedNumbers = new Set(
-    existingAgents
-      .filter((a) => a.machineId === request.machine_id)
-      .map((a) => a.agentNumber)
-  );
-  let agentNumber = 1;
-  while (usedNumbers.has(agentNumber)) {
-    agentNumber++;
-  }
-
-  // Create agent record
-  const agentId = createRemoteAgent(projectName, request.machine_id, agentNumber);
-
-  // Start the remote manager
-  try {
-    const manager = await getOrCreateRemoteManager(
-      projectName,
-      request.machine_id,
-      gitUrl,
-      agentNumber,
-      agentId
-    );
-    const [success, message] = await manager.start();
-    if (!success) {
-      throw new HTTPException(500, { message });
-    }
-
-    return c.json({
-      success: true,
-      message: `Agent started on ${machine.name}`,
-      agent_id: agentId,
-    });
-  } catch (e) {
-    if (e instanceof HTTPException) {
-      throw e;
-    }
-    const errorMsg = e instanceof Error ? e.message : String(e);
-    console.error(`Failed to start remote agent: ${errorMsg}`);
-    updateRemoteAgent(agentId, { status: 'stopped' });
-    throw new HTTPException(500, { message: errorMsg });
-  }
-});
-
-/**
- * POST /api/projects/:project_name/remote-agent/stop
- * Stop all remote agents for a project.
- */
-remoteAgentRouter.post('/:project_name/remote-agent/stop', async (c) => {
-  const projectName = c.req.param('project_name');
-
-  const managers = getAllRemoteManagers(projectName);
-  if (managers.length === 0) {
-    throw new HTTPException(404, { message: 'No remote agents running' });
-  }
-
-  const results = [];
-  for (const manager of managers) {
-    const [success, msg] = await manager.stop();
-    results.push({
-      agent_number: manager.agentNumber,
-      success,
-      message: msg,
-    });
-  }
-
-  return c.json({ success: true, results });
-});
-
-/**
- * POST /api/projects/:project_name/remote-agent/graceful-stop
- * Request graceful stop for all remote agents.
- */
-remoteAgentRouter.post('/:project_name/remote-agent/graceful-stop', async (c) => {
-  const projectName = c.req.param('project_name');
-
-  const managers = getAllRemoteManagers(projectName);
-  if (managers.length === 0) {
-    throw new HTTPException(404, { message: 'No remote agents running' });
-  }
-
-  for (const manager of managers) {
-    await manager.gracefulStop();
-  }
-
-  return c.json({
-    success: true,
-    message: 'Graceful stop requested for all remote agents',
-  });
-});
-
-/**
- * GET /api/projects/:project_name/remote-agent/status
- * Get status of all remote agents for a project.
- */
-remoteAgentRouter.get('/:project_name/remote-agent/status', async (c) => {
-  const projectName = c.req.param('project_name');
-
-  const agents = getRemoteAgentsForProject(projectName);
-  return c.json(agents);
-});
-
-// =============================================================================
-// Daemon-based Agent Routes
-// =============================================================================
-
-/**
- * POST /api/projects/:project_name/remote-agent/daemon/start
- * Start work on a daemon-based remote agent.
- */
-remoteAgentRouter.post('/:project_name/remote-agent/daemon/start', async (c) => {
   const projectName = c.req.param('project_name');
   const request = await parseBody(c, RemoteAgentStartRequestSchema);
 
@@ -255,91 +117,94 @@ remoteAgentRouter.post('/:project_name/remote-agent/daemon/start', async (c) => 
 });
 
 /**
- * POST /api/projects/:project_name/remote-agent/daemon/stop
- * Stop daemon-based agents for a project (hard stop).
- * Stops all daemons on machines that have agents for this project.
+ * POST /api/projects/:project_name/remote-agent/stop
+ * Stop remote agents for a project (hard stop).
  */
-remoteAgentRouter.post('/:project_name/remote-agent/daemon/stop', async (c) => {
+remoteAgentRouter.post('/:project_name/remote-agent/stop', async (c) => {
   const projectName = c.req.param('project_name');
 
-  // Get all remote agents for this project
-  const agents = getRemoteAgentsForProject(projectName);
-  if (agents.length === 0) {
-    throw new HTTPException(404, { message: 'No remote agents found for project' });
+  // Get all machines and check which ones are running this project
+  const machines = listRemoteMachines();
+  const results = [];
+
+  for (const machine of machines) {
+    const status = await getDaemonStatus(machine.id);
+    if (status && status.current_repo?.includes(projectName)) {
+      const result = await stopDaemon(machine.id, true);
+      results.push({ machine_id: machine.id, machine_name: machine.name, ...result });
+    }
   }
 
-  // Stop daemon on each machine that has an agent for this project
-  const results = [];
-  const stoppedMachines = new Set<number>();
-  for (const agent of agents) {
-    if (!stoppedMachines.has(agent.machineId)) {
-      const result = await stopDaemon(agent.machineId, true);
-      results.push({ machine_id: agent.machineId, ...result });
-      stoppedMachines.add(agent.machineId);
-
-      // Delete agent records on successful stop command
-      // The daemon will transition to stopped/idle eventually
-      if (result.success) {
-        for (const a of agents) {
-          if (a.machineId === agent.machineId) {
-            deleteRemoteAgent(a.id);
-          }
-        }
-      }
-    }
+  if (results.length === 0) {
+    throw new HTTPException(404, { message: 'No remote agents running for this project' });
   }
 
   return c.json({ success: true, results });
 });
 
 /**
- * POST /api/projects/:project_name/remote-agent/daemon/graceful-stop
- * Graceful stop daemon-based agents for a project.
- * Gracefully stops all daemons on machines that have agents for this project.
+ * POST /api/projects/:project_name/remote-agent/graceful-stop
+ * Request graceful stop for remote agents.
  */
-remoteAgentRouter.post('/:project_name/remote-agent/daemon/graceful-stop', async (c) => {
+remoteAgentRouter.post('/:project_name/remote-agent/graceful-stop', async (c) => {
   const projectName = c.req.param('project_name');
 
-  // Get all remote agents for this project
-  const agents = getRemoteAgentsForProject(projectName);
-  if (agents.length === 0) {
-    throw new HTTPException(404, { message: 'No remote agents found for project' });
+  // Get all machines and check which ones are running this project
+  const machines = listRemoteMachines();
+  const results = [];
+
+  for (const machine of machines) {
+    const status = await getDaemonStatus(machine.id);
+    if (status && status.current_repo?.includes(projectName)) {
+      const result = await stopDaemon(machine.id, false);
+      results.push({ machine_id: machine.id, machine_name: machine.name, ...result });
+    }
   }
 
-  // Graceful stop daemon on each machine
-  const results = [];
-  const stoppedMachines = new Set<number>();
-  for (const agent of agents) {
-    if (!stoppedMachines.has(agent.machineId)) {
-      const result = await stopDaemon(agent.machineId, false);
-      results.push({ machine_id: agent.machineId, ...result });
-      stoppedMachines.add(agent.machineId);
-
-      // For graceful stop, check if daemon is already idle
-      const status = await getDaemonStatus(agent.machineId);
-      const isIdle = !status || status.status === 'idle';
-
-      // Update all agents on this machine
-      for (const a of agents) {
-        if (a.machineId === agent.machineId) {
-          if (isIdle) {
-            // Already idle - delete record
-            deleteRemoteAgent(a.id);
-          } else {
-            // Still running/stopping, mark as graceful stop requested
-            // Record will be deleted when daemon becomes idle
-            updateRemoteAgent(a.id, { gracefulStopRequested: true });
-          }
-        }
-      }
-    }
+  if (results.length === 0) {
+    throw new HTTPException(404, { message: 'No remote agents running for this project' });
   }
 
   return c.json({ success: true, results });
 });
 
+/**
+ * GET /api/projects/:project_name/remote-agent/status
+ * Get status of remote agents for a project.
+ * Queries all remote machines to find which ones are working on this project.
+ */
+remoteAgentRouter.get('/:project_name/remote-agent/status', async (c) => {
+  const projectName = c.req.param('project_name');
+
+  const machines = listRemoteMachines();
+  const agents: Array<{
+    machine_id: number;
+    machine_name: string;
+    status: DaemonStatus['status'];
+    current_feature: string | null;
+    agent_type: string | null;
+    stats: DaemonStatus['stats'];
+  }> = [];
+
+  for (const machine of machines) {
+    const status = await getDaemonStatus(machine.id);
+    if (status && status.current_repo?.includes(projectName)) {
+      agents.push({
+        machine_id: machine.id,
+        machine_name: machine.name,
+        status: status.status,
+        current_feature: status.current_feature,
+        agent_type: status.agent_type,
+        stats: status.stats,
+      });
+    }
+  }
+
+  return c.json(agents);
+});
+
 // =============================================================================
-// Daemon Management Routes (machine-level, not project-level)
+// Daemon Management Routes (machine-level)
 // =============================================================================
 
 /**
@@ -357,7 +222,7 @@ remoteAgentRouter.post('/machines/:machine_id/daemon/deploy', async (c) => {
   // Daemon secret for auth (optional)
   const daemonSecret = process.env['DAEMON_SECRET'];
 
-  // Deploy daemon by SCP-ing pre-built files (no longer needs ZEROCODER_REPO_URL)
+  // Deploy daemon by SCP-ing pre-built files
   const result = await deployDaemon(machineId, undefined, daemonSecret);
 
   if (!result.success) {

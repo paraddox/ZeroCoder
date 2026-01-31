@@ -8,8 +8,7 @@
  * - containers: Docker container instances for projects
  * - featureCache: Cached feature data from container polling
  * - featureStatsCache: Aggregate feature statistics
- * - remoteMachines: Remote SSH machines for agent execution
- * - remoteAgents: Remote agent instances on SSH machines
+ * - remoteMachines: Remote machines with daemon for agent execution
  * - projectVerificationState: Session-scoped verification tracking
  */
 
@@ -32,7 +31,6 @@ export const projectsRelations = relations(projects, ({ many }) => ({
   containers: many(containers),
   featureCache: many(featureCache),
   featureStatsCache: many(featureStatsCache),
-  remoteAgents: many(remoteAgents),
 }));
 
 export type Project = typeof projects.$inferSelect;
@@ -172,57 +170,12 @@ export const remoteMachines = sqliteTable('remote_machines', {
   daemonVersion: text('daemon_version', { length: 50 }), // Version of deployed daemon
 });
 
-export const remoteMachinesRelations = relations(remoteMachines, ({ many }) => ({
-  remoteAgents: many(remoteAgents),
-}));
-
 export type RemoteMachine = typeof remoteMachines.$inferSelect;
 export type NewRemoteMachine = typeof remoteMachines.$inferInsert;
 
 // Valid machine statuses
 export const MACHINE_STATUSES = ['online', 'offline', 'unknown'] as const;
 export type MachineStatus = (typeof MACHINE_STATUSES)[number];
-
-// =============================================================================
-// Remote Agents Table
-// =============================================================================
-
-export const remoteAgents = sqliteTable(
-  'remote_agents',
-  {
-    id: integer('id').primaryKey({ autoIncrement: true }),
-    projectName: text('project_name', { length: 50 })
-      .notNull()
-      .references(() => projects.name, { onDelete: 'cascade' }),
-    machineId: integer('machine_id')
-      .notNull()
-      .references(() => remoteMachines.id, { onDelete: 'cascade' }),
-    agentNumber: integer('agent_number').notNull().default(1),
-    status: text('status', { length: 20 }).notNull().default('created'), // same as container statuses
-    currentFeature: text('current_feature', { length: 50 }),
-    pid: integer('pid'),
-    userStartedAt: text('user_started_at'), // ISO timestamp
-    gracefulStopRequested: integer('graceful_stop_requested', { mode: 'boolean' }).notNull().default(false),
-    restarting: integer('restarting', { mode: 'boolean' }).notNull().default(false),
-    lastActivityAt: text('last_activity_at'), // ISO timestamp
-    createdAt: text('created_at').notNull(), // ISO timestamp
-  },
-  (table) => [unique('uq_remote_agent_identity').on(table.projectName, table.machineId, table.agentNumber)]
-);
-
-export const remoteAgentsRelations = relations(remoteAgents, ({ one }) => ({
-  project: one(projects, {
-    fields: [remoteAgents.projectName],
-    references: [projects.name],
-  }),
-  machine: one(remoteMachines, {
-    fields: [remoteAgents.machineId],
-    references: [remoteMachines.id],
-  }),
-}));
-
-export type RemoteAgent = typeof remoteAgents.$inferSelect;
-export type NewRemoteAgent = typeof remoteAgents.$inferInsert;
 
 // =============================================================================
 // Project Verification State Table (session-scoped)

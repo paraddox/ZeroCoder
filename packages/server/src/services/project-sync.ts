@@ -7,7 +7,7 @@
  * periodically pulls those changes so the local kanban board reflects them.
  *
  * Key responsibilities:
- * - Track projects with active remote agents
+ * - Track projects with active remote agents (via daemon status)
  * - Periodically git pull and bd sync --import-only for those projects
  * - Provide feature data that includes remote agent work
  */
@@ -18,11 +18,11 @@ import { join } from 'node:path';
 
 import {
   getProjectPath,
-  getRemoteAgentsForProject,
   listProjectContainers,
-  type RemoteAgentInfo,
+  listRemoteMachines,
 } from '../db/crud.js';
 import { getBeadsManagerSync, type BeadsTask, type Feature } from './beads-manager.js';
+import { getDaemonStatus } from './remote-machine-manager.js';
 
 // =============================================================================
 // Constants
@@ -43,12 +43,18 @@ const lastSyncTime = new Map<string, number>();
 // =============================================================================
 
 /**
- * Check if a project has any remote agents (active or recent).
+ * Check if a project has any remote agents running (via daemon status).
  */
-export function hasRemoteAgents(projectName: string): boolean {
+export async function hasRemoteAgents(projectName: string): Promise<boolean> {
   try {
-    const remoteAgents = getRemoteAgentsForProject(projectName);
-    return remoteAgents.length > 0;
+    const machines = listRemoteMachines();
+    for (const machine of machines) {
+      const status = await getDaemonStatus(machine.id);
+      if (status && status.current_repo?.includes(projectName)) {
+        return true;
+      }
+    }
+    return false;
   } catch {
     return false;
   }
@@ -62,9 +68,9 @@ export function hasRemoteAgents(projectName: string): boolean {
  *
  * @returns true if sync was performed, false if skipped or failed
  */
-export function syncProjectIfNeeded(projectName: string): boolean {
+export async function syncProjectIfNeeded(projectName: string): Promise<boolean> {
   // Only sync projects with remote agents
-  if (!hasRemoteAgents(projectName)) {
+  if (!(await hasRemoteAgents(projectName))) {
     return false;
   }
 
@@ -114,7 +120,7 @@ export function syncProjectIfNeeded(projectName: string): boolean {
 /**
  * Force a sync regardless of the interval (for on-demand refresh).
  */
-export function forceSyncProject(projectName: string): boolean {
+export async function forceSyncProject(projectName: string): Promise<boolean> {
   // Clear the last sync time to force a sync
   lastSyncTime.delete(projectName);
   return syncProjectIfNeeded(projectName);
@@ -130,9 +136,9 @@ export function forceSyncProject(projectName: string): boolean {
  * This is the centralized way to get features that accounts for
  * remote agent changes.
  */
-export function getProjectTasks(projectName: string): BeadsTask[] {
+export async function getProjectTasks(projectName: string): Promise<BeadsTask[]> {
   // Sync if needed (for remote agent projects)
-  syncProjectIfNeeded(projectName);
+  await syncProjectIfNeeded(projectName);
 
   // Use BeadsManager to get tasks
   const manager = getBeadsManagerSync(projectName);
@@ -146,9 +152,9 @@ export function getProjectTasks(projectName: string): BeadsTask[] {
 /**
  * Get features in UI format, syncing first if needed.
  */
-export function getProjectFeatures(projectName: string): Feature[] {
+export async function getProjectFeatures(projectName: string): Promise<Feature[]> {
   // Sync if needed (for remote agent projects)
-  syncProjectIfNeeded(projectName);
+  await syncProjectIfNeeded(projectName);
 
   // Use BeadsManager to get features
   const manager = getBeadsManagerSync(projectName);
@@ -165,7 +171,7 @@ export function getProjectFeatures(projectName: string): Feature[] {
  * This provides a unified view of all in-progress features across
  * local Docker containers and remote machines.
  */
-export function getInProgressFeatureIds(projectName: string): Set<string> {
+export async function getInProgressFeatureIds(projectName: string): Promise<Set<string>> {
   const inProgress = new Set<string>();
 
   // Get from Docker containers
@@ -180,12 +186,13 @@ export function getInProgressFeatureIds(projectName: string): Set<string> {
     // Ignore container errors
   }
 
-  // Get from remote agents
+  // Get from remote agents (via daemon status)
   try {
-    const remoteAgents = getRemoteAgentsForProject(projectName);
-    for (const agent of remoteAgents) {
-      if (agent.currentFeature && agent.status === 'running') {
-        inProgress.add(agent.currentFeature);
+    const machines = listRemoteMachines();
+    for (const machine of machines) {
+      const status = await getDaemonStatus(machine.id);
+      if (status && status.current_repo?.includes(projectName) && status.current_feature) {
+        inProgress.add(status.current_feature);
       }
     }
   } catch {
@@ -196,12 +203,41 @@ export function getInProgressFeatureIds(projectName: string): Set<string> {
 }
 
 /**
- * Get all remote agents for a project.
+ * Get info about remote agents working on a project.
+ * Returns daemon status for each machine working on the project.
  */
-export function getRemoteAgents(projectName: string): RemoteAgentInfo[] {
+export async function getRemoteAgentInfo(projectName: string): Promise<Array<{
+  machineId: number;
+  machineName: string;
+  status: string;
+  currentFeature: string | null;
+  agentType: string | null;
+}>> {
+  const agents: Array<{
+    machineId: number;
+    machineName: string;
+    status: string;
+    currentFeature: string | null;
+    agentType: string | null;
+  }> = [];
+
   try {
-    return getRemoteAgentsForProject(projectName);
+    const machines = listRemoteMachines();
+    for (const machine of machines) {
+      const status = await getDaemonStatus(machine.id);
+      if (status && status.current_repo?.includes(projectName)) {
+        agents.push({
+          machineId: machine.id,
+          machineName: machine.name,
+          status: status.status,
+          currentFeature: status.current_feature,
+          agentType: status.agent_type,
+        });
+      }
+    }
   } catch {
-    return [];
+    // Ignore errors
   }
+
+  return agents;
 }

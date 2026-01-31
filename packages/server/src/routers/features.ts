@@ -201,11 +201,11 @@ featuresRouter.get('/:name/features', async (c) => {
   }
 
   // Get features from beads (syncs from remote if project has remote agents)
-  const tasks = getProjectTasks(projectName);
+  const tasks = await getProjectTasks(projectName);
   const features = tasks.map(beadsTaskToFeature);
 
   // Get features currently being worked on (containers + remote agents)
-  const inProgressIds = getInProgressFeatureIds(projectName);
+  const inProgressIds = await getInProgressFeatureIds(projectName);
 
   const pending: FeatureResponse[] = [];
   const inProgress: FeatureResponse[] = [];
