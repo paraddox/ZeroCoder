@@ -20,6 +20,7 @@ import {
   listRemoteMachines,
   getRemoteMachine,
   updateRemoteMachineStatus,
+  getProjectNameByGitUrl,
   RegistryError,
 } from '../db/crud.js';
 import { deployDaemon, getDaemonStatus } from '../services/remote-machine-manager.js';
@@ -302,6 +303,7 @@ remoteMachinesRouter.get('/agents/all', async (c) => {
     machine_id: number;
     machine_name: string;
     status: string;
+    project_name: string | null;
     current_repo: string | null;
     current_feature: string | null;
     agent_type: string | null;
@@ -311,10 +313,16 @@ remoteMachinesRouter.get('/agents/all', async (c) => {
   for (const machine of machines) {
     const status = await getDaemonStatus(machine.id);
     if (status && status.status !== 'idle') {
+      // Convert git URL to project name
+      const projectName = status.current_repo
+        ? getProjectNameByGitUrl(status.current_repo)
+        : null;
+
       agents.push({
         machine_id: machine.id,
         machine_name: machine.name,
         status: status.status,
+        project_name: projectName,
         current_repo: status.current_repo,
         current_feature: status.current_feature,
         agent_type: status.agent_type,

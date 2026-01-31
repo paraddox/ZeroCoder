@@ -200,6 +200,14 @@ export function getProjectGitUrl(name: string): string | null {
 }
 
 /**
+ * Look up a project name by its git URL.
+ */
+export function getProjectNameByGitUrl(gitUrl: string): string | null {
+  const project = db.select().from(projects).where(eq(projects.gitUrl, gitUrl)).get();
+  return project?.name ?? null;
+}
+
+/**
  * Get all registered projects.
  */
 export function listRegisteredProjects(): Record<string, ProjectInfo> {
