@@ -22,7 +22,7 @@ export const EXIT_GRACEFUL_STOP = 129;
 export const EXIT_INTERRUPTED = 130;
 
 // Default model
-const DEFAULT_AGENT_MODEL = 'claude-sonnet-4-5-20250514';
+const DEFAULT_AGENT_MODEL = 'claude-sonnet-4-5-20250929';
 
 // Config file path (relative to project directory)
 const AGENT_CONFIG_FILE = 'prompts/.agent_config.json';
