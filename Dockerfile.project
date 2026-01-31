@@ -233,7 +233,20 @@ echo "[\$(date -Iseconds)] Starting ZeroCoder daemon on port 9999..."
 # - Handles git clone/pull when POST /work is called
 # - Manages Claude Code agent lifecycle
 # - Provides /status, /stop, /health endpoints
-exec su - coder -c "cd /app/daemon && DAEMON_PORT=9999 DAEMON_WORKSPACE=/project node dist/index.js"
+#
+# Note: We use 'su - coder' for a login shell, but this resets environment variables.
+# We must explicitly pass all required env vars to the daemon process.
+exec su - coder -c "
+  export PROJECT_NAME='\$PROJECT_NAME'
+  export GIT_REMOTE_URL='\$GIT_REMOTE_URL'
+  export ANTHROPIC_API_KEY='\$ANTHROPIC_API_KEY'
+  export HOST_API_URL='\$HOST_API_URL'
+  export CONTAINER_NUMBER='\$CONTAINER_NUMBER'
+  export CONTAINER_TYPE='\$CONTAINER_TYPE'
+  export ZHIPU_API_KEY='\$ZHIPU_API_KEY'
+  export SDK_TYPE='\$SDK_TYPE'
+  cd /app/daemon && DAEMON_PORT=9999 DAEMON_WORKSPACE=/project node dist/index.js
+"
 EOF
 RUN chmod +x /entrypoint.sh
 
