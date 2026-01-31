@@ -29,6 +29,7 @@ import {
   getRemoteAgent,
   listRemoteMachines,
   getAllActiveRemoteAgents,
+  deleteRemoteAgent,
   type RemoteMachineInfo,
 } from '../db/crud.js';
 
@@ -495,13 +496,14 @@ export class RemoteMachineManager {
   private async _handleAgentExit(_exitCode: number | null): Promise<void> {
     const agent = getRemoteAgent(this.agentId);
     if (!agent) {
-      await this._broadcastStatus('stopped');
+      // Already deleted or never existed
       return;
     }
 
     if (agent.gracefulStopRequested) {
       await this._broadcastOutput('[system] Graceful stop - not restarting');
       await this._broadcastStatus('stopped');
+      deleteRemoteAgent(this.agentId);
       return;
     }
 
@@ -550,7 +552,7 @@ export class RemoteMachineManager {
       }
 
       await this._broadcastStatus('stopped');
-      updateRemoteAgent(this.agentId, { status: 'stopped', pid: null });
+      deleteRemoteAgent(this.agentId);
 
       return [true, 'Agent stopped'];
     } catch (e) {

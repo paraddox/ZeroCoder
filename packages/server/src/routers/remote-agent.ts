@@ -28,6 +28,7 @@ import {
   getRemoteMachine,
   createRemoteAgent,
   updateRemoteAgent,
+  deleteRemoteAgent,
   getRemoteAgentsForProject,
 } from '../db/crud.js';
 
@@ -282,10 +283,10 @@ remoteAgentRouter.post('/:project_name/remote-agent/daemon/stop', async (c) => {
       const isStopped = !status || status.status === 'idle' || status.status === 'stopped';
 
       if (isStopped) {
-        // Update all agents on this machine to stopped
+        // Delete all agent records on this machine
         for (const a of agents) {
           if (a.machineId === agent.machineId) {
-            updateRemoteAgent(a.id, { status: 'stopped', pid: null });
+            deleteRemoteAgent(a.id);
           }
         }
       }
@@ -327,8 +328,8 @@ remoteAgentRouter.post('/:project_name/remote-agent/daemon/graceful-stop', async
       for (const a of agents) {
         if (a.machineId === agent.machineId) {
           if (isStopped) {
-            // Already stopped
-            updateRemoteAgent(a.id, { status: 'stopped', pid: null });
+            // Already stopped - delete record
+            deleteRemoteAgent(a.id);
           } else {
             // Still running, mark as graceful stop requested
             updateRemoteAgent(a.id, { gracefulStopRequested: true });
