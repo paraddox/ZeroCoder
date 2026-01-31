@@ -18,10 +18,16 @@ import { join } from 'node:path';
 
 import {
   getProjectPath,
+  getProjectGitUrl,
   listProjectContainers,
   listRemoteMachines,
 } from '../db/crud.js';
-import { getBeadsManagerSync, type BeadsTask, type Feature } from './beads-manager.js';
+import {
+  getBeadsManager,
+  getBeadsManagerSync,
+  type BeadsTask,
+  type Feature,
+} from './beads-manager.js';
 import { getDaemonStatus } from './remote-machine-manager.js';
 
 // =============================================================================
@@ -141,12 +147,21 @@ export async function getProjectTasks(projectName: string): Promise<BeadsTask[]>
   await syncProjectIfNeeded(projectName);
 
   // Use BeadsManager to get tasks
-  const manager = getBeadsManagerSync(projectName);
-  if (manager) {
-    return manager.getTasks();
+  let manager = getBeadsManagerSync(projectName);
+
+  // Lazy initialization if manager doesn't exist
+  if (!manager) {
+    try {
+      const gitUrl = getProjectGitUrl(projectName);
+      if (gitUrl) {
+        manager = await getBeadsManager(projectName, gitUrl);
+      }
+    } catch (e) {
+      console.debug(`Failed to initialize BeadsManager for ${projectName}:`, e);
+    }
   }
 
-  return [];
+  return manager?.getTasks() ?? [];
 }
 
 /**
@@ -157,12 +172,21 @@ export async function getProjectFeatures(projectName: string): Promise<Feature[]
   await syncProjectIfNeeded(projectName);
 
   // Use BeadsManager to get features
-  const manager = getBeadsManagerSync(projectName);
-  if (manager) {
-    return manager.getFeatures();
+  let manager = getBeadsManagerSync(projectName);
+
+  // Lazy initialization if manager doesn't exist
+  if (!manager) {
+    try {
+      const gitUrl = getProjectGitUrl(projectName);
+      if (gitUrl) {
+        manager = await getBeadsManager(projectName, gitUrl);
+      }
+    } catch (e) {
+      console.debug(`Failed to initialize BeadsManager for ${projectName}:`, e);
+    }
   }
 
-  return [];
+  return manager?.getFeatures() ?? [];
 }
 
 /**
