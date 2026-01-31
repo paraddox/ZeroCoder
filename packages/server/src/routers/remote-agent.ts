@@ -277,13 +277,9 @@ remoteAgentRouter.post('/:project_name/remote-agent/daemon/stop', async (c) => {
       results.push({ machine_id: agent.machineId, ...result });
       stoppedMachines.add(agent.machineId);
 
-      // Verify daemon is actually stopped by checking status
-      // If daemon is unreachable or status is idle/stopped, the stop succeeded
-      const status = await getDaemonStatus(agent.machineId);
-      const isStopped = !status || status.status === 'idle' || status.status === 'stopped';
-
-      if (isStopped) {
-        // Delete all agent records on this machine
+      // Delete agent records on successful stop command
+      // The daemon will transition to stopped/idle eventually
+      if (result.success) {
         for (const a of agents) {
           if (a.machineId === agent.machineId) {
             deleteRemoteAgent(a.id);
@@ -319,19 +315,19 @@ remoteAgentRouter.post('/:project_name/remote-agent/daemon/graceful-stop', async
       results.push({ machine_id: agent.machineId, ...result });
       stoppedMachines.add(agent.machineId);
 
-      // For graceful stop, mark as gracefulStopRequested
-      // Also check daemon status to update DB accordingly
+      // For graceful stop, check if daemon is already idle
       const status = await getDaemonStatus(agent.machineId);
-      const isStopped = !status || status.status === 'idle' || status.status === 'stopped';
+      const isIdle = !status || status.status === 'idle';
 
       // Update all agents on this machine
       for (const a of agents) {
         if (a.machineId === agent.machineId) {
-          if (isStopped) {
-            // Already stopped - delete record
+          if (isIdle) {
+            // Already idle - delete record
             deleteRemoteAgent(a.id);
           } else {
-            // Still running, mark as graceful stop requested
+            // Still running/stopping, mark as graceful stop requested
+            // Record will be deleted when daemon becomes idle
             updateRemoteAgent(a.id, { gracefulStopRequested: true });
           }
         }
