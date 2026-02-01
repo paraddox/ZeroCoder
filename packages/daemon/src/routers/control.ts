@@ -14,9 +14,11 @@ import { Hono } from 'hono';
 import { createLogger } from '../utils/logger.js';
 import {
   getStatus,
+  getSessionStatus,
   requestGracefulStop,
   requestHardStop,
   gracefulShutdown,
+  waitForStopped,
 } from '../services/agent-orchestrator.js';
 
 const log = createLogger('control-router');
@@ -32,9 +34,13 @@ controlRouter.post('/stop/hard', async (c) => {
   log.info('Hard stop requested');
   requestHardStop();
 
+  // Wait up to 5 seconds for status to transition
+  const stopped = await waitForStopped(5000);
+
   return c.json({
     success: true,
-    message: 'Hard stop initiated',
+    message: stopped ? 'Stopped' : 'Stop initiated (agent finishing current operation)',
+    status: getSessionStatus(),
   });
 });
 
@@ -47,9 +53,13 @@ controlRouter.post('/stop/graceful', async (c) => {
   log.info('Graceful stop requested');
   requestGracefulStop();
 
+  // Wait up to 5 seconds for status to transition
+  const stopped = await waitForStopped(5000);
+
   return c.json({
     success: true,
-    message: 'Graceful stop requested - will stop after current session',
+    message: stopped ? 'Stopped' : 'Graceful stop initiated (will stop after current session)',
+    status: getSessionStatus(),
   });
 });
 

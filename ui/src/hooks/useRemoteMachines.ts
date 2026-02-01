@@ -61,6 +61,7 @@ export function useStopRemoteAgent(projectName: string) {
     mutationFn: () => stopRemoteAgent(projectName),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['remote-agent-status', projectName] })
+      queryClient.invalidateQueries({ queryKey: ['remote-agents-all'] })
     },
   })
 }
@@ -71,6 +72,7 @@ export function useGracefulStopRemoteAgent(projectName: string) {
     mutationFn: () => gracefulStopRemoteAgent(projectName),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['remote-agent-status', projectName] })
+      queryClient.invalidateQueries({ queryKey: ['remote-agents-all'] })
     },
   })
 }
