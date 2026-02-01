@@ -34,8 +34,8 @@ controlRouter.post('/stop/hard', async (c) => {
   log.info('Hard stop requested');
   requestHardStop();
 
-  // Wait up to 5 seconds for status to transition
-  const stopped = await waitForStopped(5000);
+  // Wait up to 15 seconds for status to transition
+  const stopped = await waitForStopped(15000);
 
   return c.json({
     success: true,
@@ -53,8 +53,8 @@ controlRouter.post('/stop/graceful', async (c) => {
   log.info('Graceful stop requested');
   requestGracefulStop();
 
-  // Wait up to 5 seconds for status to transition
-  const stopped = await waitForStopped(5000);
+  // Wait up to 15 seconds for status to transition
+  const stopped = await waitForStopped(15000);
 
   return c.json({
     success: true,

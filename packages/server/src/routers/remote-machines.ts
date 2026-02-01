@@ -150,9 +150,9 @@ async function setupClaudeConfig(
 
         # Merge or create config
         if [ -f ~/.claude.json ]; then
-          tmp=$(mktemp) && jq '. + {"hasCompletedOnboarding": true}' ~/.claude.json > "$tmp" && mv "$tmp" ~/.claude.json
+          tmp=$(mktemp) && jq '. + {"hasCompletedOnboarding": true, "bypassPermissionsModeAccepted": true, "autoUpdates": true}' ~/.claude.json > "$tmp" && mv "$tmp" ~/.claude.json
         else
-          echo '{"hasCompletedOnboarding": true}' > ~/.claude.json
+          echo '{"hasCompletedOnboarding": true, "bypassPermissionsModeAccepted": true, "autoUpdates": true}' > ~/.claude.json
         fi
       `;
       client.exec(cmd, (err, stream) => {

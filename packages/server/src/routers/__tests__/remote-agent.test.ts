@@ -36,7 +36,7 @@ vi.mock('../../db/crud.js', () => mockCrudModule);
 
 // Mock Remote Machine Manager (daemon API functions)
 const mockAssignWorkToDaemon = vi.fn();
-const mockStopDaemon = vi.fn();
+const mockRobustStopDaemon = vi.fn();
 const mockGetDaemonStatus = vi.fn();
 const mockCheckDaemonHealth = vi.fn();
 const mockDeployDaemon = vi.fn();
@@ -44,7 +44,7 @@ const mockShutdownDaemon = vi.fn();
 
 vi.mock('../../services/remote-machine-manager.js', () => ({
   assignWorkToDaemon: mockAssignWorkToDaemon,
-  stopDaemon: mockStopDaemon,
+  robustStopDaemon: mockRobustStopDaemon,
   getDaemonStatus: mockGetDaemonStatus,
   checkDaemonHealth: mockCheckDaemonHealth,
   deployDaemon: mockDeployDaemon,
@@ -123,7 +123,13 @@ beforeEach(() => {
 
   // Default daemon API mocks
   mockAssignWorkToDaemon.mockResolvedValue({ success: true, message: 'Work assigned' });
-  mockStopDaemon.mockResolvedValue({ success: true, message: 'Hard stop initiated' });
+  mockRobustStopDaemon.mockResolvedValue({
+    success: true,
+    method: 'api',
+    message: 'Stopped via daemon API',
+    verified: true,
+    duration_ms: 500,
+  });
   mockGetDaemonStatus.mockResolvedValue(null);
   mockCheckDaemonHealth.mockResolvedValue(true);
   mockDeployDaemon.mockResolvedValue({ success: true, message: 'Deployed', port: 9999 });
@@ -230,7 +236,7 @@ describe('POST /api/projects/:project_name/remote-agent/stop', () => {
     const body = await parseResponse<{ success: boolean; results: unknown[] }>(res);
     expect(body.success).toBe(true);
     expect(body.results).toHaveLength(1);
-    expect(mockStopDaemon).toHaveBeenCalledWith(1, true);
+    expect(mockRobustStopDaemon).toHaveBeenCalledWith(1, true);
   });
 
   it('returns 404 when no remote agents are running', async () => {

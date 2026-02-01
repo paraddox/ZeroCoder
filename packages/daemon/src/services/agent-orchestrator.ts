@@ -364,7 +364,7 @@ export function requestHardStop(): void {
  * Wait for session status to become 'stopped' with timeout.
  * Returns true if stopped, false if timeout.
  */
-export async function waitForStopped(timeoutMs: number = 5000): Promise<boolean> {
+export async function waitForStopped(timeoutMs: number = 15000): Promise<boolean> {
   const start = Date.now();
   while (_sessionStatus === 'stopping' && Date.now() - start < timeoutMs) {
     await new Promise((resolve) => setTimeout(resolve, 100));

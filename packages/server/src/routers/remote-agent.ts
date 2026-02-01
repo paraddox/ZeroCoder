@@ -33,8 +33,8 @@ import {
   checkDaemonHealth,
   getDaemonStatus,
   assignWorkToDaemon,
-  stopDaemon,
   shutdownDaemon,
+  robustStopDaemon,
   type DaemonStatus,
 } from '../services/remote-machine-manager.js';
 
@@ -118,54 +118,80 @@ remoteAgentRouter.post('/:project_name/remote-agent/start', async (c) => {
 
 /**
  * POST /api/projects/:project_name/remote-agent/stop
- * Stop remote agents for a project (hard stop).
+ * Stop remote agents for a project (hard stop with SSH fallback).
  */
 remoteAgentRouter.post('/:project_name/remote-agent/stop', async (c) => {
   const projectName = c.req.param('project_name');
 
   // Get all machines and check which ones are running this project
   const machines = listRemoteMachines();
-  const results = [];
+  const matchingMachines: typeof machines = [];
 
   for (const machine of machines) {
     const status = await getDaemonStatus(machine.id);
     if (status && status.current_repo?.includes(projectName)) {
-      const result = await stopDaemon(machine.id, true);
-      results.push({ machine_id: machine.id, machine_name: machine.name, ...result });
+      matchingMachines.push(machine);
     }
   }
 
-  if (results.length === 0) {
+  if (matchingMachines.length === 0) {
     throw new HTTPException(404, { message: 'No remote agents running for this project' });
   }
 
-  return c.json({ success: true, results });
+  // Use robust stop for each machine
+  const results = [];
+  for (const machine of matchingMachines) {
+    const result = await robustStopDaemon(machine.id, true); // hard=true
+    results.push({
+      machine_id: machine.id,
+      machine_name: machine.name,
+      ...result,
+    });
+  }
+
+  return c.json({
+    success: results.every(r => r.success),
+    results,
+  });
 });
 
 /**
  * POST /api/projects/:project_name/remote-agent/graceful-stop
- * Request graceful stop for remote agents.
+ * Request graceful stop for remote agents (with SSH fallback).
  */
 remoteAgentRouter.post('/:project_name/remote-agent/graceful-stop', async (c) => {
   const projectName = c.req.param('project_name');
 
   // Get all machines and check which ones are running this project
   const machines = listRemoteMachines();
-  const results = [];
+  const matchingMachines: typeof machines = [];
 
   for (const machine of machines) {
     const status = await getDaemonStatus(machine.id);
     if (status && status.current_repo?.includes(projectName)) {
-      const result = await stopDaemon(machine.id, false);
-      results.push({ machine_id: machine.id, machine_name: machine.name, ...result });
+      matchingMachines.push(machine);
     }
   }
 
-  if (results.length === 0) {
+  if (matchingMachines.length === 0) {
     throw new HTTPException(404, { message: 'No remote agents running for this project' });
   }
 
-  return c.json({ success: true, results });
+  // Use robust stop for each machine (graceful)
+  const results = [];
+  for (const machine of matchingMachines) {
+    const result = await robustStopDaemon(machine.id, false); // hard=false (graceful)
+    results.push({
+      machine_id: machine.id,
+      machine_name: machine.name,
+      ...result,
+    });
+  }
+
+  return c.json({
+    success: results.every(r => r.success),
+    results,
+  });
 });
 
 /**

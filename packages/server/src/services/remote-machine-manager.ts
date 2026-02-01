@@ -745,6 +745,309 @@ export async function stopDaemon(
 }
 
 /**
+ * Check if daemon process is running via SSH.
+ * Returns true if the daemon process is found on the remote machine.
+ */
+export async function isDaemonProcessRunning(machineId: number): Promise<boolean> {
+  const machine = getRemoteMachine(machineId);
+  if (!machine) {
+    return false;
+  }
+
+  const client = new SSHClient();
+
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      client.end();
+      resolve(false);
+    }, 10000);
+
+    client.on('ready', () => {
+      clearTimeout(timeout);
+      const cmd = 'pgrep -f "zerocoder-daemon/dist/index.js" > /dev/null && echo "RUNNING" || echo "NOT_RUNNING"';
+
+      client.exec(cmd, (err, stream: ClientChannel) => {
+        if (err) {
+          client.end();
+          resolve(false);
+          return;
+        }
+
+        let stdout = '';
+        stream.on('data', (data: Buffer) => {
+          stdout += data.toString();
+        });
+
+        stream.on('close', () => {
+          client.end();
+          resolve(stdout.includes('RUNNING'));
+        });
+      });
+    });
+
+    client.on('error', () => {
+      clearTimeout(timeout);
+      resolve(false);
+    });
+
+    // Resolve SSH alias and connect
+    const sshConfig = resolveSSHAlias(machine.host);
+    const host = sshConfig?.hostname ?? machine.host;
+    const sshPort = sshConfig?.port ?? machine.port ?? 22;
+    const username = sshConfig?.user ?? machine.username ?? 'root';
+    const privateKeyPath = sshConfig?.identityFile
+      ?? (machine.sshKeyPath ? machine.sshKeyPath.replace(/^~/, homedir()) : undefined);
+
+    let privateKey: Buffer | undefined;
+    if (privateKeyPath) {
+      try {
+        privateKey = readFileSync(privateKeyPath);
+      } catch {
+        resolve(false);
+        return;
+      }
+    }
+
+    client.connect({
+      host,
+      port: sshPort,
+      username,
+      privateKey,
+      readyTimeout: 10000,
+      hostVerifier: () => true,
+    });
+  });
+}
+
+/**
+ * Force kill daemon via SSH (fuser -k, pkill fallback).
+ */
+export async function forceKillDaemon(machineId: number): Promise<{
+  success: boolean;
+  method: 'fuser' | 'pkill' | 'already_dead';
+  message: string;
+}> {
+  const machine = getRemoteMachine(machineId);
+  if (!machine) {
+    return { success: false, method: 'already_dead', message: `Machine ${machineId} not found` };
+  }
+
+  const port = machine.daemonPort ?? DEFAULT_DAEMON_PORT;
+  const client = new SSHClient();
+
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      client.end();
+      resolve({ success: false, method: 'already_dead', message: 'SSH connection timeout' });
+    }, 15000);
+
+    client.on('ready', () => {
+      clearTimeout(timeout);
+
+      // Kill script: try fuser first, then pkill, then check if already dead
+      const killScript = `
+PORT=${port}
+# Try fuser first (kills by port)
+fuser -k $PORT/tcp 2>/dev/null && echo "KILLED_BY_PORT" && exit 0
+# Fallback to pkill
+pkill -9 -f "zerocoder-daemon/dist/index.js" 2>/dev/null && echo "KILLED_BY_PKILL" && exit 0
+# Check if already dead
+pgrep -f "zerocoder-daemon/dist/index.js" > /dev/null || { echo "ALREADY_DEAD"; exit 0; }
+echo "KILL_FAILED"; exit 1
+`;
+
+      client.exec(`bash -s <<'EOFKILL'\n${killScript}\nEOFKILL`, (err, stream: ClientChannel) => {
+        if (err) {
+          client.end();
+          resolve({ success: false, method: 'already_dead', message: `SSH exec error: ${err.message}` });
+          return;
+        }
+
+        let stdout = '';
+        stream.on('data', (data: Buffer) => {
+          stdout += data.toString();
+        });
+
+        stream.on('close', (code: number) => {
+          client.end();
+
+          if (stdout.includes('KILLED_BY_PORT')) {
+            resolve({ success: true, method: 'fuser', message: 'Killed via fuser (port)' });
+          } else if (stdout.includes('KILLED_BY_PKILL')) {
+            resolve({ success: true, method: 'pkill', message: 'Killed via pkill' });
+          } else if (stdout.includes('ALREADY_DEAD')) {
+            resolve({ success: true, method: 'already_dead', message: 'Process was already dead' });
+          } else {
+            resolve({ success: false, method: 'already_dead', message: `Kill failed (exit code ${code})` });
+          }
+        });
+      });
+    });
+
+    client.on('error', (err) => {
+      clearTimeout(timeout);
+      resolve({ success: false, method: 'already_dead', message: `SSH error: ${err.message}` });
+    });
+
+    // Resolve SSH alias and connect
+    const sshConfig = resolveSSHAlias(machine.host);
+    const host = sshConfig?.hostname ?? machine.host;
+    const sshPort = sshConfig?.port ?? machine.port ?? 22;
+    const username = sshConfig?.user ?? machine.username ?? 'root';
+    const privateKeyPath = sshConfig?.identityFile
+      ?? (machine.sshKeyPath ? machine.sshKeyPath.replace(/^~/, homedir()) : undefined);
+
+    let privateKey: Buffer | undefined;
+    if (privateKeyPath) {
+      try {
+        privateKey = readFileSync(privateKeyPath);
+      } catch (e) {
+        resolve({
+          success: false,
+          method: 'already_dead',
+          message: `Cannot read SSH key: ${e instanceof Error ? e.message : String(e)}`,
+        });
+        return;
+      }
+    }
+
+    client.connect({
+      host,
+      port: sshPort,
+      username,
+      privateKey,
+      readyTimeout: 15000,
+      hostVerifier: () => true,
+    });
+  });
+}
+
+/**
+ * Robust stop with escalation strategy.
+ * 1. Try API stop (10s timeout)
+ * 2. Verify status changed (5s polling)
+ * 3. If still running, SSH kill
+ * 4. Verify process dead
+ */
+export async function robustStopDaemon(
+  machineId: number,
+  hard: boolean = false
+): Promise<{
+  success: boolean;
+  method: 'api' | 'ssh_kill' | 'already_stopped';
+  message: string;
+  verified: boolean;
+  duration_ms: number;
+}> {
+  const startTime = Date.now();
+  const machine = getRemoteMachine(machineId);
+
+  if (!machine) {
+    return {
+      success: false,
+      method: 'already_stopped',
+      message: `Machine ${machineId} not found`,
+      verified: false,
+      duration_ms: Date.now() - startTime,
+    };
+  }
+
+  console.log(`[robust-stop:${machine.name}] Starting robust stop (hard=${hard})`);
+
+  // Step 1: Check current daemon status
+  const initialStatus = await getDaemonStatus(machineId);
+
+  // If daemon is already idle/stopped, return early
+  if (!initialStatus || initialStatus.status === 'idle' || initialStatus.status === 'stopped') {
+    console.log(`[robust-stop:${machine.name}] Already stopped/idle`);
+    return {
+      success: true,
+      method: 'already_stopped',
+      message: 'Daemon was already stopped or idle',
+      verified: true,
+      duration_ms: Date.now() - startTime,
+    };
+  }
+
+  // Step 2: Try API stop
+  console.log(`[robust-stop:${machine.name}] Attempting API stop...`);
+  const endpoint = hard ? '/stop/hard' : '/stop/graceful';
+  const apiResult = await callDaemonApi<{ success: boolean; message: string; status: string }>(
+    machineId,
+    'POST',
+    endpoint,
+    undefined,
+    10000 // 10s timeout for API call
+  );
+
+  if (apiResult.success && apiResult.data) {
+    console.log(`[robust-stop:${machine.name}] API responded: ${apiResult.data.message}`);
+
+    // Step 3: Verify status changed (poll for up to 5 seconds)
+    const pollStart = Date.now();
+    while (Date.now() - pollStart < 5000) {
+      const status = await getDaemonStatus(machineId);
+      if (!status || status.status === 'idle' || status.status === 'stopped') {
+        console.log(`[robust-stop:${machine.name}] Verified stopped via API`);
+        return {
+          success: true,
+          method: 'api',
+          message: 'Stopped via daemon API',
+          verified: true,
+          duration_ms: Date.now() - startTime,
+        };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+
+    console.log(`[robust-stop:${machine.name}] API succeeded but status didn't change, escalating to SSH kill`);
+  } else {
+    console.log(`[robust-stop:${machine.name}] API failed: ${apiResult.error}, escalating to SSH kill`);
+  }
+
+  // Step 4: SSH force kill
+  console.log(`[robust-stop:${machine.name}] Attempting SSH force kill...`);
+  const killResult = await forceKillDaemon(machineId);
+
+  if (!killResult.success) {
+    console.log(`[robust-stop:${machine.name}] SSH kill failed: ${killResult.message}`);
+    return {
+      success: false,
+      method: 'ssh_kill',
+      message: `SSH kill failed: ${killResult.message}`,
+      verified: false,
+      duration_ms: Date.now() - startTime,
+    };
+  }
+
+  console.log(`[robust-stop:${machine.name}] SSH kill succeeded (${killResult.method})`);
+
+  // Step 5: Verify process is dead via SSH
+  await new Promise((resolve) => setTimeout(resolve, 1000)); // Brief wait for process to fully exit
+  const stillRunning = await isDaemonProcessRunning(machineId);
+
+  if (stillRunning) {
+    console.log(`[robust-stop:${machine.name}] Warning: process still running after SSH kill`);
+    return {
+      success: false,
+      method: 'ssh_kill',
+      message: 'SSH kill executed but process still running',
+      verified: false,
+      duration_ms: Date.now() - startTime,
+    };
+  }
+
+  console.log(`[robust-stop:${machine.name}] Verified stopped via SSH`);
+  return {
+    success: true,
+    method: 'ssh_kill',
+    message: `Stopped via SSH ${killResult.method}`,
+    verified: true,
+    duration_ms: Date.now() - startTime,
+  };
+}
+
+/**
  * Shutdown daemon on a remote machine.
  */
 export async function shutdownDaemon(machineId: number): Promise<{ success: boolean; message: string }> {
